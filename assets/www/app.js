@@ -503,22 +503,57 @@
     }
 
     /**
-     * ★ v3.7.7：把首页滚动到「本次新加载的第一张卡」。
+     * ★ v3.7.10：把首页滚动到「本次新加载的第一张卡」。
      *
      * <p>为什么要滚：新卡是插在「加载更多」按钮**上方**的，用户点按钮时
      * 视线停在按钮处，不滚的话他会以为"只变了数字、内容没变"。
-     * 这里滚到新内容起点（往上留一点余量，让上一批的末尾仍可见，
-     * 用户能看出"是接着往下"的），而不是直接跳到底。
+     *
+     * <p>★ v3.7.10 修复「加载更多只变页码、内容没更新」：
+     *   原来只滚到新卡 `.offsetTop - 12`，也就是"让新内容的第一张刚好贴住
+     *   视口顶部"——但用户上一眼看到的最后一张（上一批的末位）正好还占着
+     *   视口第一屏，主观感受就是"还是原来那些书"。实测 scrollTop 滚到位后
+     *   视野首卡仍是「第一页书20」，第二页的书全在屏幕下方看不见。
+     *   现在改为：把新内容的第一张滚到视口**上沿往下 1/4 处**，让新书有
+     *   3~4 张完整落进视野，用户一眼就能看出"下面接着来了新的一批"。
+     *   同时给这批新卡加一次入场高亮，强化"这里新增了"的感知。
      */
     function scrollHomeToAnchor(anchorId) {
         var wrap = $('homeContentWrap');
         var el = $(anchorId);
         if (!wrap || !el) return;
         requestAnimationFrame(function () {
-            // 新卡顶部相对滚动容器的位置，减去一点余量（保留上一批的最后一张）
-            var top = el.offsetTop - 12;
+            // ★ v3.7.10：先把新内容的第一张滚到**视口顶部**（留 8px 余量），
+            //   这样上一批的尾巴最多只占屏幕最上面一点点，新书几乎占满一屏，
+            //   用户不可能再看漏。原来用 1/4 视口做 lead 仍然会让"上一批最后
+            //   一张 + 它的卡片高度"把屏幕顶部占满，实测仍看不到新书。
+            var top = el.offsetTop - 8;
             wrap.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+            // ★ v3.7.10：给本批新卡打一次"刚插入"高亮，滑过去时能看见
+            markFreshCards(anchorId);
         });
+    }
+
+    /**
+     * ★ v3.7.10：把从 anchorId 开始、连续的一批 .bookcard 标记为"新增"，
+     * 触发一次入场高亮动画（CSS .just-added），动画结束自动摘掉类名。
+     * 这样即使滚动动画还没结束，用户也能从高亮看出哪几张是新来的。
+     */
+    function markFreshCards(anchorId) {
+        var anchor = $(anchorId);
+        if (!anchor) return;
+        // 从锚点开始，收集紧随其后的兄弟卡片（到「加载更多」为止）
+        var nodes = [];
+        var n = anchor;
+        while (n && n.classList && n.classList.contains('bookcard')) {
+            nodes.push(n);
+            n = n.nextElementSibling;
+        }
+        if (!nodes.length) return;
+        for (var i = 0; i < nodes.length; i++) nodes[i].classList.add('just-added');
+        // 动画 1.2s 后摘掉，避免长期保留（下次再来还能重新触发）
+        setTimeout(function () {
+            for (var j = 0; j < nodes.length; j++) nodes[j].classList.remove('just-added');
+        }, 1300);
     }
 
     /**
@@ -549,13 +584,27 @@
             App.homePage[catId] = 0;
         }
         var all = App.homeBooks[catId] || (App.homeBooks[catId] = []);
-        // 去重（同分类翻页可能重复返回上一页末尾的书）
+        // ★ v3.7.10：去重指纹改用「组合键」。
+        //   原来只取 `key || url || title` 中**第一个非空**的字段。问题：
+        //   不少书源给每本书的 key 是"页面级"的固定值（甚至就是站点首页 URL），
+        //   第二页返回的书 key 与第一页**相同** → 全部被判重复丢掉 → fresh=0，
+        //   表现就是"点加载更多后页码变了，但一本书都没多出来"。
+        //   现在把 title + url 一起纳入指纹，任一不同就认为是一本新书，
+        //   既不会误杀（真新书被丢），也不会重复（同书再次插入）。
+        var fp = function (b) {
+            if (!b) return '';
+            var t = (b.title || '').trim();
+            var u = (b.url || '').trim();
+            var k = (b.key || '').trim();
+            // title 是最稳的：同名同源的书在同一个分类页里基本就是同一本
+            return (t || k || u) + '@@' + (u || k);
+        };
         var seen = {};
-        for (var s = 0; s < all.length; s++) seen[all[s].key || all[s].url || all[s].title] = true;
+        for (var s = 0; s < all.length; s++) seen[fp(all[s])] = true;
         var fresh = [];
         for (var i = 0; i < (books || []).length; i++) {
             var bk = books[i];
-            var kk = bk.key || bk.url || bk.title;
+            var kk = fp(bk);
             if (seen[kk]) continue;
             seen[kk] = true;
             all.push(bk);
@@ -645,6 +694,20 @@
             '<span class="hm-tip">已加载 ' +
             ((App.homeBooks[App.home.cat] || []).length) + ' 本 · 第 ' + page + ' 页</span>';
         bindHomeMoreScroll();
+    }
+
+    /**
+     * ★ v3.7.10：把「加载更多」按钮从「加载中…」恢复成可点状态。
+     *
+     * <p>用于 onBrowse 收到"对不上号"的迟到结果时兜底 —— 保证按钮永远不会
+     * 卡在禁用态。文案与是否显示按当前 homeHasMore 决定。
+     */
+    function fixHomeMoreBtn() {
+        var more = $('homeMore');
+        if (!more) return;
+        if (!App.homeHasMore) { paintHomeMore(0, App.home.page || 1, 0); return; }
+        var b = $('homeMoreBtn');
+        if (b) { b.disabled = false; b.textContent = '加载更多'; }
     }
 
     /**
@@ -2724,10 +2787,22 @@
     /**
      * 底部弹出章节列表。全屏页里也能用，不用退回详情页。
      * 打开时自动把当前集滚到可视区中间。
+     *
+     * ★ v3.7.10：头部加两个「下拉按钮」—— 列数（1/2/3 列）与区间（200 集/段）。
+     *   与详情页共用同一份偏好（App.chapView / fx_chap_view_v1），在这边改了、
+     *   回详情页也是一样的列数/段号。按钮不常驻展开，点一下弹出菜单选择，
+     *   选完自动收起 —— 不占弹层空间。
      */
     ui.openChapterList = function () {
         var chs = App.chapters || [];
         if (!chs.length) { TS.toast('还没有章节数据'); return; }
+        loadChapView();                          // 与详情页同一份偏好
+        // 当前集若不在所选区间内，自动切到它所在的段（否则用户打开选集找不到正在播的集）
+        var curIdx = (typeof App.chapIdx === 'number') ? App.chapIdx : 0;
+        var win0 = chapWindow(chs.length);
+        if (curIdx < win0.start || curIdx >= win0.end) {
+            App.chapView.seg = Math.floor(curIdx / CHAP_SEG);
+        }
         ui.closeChapterList();
 
         var h = '<div class="sheet-mask" onclick="App.ui.closeChapterList()">';
@@ -2735,29 +2810,24 @@
         h += '<div class="chsheet-hd">' +
              '<span>选集</span>' +
              '<span class="chsheet-sub">共 ' + chs.length + ' 集</span>' +
+             '<span class="chsheet-tools">' +
+             '<button class="chs-tool" id="chsColsBtn" onclick="App.ui.chsToggleCols(event)"></button>' +
+             (chapWindow(chs.length).segCount > 1
+                 ? '<button class="chs-tool" id="chsSegBtn" onclick="App.ui.chsToggleSeg(event)"></button>'
+                 : '') +
              '<span class="chsheet-x" onclick="App.ui.closeChapterList()">&#10005;</span>' +
+             '</span>' +
              '</div>';
         h += '<div class="chsheet-list" id="chList">';
-        for (var i = 0; i < chs.length; i++) {
-            var ch = chs[i];
-            var no = ch.index || (i + 1);
-            var on = (i === App.chapIdx);
-            h += '<div class="chitem' + (on ? ' on' : '') +
-                 '" onclick="App.ui.pickChapter(' + i + ')">' +
-                 '<span class="chno">' + no + '</span>' +
-                 '<span class="chtt">' + TS.esc(ch.title || ('第' + no + '集')) + '</span>' +
-                 // ★ v2.8 同款单集下载按钮（与详情页共用 data-dl 标记与图标逻辑）
-                 '<span class="chdl" data-dl="' + no +
-                 '" onclick="event.stopPropagation();App.ui.dlChapter(' + no + ')"></span>' +
-                 (on ? '<span class="chplay">▶</span>' : '') +
-                 '</div>';
-        }
+        h += chsListHtml(chs);
         h += '</div></div></div>';
 
         var d = document.createElement('div');
         d.id = 'chSheetWrap';
         d.innerHTML = h;
         document.body.appendChild(d);
+
+        paintChsToolBtns();                      // 按钮上显示当前列数/段号
 
         // 打开时按缓存状态刷一遍图标
         if (App.book) TS.call('cacheStatus', JSON.stringify(App.book));
@@ -2773,9 +2843,142 @@
         }, 30);
     };
 
+    /** ★ v3.7.10：选集弹层的章节条目 HTML（含当前区间裁剪与分列容器） */
+    function chsListHtml(chs) {
+        var win = chapWindow(chs.length);
+        var h = '<div class="chlist-inner cols-' + chapCols() + '" id="chListInner">';
+        for (var i = win.start; i < win.end; i++) {
+            var ch = chs[i];
+            var no = ch.index || (i + 1);
+            var on = (i === App.chapIdx);
+            h += '<div class="chitem' + (on ? ' on' : '') +
+                 '" onclick="App.ui.pickChapter(' + i + ')">' +
+                 '<span class="chno">' + no + '</span>' +
+                 '<span class="chtt">' + TS.esc(ch.title || ('第' + no + '集')) + '</span>' +
+                 '<span class="chdl" data-dl="' + no +
+                 '" onclick="event.stopPropagation();App.ui.dlChapter(' + no + ')"></span>' +
+                 (on ? '<span class="chplay">▶</span>' : '') +
+                 '</div>';
+        }
+        h += '</div>';
+        return h;
+    }
+
+    /** ★ v3.7.10：重画选集列表（切列数/切段后调用），并保持滚动位置策略 */
+    function repaintChsList(keepCur) {
+        var list = $('chList');
+        if (!list) return;
+        list.innerHTML = chsListHtml(App.chapters || []);
+        paintAllDlIcons();
+        // 切段后把当前集（或该段第一集）滚到顶部可见处；切列数保持原滚动
+        if (!keepCur) {
+            list.scrollTop = 0;
+            var cur = document.querySelector('#chList .chitem.on');
+            if (cur) list.scrollTop = Math.max(0, cur.offsetTop - 60);
+        }
+    }
+
+    /** ★ v3.7.10：刷新两个工具按钮上的文字（当前列数 / 当前段范围） */
+    function paintChsToolBtns() {
+        var chs = App.chapters || [];
+        var cb = $('chsColsBtn'), sb = $('chsSegBtn');
+        if (cb) cb.textContent = chapCols() + ' 列 ▾';
+        if (sb) sb.textContent = chapSegLabel(chapSeg(), chs.length) + ' ▾';
+    }
+
+    /** ★ v3.7.10：通用下拉菜单（挂在指定按钮正下方，点其它处自动收起） */
+    function chsDropdown(anchorEl, items) {
+        chsCloseDropdown();
+        var m = document.createElement('div');
+        m.id = 'chsDropdown';
+        m.className = 'chs-dd';
+        var h = '';
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            h += '<div class="chs-dd-item' + (it.on ? ' on' : '') +
+                 '" data-i="' + i + '">' + it.label + (it.on ? ' ✓' : '') + '</div>';
+        }
+        m.innerHTML = h;
+        document.body.appendChild(m);
+        // 定位：按钮正下方，右对齐（按钮都在弹层右上角）
+        var r = anchorEl.getBoundingClientRect();
+        m.style.top = (r.bottom + 6) + 'px';
+        m.style.right = Math.max(6, window.innerWidth - r.right) + 'px';
+        // 点选
+        m.addEventListener('click', function (e) {
+            var t = e.target.closest('.chs-dd-item');
+            if (!t) return;
+            var idx = parseInt(t.getAttribute('data-i'), 10);
+            chsCloseDropdown();
+            if (items[idx] && items[idx].pick) items[idx].pick();
+        });
+        // 点别处收起
+        setTimeout(function () {
+            document.addEventListener('click', chsCloseDropdown, { once: true });
+        }, 0);
+    }
+
+    function chsCloseDropdown() {
+        var old = $('chsDropdown');
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+    }
+
+    /** ★ v3.7.10：列数下拉 */
+    ui.chsToggleCols = function (ev) {
+        if (ev) ev.stopPropagation();
+        var btn = $('chsColsBtn');
+        if (!btn) return;
+        var cur = chapCols();
+        chsDropdown(btn, [
+            { label: '1 列', on: cur === 1, pick: function () { chsApplyCols(1); } },
+            { label: '2 列', on: cur === 2, pick: function () { chsApplyCols(2); } },
+            { label: '3 列', on: cur === 3, pick: function () { chsApplyCols(3); } }
+        ]);
+    };
+
+    function chsApplyCols(n) {
+        if (n !== 1 && n !== 2 && n !== 3) return;
+        if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
+        App.chapView.cols = n;
+        saveChapView();
+        repaintChsList(true);                    // 切列数保持滚动位置
+        paintChsToolBtns();
+    }
+
+    /** ★ v3.7.10：区间下拉（200 集/段，>12 段时折叠中间） */
+    ui.chsToggleSeg = function (ev) {
+        if (ev) ev.stopPropagation();
+        var btn = $('chsSegBtn');
+        if (!btn) return;
+        var chs = App.chapters || [];
+        var win = chapWindow(chs.length);
+        var items = [];
+        for (var i = 0; i < win.segCount; i++) {
+            items.push({
+                label: chapSegLabel(i, chs.length),
+                on: i === win.seg,
+                pick: (function (seg) {
+                    return function () { chsApplySeg(seg); };
+                })(i)
+            });
+        }
+        chsDropdown(btn, items);
+    };
+
+    function chsApplySeg(i) {
+        if (typeof i !== 'number' || i < 0) return;
+        if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
+        App.chapView.seg = i;
+        saveChapView();
+        repaintChsList(false);                   // 切段后滚到当前集/段首
+        paintChsToolBtns();
+    }
+
     ui.closeChapterList = function () {
         var w = $('chSheetWrap');
         if (w && w.parentNode) w.parentNode.removeChild(w);
+        // ★ v3.7.10：弹层关了，还开着的小下拉也一并收起（不然会飘在页面上）
+        chsCloseDropdown();
     };
 
     // ---- v2.8 单集下载 ----
@@ -5012,8 +5215,14 @@
             var w = App.homeMoreWait;
             App.homeMoreBusy = false;
             App.homeMoreSince = 0;
+            // ★ v3.7.10：无论这次结果是否被消费，都要把按钮从「加载中…」恢复回来。
+            //   原来只在两个 if 分支内部才会重绘按钮，一旦 o.path / o.page 与
+            //   当前首页状态对不上（换源瞬间、迟到结果、类型不一致），按钮就永远
+            //   停在「加载中…」且 disabled —— 用户再点也没反应，看起来就是"失效"。
+            var consumed = false;
             if (w && o && o.source === w.src && o.path === w.cat && o.page === w.page) {
                 App.homeMoreWait = null;
+                consumed = true;
                 if (o.error) {
                     TS.toast(o.error);
                     // 出错就把 hasMore 收掉，避免反复重试死循环
@@ -5025,9 +5234,16 @@
                 return;
             }
             if (o && o.source === App.home.src && o.path === App.home.cat) {
+                consumed = true;
                 delete App.homePending[o.path];
                 if (o.error) { $('homeContent').innerHTML = errBlock(o.error); return; }
                 renderHomeList(o.books, o.source, o.path, o.page);
+                return;
+            }
+            // 没被任何分支消费（迟到 / 对不上）→ 至少把按钮状态修回来
+            if (!consumed) {
+                App.homeMoreWait = null;
+                fixHomeMoreBtn();
             }
             return;
         }
@@ -5630,6 +5846,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.10',
+            date: '2025-10-11',
+            fixes: [
+                '修复首页「加载更多」只跳页码、看不到新书的问题（加载完成后自动滚到新内容，新增卡片带入场高亮，一眼能看出多了一批）',
+                '修复「加载更多」在源返回重复内容时按钮卡在「加载中…」再也点不动的问题（按钮状态现在一定会复位）',
+                '修复部分书源因去重字段单一导致翻页内容被整页丢弃、书数不增的问题（去重改用书名+链接组合判定）'
+            ],
+            adds: [
+                '播放页「选集」新增列数切换（1 / 2 / 3 列），点按钮下拉选择，不占地方',
+                '播放页「选集」新增区间切换（每 200 集一段），点按钮下拉选择，直达目标段',
+                '选集的列数与区间和详情页共用同一份偏好，改一处两处都生效',
+                '书源管理页的操作按钮整体加大一档，文字改为严格上下居中'
+            ]
+        },
         {
             ver: '3.7.9',
             date: '2025-10-11',
