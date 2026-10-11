@@ -2703,6 +2703,8 @@
     window.onPlaying = function (o) {
         // 取链成功 → 收掉加载转圈
         setBuffering(false);
+        // ★ v3.7.13：播放成功就把"连续失败次数"清零，失败提示才不会误报累积
+        App.playErrStreak = 0;
         // ★ 图标真源只有一个：native 说在播就是在播
         App.playing = true;
         paintPlayIcon(true);
@@ -2729,11 +2731,91 @@
         saveSession();
     };
 
-    window.onPlayError = function () {
+    /**
+     * ★ v3.7.13：播放（取链）失败提示。
+     *
+     * <p>以前只有一个 toast「取链失败，换一集或换个源试试」，问题有三：
+     * <ol>
+     *   <li>native 那边**也会** toast 一句（"取链失败，试试其他源"），两句糊在一起，
+     *       用户看到的提示是重复且错位的；</li>
+     *   <li>toast 1.6 秒就没了，用户切回列表时什么都没留下；</li>
+     *   <li>取链失败往往意味着**这个源的这一集废了**，但没有任何"下一步"入口 ——
+     *       用户只能自己去摸索怎么换源。</li>
+     * </ol>
+     *
+     * <p>现在改成：一个带「关闭」按钮的结果弹窗，正文说明发生了什么 + 最可能的原因，
+     * 并给出「换一集」「换本地其它源」两个直接可点的动作。
+     * 同一个源连续报错只在第一次弹窗，避免连播时刷屏。
+     */
+    window.onPlayError = function (o) {
         setBuffering(false);
         App.playing = false;
         paintPlayIcon(false);
-        TS.toast('取链失败，换一集或换个源试试');
+        App.playErrStreak = (App.playErrStreak || 0) + 1;
+
+        var bk = App.book || {};
+        var ch = (App.chapters && App.chapIdx >= 0) ? App.chapters[App.chapIdx] : null;
+        var sec = Math.floor(Date.now() / 1000);
+        // 5 秒内重复报错 → 视为同一次故障，只提示一次（自动连播时可能连撞两集）
+        if (App._playErrAt && sec - App._playErrAt < 5) return;
+        App._playErrAt = sec;
+
+        var lines = [];
+        lines.push('「' + ((o && o.title) || (ch && ch.title) ||
+            ('第' + ((ch && ch.index) || (App.chapIdx + 1)) + '集')) + '」没能取到播放地址。');
+        if (bk.title) lines.push('所属书籍：' + bk.title);
+        if (App.playSourceName) lines.push('正在使用的源：' + App.playSourceName);
+        // native 报回来的原因（播放器底层错误）比"取链失败"具体得多，优先展示
+        if (o && o.reason) lines.push('播放器提示：' + o.reason);
+        lines.push('');
+        lines.push('常见原因：源站临时抖动、该集被下架、或直链带时效签名已过期。');
+        if (App.playErrStreak >= 3) {
+            lines.push('这个源已经连续失败 ' + App.playErrStreak + ' 次，建议改用它源。');
+        }
+
+        ui.playFailSheet(lines.join('\n'), !!bk.title);
+    };
+
+    /**
+     * ★ v3.7.13：取链失败的提示弹窗。
+     * @param {string} msg      正文（\n 换行）
+     * @param {boolean} canSwap 是否有可换的对象（没书就不显示动作按钮）
+     */
+    ui.playFailSheet = function (msg, canSwap) {
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">播放失败</div>';
+        h += '<div class="cf-msg">' + TS.esc(msg).replace(/\n/g, '<br>') + '</div>';
+
+        if (canSwap) {
+            h += '<div class="sheet-item" onclick="App.ui.playFailNext()">换下一集试试</div>';
+            h += '<div class="sheet-item" onclick="App.ui.playFailSwap()">换一个书源</div>';
+        }
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
+        h += '</div></div>';
+        sheet(h);
+    };
+
+    /** 失败了 → 直接跳下一集（还有下一集才给这个按钮） */
+    ui.playFailNext = function () {
+        ui.closeSheet();
+        var n = (App.chapters || []).length;
+        if (App.chapIdx + 1 < n) {
+            App.playErrStreak = 0;
+            ui.playChapter(App.chapIdx + 1);
+        } else {
+            TS.toast('已经是最后一集了');
+        }
+    };
+
+    /** 失败了 → 打开换源菜单（复用历史/收藏那套 openSwap） */
+    ui.playFailSwap = function () {
+        ui.closeSheet();
+        var bk = App.book;
+        if (!bk) { TS.toast('没有可换的书籍信息'); return; }
+        // 换源前先把这个源的取链缓存清掉，否则会自动换回同一个死链
+        App.playErrStreak = 0;
+        if (ui.openSwap) ui.openSwap(bk);
     };
 
     window.onPlayState = function (p) {
@@ -3122,41 +3204,25 @@
         if (sb) sb.textContent = chapSegLabel(chapSeg(), chs.length) + ' ▾';
     }
 
-    /** ★ v3.7.10：通用下拉菜单（挂在指定按钮正下方，点其它处自动收起） */
+    /**
+     * ★ v3.7.13：选集弹层里的"列数 / 区间"下拉。
+     *
+     * <p>以前是自己一套 `.chs-dd` 样式，和历史/收藏长按弹的 `.ctx-menu` 观感不一致。
+     * 现在统一走 {@link ctxMenu}（同一份 CSS、同一个动画、同一套贴边收敛逻辑），
+     * 只是从"按钮正下方右对齐"的位置弹出而已。
+     */
     function chsDropdown(anchorEl, items) {
-        chsCloseDropdown();
-        var m = document.createElement('div');
-        m.id = 'chsDropdown';
-        m.className = 'chs-dd';
-        var h = '';
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i];
-            h += '<div class="chs-dd-item' + (it.on ? ' on' : '') +
-                 '" data-i="' + i + '">' + it.label + (it.on ? ' ✓' : '') + '</div>';
-        }
-        m.innerHTML = h;
-        document.body.appendChild(m);
-        // 定位：按钮正下方，右对齐（按钮都在弹层右上角）
+        ctxClose();
+        if (!items || !items.length) return;
+        // 锚点：按钮正下方、右对齐（按钮都在弹层右上角）。
+        // ctxMenu 内部会做贴边收敛，这里只要给个合理的起始点。
         var r = anchorEl.getBoundingClientRect();
-        m.style.top = (r.bottom + 6) + 'px';
-        m.style.right = Math.max(6, window.innerWidth - r.right) + 'px';
-        // 点选
-        m.addEventListener('click', function (e) {
-            var t = e.target.closest('.chs-dd-item');
-            if (!t) return;
-            var idx = parseInt(t.getAttribute('data-i'), 10);
-            chsCloseDropdown();
-            if (items[idx] && items[idx].pick) items[idx].pick();
-        });
-        // 点别处收起
-        setTimeout(function () {
-            document.addEventListener('click', chsCloseDropdown, { once: true });
-        }, 0);
+        ctxMenu(Math.max(8, r.right - 190), Math.round(r.bottom + 6), items);
     }
 
     function chsCloseDropdown() {
-        var old = $('chsDropdown');
-        if (old && old.parentNode) old.parentNode.removeChild(old);
+        // 统一菜单只有一个实例，直接收掉即可
+        ctxClose();
     }
 
     // ==================== ★ v3.7.11：长按弹出的上下文菜单 ====================
@@ -3181,9 +3247,14 @@
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             h += '<div class="ctx-item' + (it.danger ? ' danger' : '') +
+                 (it.on ? ' on' : '') + (it.disabled ? ' disabled' : '') +
                  '" data-i="' + i + '">' +
-                 (it.icon ? '<span class="ci-ico">' + it.icon + '</span>' : '') +
-                 '<span class="ci-tx">' + it.label + '</span></div>';
+                 '<span class="ci-ico">' + (it.icon || '') + '</span>' +
+                 '<span class="ci-tx">' + it.label + '</span>' +
+                 // ★ v3.7.13：有值的项（如"倍速 1.5x"）右侧补一段次要文字，
+                 //   与 old .more-drop 的信息密度对齐
+                 (it.val ? '<span class="ci-val">' + it.val + '</span>' : '') +
+                 '</div>';
         }
         m.innerHTML = h;
         document.body.appendChild(m);
@@ -3209,6 +3280,7 @@
         setTimeout(function () {
             document.addEventListener('click', ctxClose, { once: true });
             document.addEventListener('touchstart', ctxClose, { once: true, passive: true });
+            document.addEventListener('scroll', ctxClose, { once: true, passive: true });
         }, 0);
     }
 
@@ -3684,52 +3756,52 @@
      * （一大片遮罩压住整个播放界面）。下拉气泡只占按钮上方一小块，
      * 关掉也只需点别处，跟"点按钮弹个菜单"的直觉一致。
      */
+    /**
+     * ★ v3.7.13：把「更多」下拉换成统一的长按菜单（.ctx-menu）。
+     *
+     * <p>以前是一套自己的 `.more-drop` 气泡，跟历史/收藏长按弹出的菜单两套观感。
+     * 现在统一走 {@link ctxMenu}。这里仍保留 `ui.closeMore` / `moreToggle.on`
+     * 这些老接口，避免别处的联动失效。
+     */
     ui.moreMenu = function () {
         var btn = $('moreToggle');
         if (!btn) return;
         // 已经开着就关掉（再点一次 = 收起）
-        if ($('moreDrop')) { ui.closeMore(); return; }
+        if (App._moreOpen) { ui.closeMore(); return; }
 
         var sp = App.speed || 1.0;
-        var d = document.createElement('div');
-        d.id = 'moreDrop';
-        d.className = 'more-drop';
-        d.innerHTML =
-            '<div class="more-item" onclick="App.ui.moreSpeed()">' +
-            '&#9193; 倍速<span class="more-val">' + sp.toFixed(1) + 'x</span></div>' +
-            '<div class="more-item" onclick="App.ui.moreGain()">' +
-            '&#128266; 音量增益<span class="more-val">' + gainLabel(App.gain) + '</span></div>';
-        document.body.appendChild(d);
-
-        // 定位到按钮右上方（按钮本身是右对齐的，气泡也跟着右对齐）
-        var r = btn.getBoundingClientRect();
-        d.style.left = 'auto';
-        d.style.right = Math.max(8, (window.innerWidth - r.right)) + 'px';
-        d.style.bottom = (window.innerHeight - r.top + 8) + 'px';
-
+        var items = [
+            {
+                label: '倍速', icon: '⏩', val: sp.toFixed(1) + 'x',
+                pick: function () { ui.moreSpeed(); }
+            },
+            {
+                label: '音量增益', icon: '🔊', val: gainLabel(App.gain),
+                pick: function () { ui.moreGain(); }
+            }
+        ];
+        App._moreOpen = true;
         if (btn) btn.classList.add('on');
-
-        // 点页面任意别处收起（捕获阶段，免得被里层的 stopPropagation 挡掉）
-        setTimeout(function () {
-            document.addEventListener('click', _moreOutside, true);
-        }, 0);
+        // 挂在按钮**左下方**（按钮在右上角，往右下走会顶到屏幕边）
+        var r = btn.getBoundingClientRect();
+        ctxMenu(Math.max(8, r.right - 172), Math.round(r.bottom + 8), items);
+        // 菜单被别处收起时同步按钮高亮
+        var t = setInterval(function () {
+            if (!$('ctxMenu')) { clearInterval(t); ui._moreSyncOff(); }
+        }, 200);
     };
 
-    function _moreOutside(e) {
-        var d = $('moreDrop');
-        if (!d) { document.removeEventListener('click', _moreOutside, true); return; }
-        // 点在气泡内 或 点在「更多」按钮上 → 不关（按钮自己有切换逻辑）
-        if (d.contains(e.target)) return;
+    /** 菜单不在 → 把按钮高亮摘掉（不递归调 closeMore） */
+    ui._moreSyncOff = function () {
+        App._moreOpen = false;
         var btn = $('moreToggle');
-        if (btn && btn.contains(e.target)) return;
-        ui.closeMore();
-        document.removeEventListener('click', _moreOutside, true);
-    }
+        if (btn) btn.classList.remove('on');
+    };
 
     /** 收起「更多」下拉（点项、点按钮、点别处都走这里） */
     ui.closeMore = function () {
-        var d = $('moreDrop');
-        if (d) d.parentNode.removeChild(d);
+        App._moreOpen = false;
+        ctxClose();
         var btn = $('moreToggle');
         if (btn) btn.classList.remove('on');
     };
@@ -4356,8 +4428,7 @@
                  '</div>';
             if (canBatch && list.length >= 2) {
                 h += '<div class="srcops" style="padding:0 0 8px">' +
-                     '<button class="mini ghost" onclick="App.ui.enterSrcMulti()">' +
-                     '批量管理</button></div>';
+                     '<span class="srchint">长按任意一行可多选删除</span></div>';
             }
         }
 
@@ -4371,19 +4442,11 @@
             if (sel) cls += ' sel';
             if (multi && locked) cls += ' locked';
 
-            var click = 'App.ui.srcRowClick(\'' + escAttr(s.id) + '\')';
-
+            // ★ v3.7.13：所有点击/长按统一走 bindSrcPress 委托，
+            //   不再在 HTML 上写一堆 onmousedown/ontouchstart（那种写法
+            //   每行 4 个内联事件，既臃肿又会和委托打架）。
             h += '<div class="' + cls + '" data-sid="' + escAttr(s.id) + '"' +
-                 ' onclick="' + click + '"' +
-                 // 长按源行也能进多选（与章节列表手感一致）
-                 (multi ? '' : ' oncontextmenu="return App.ui.srcPressStart(event,\'' +
-                     escAttr(s.id) + '\')"') +
-                 ' onmousedown="' + (multi ? '' : 'App.ui.srcPressStart(null,\'' +
-                     escAttr(s.id) + '\')') + '"' +
-                 ' onmouseup="App.ui.srcPressEnd()" onmouseleave="App.ui.srcPressEnd()"' +
-                 ' ontouchstart="' + (multi ? '' : 'App.ui.srcPressStart(null,\'' +
-                     escAttr(s.id) + '\')') + '"' +
-                 ' ontouchend="App.ui.srcPressEnd()" ontouchmove="App.ui.srcPressEnd()">';
+                 ' data-nm="' + escAttr(nm) + '">';
 
             // 多选态：左侧圆形勾选框
             h += '<span class="chk chk-src"></span>';
@@ -4396,16 +4459,18 @@
                  (!s.canSearch ? ' · <span class="tag">仅分类</span>' : '') +
                  // ★ v3.0：JS 源里有一批站点反爬，得先去验证页过一次验证码
                  (s.needsVerification ? ' · <span class="tag tag-warn">需验证</span>' : '') +
-                 (s.alias ? (' · 原名 ' + TS.esc(s.name)) : '') + '</div>';
+                 (s.alias ? (' · 原名 ' + TS.esc(s.name)) : '') +
+                 // ★ v3.7.13：测试连通的结果直接落在这一行，不再只弹 toast
+                 '<span class="sctest" id="st_' + escAttr(s.id) + '"></span>' +
+                 '</div>';
             h += '</div>';
 
             // 行内开关：多选态下隐藏，避免和勾选混淆
             if (!multi) {
                 h += '<label class="sw" onclick="event.stopPropagation()">' +
                      '<input type="checkbox" ' + (s.enabled ? 'checked' : '') +
-                     ' onchange="App.ui.toggleSource(\'' + escAttr(s.id) + '\',this.checked)">' +
+                     ' data-toggle="' + escAttr(s.id) + '">' +
                      '<i></i></label>';
-                h += '<span class="srcarrow">&#8250;</span>';
             }
             h += '</div>';
         }
@@ -4414,16 +4479,164 @@
             h += '<div class="tip">内置源只能停用，不能删除。</div>';
         } else if (def.k === 'js') {
             h += '<div class="tip">JS 插件源由脚本提供，随插件包整包更新；' +
-                 '标「需验证」的源首次搜索可能需要先在站点上过验证码。</div>';
+                 '标「需验证」的源首次搜索可能需要先在站点上过验证码。' +
+                 '长按任意一行可删除 / 测试 / 改名。</div>';
         } else if (def.k === 'py') {
             h += '<div class="tip">Python 源由 .py 脚本提供，可以单独删除。' +
-                 '长按任意一行或点「批量管理」可多选删除。</div>';
+                 '长按任意一行可删除 / 测试 / 改名；按住不动即可多选。</div>';
         } else {
-            h += '<div class="tip">点某个源可查看详情并在那里删除；' +
-                 '长按任意一行或点「批量管理」可多选删除。</div>';
+            h += '<div class="tip">长按任意一行：弹出删除 / 测试连通 / 改名菜单，' +
+                 '同时进入多选（继续按住可勾选多个）。</div>';
         }
         c.innerHTML = h;
+        bindSrcPress(c);
         if (multi) paintSrcMultiUI();
+    }
+
+    /**
+     * ★ v3.7.13：源分组的**事件委托**。
+     *
+     * <p>替换掉之前一行 4 个内联 `onmousedown/ontouchstart/...` 的写法。
+     * 两种手势：
+     * <ul>
+     *   <li><b>长按 480ms</b> → 在按点弹统一菜单（删除 / 测试连通 / 改名），
+     *       同时把这一行选上并进入多选态 —— 与历史/收藏长按手感一致。</li>
+     *   <li><b>短按抬起</b> → 多选态里切换勾选，普通态里打开详情菜单。</li>
+     * </ul>
+     * 开关（.sw 里的 checkbox）单独走 change，不参与长按。
+     */
+    function bindSrcPress(c) {
+        if (!c || c._srcBound) return;
+        c._srcBound = true;
+        var LONG = 480;
+        var timer = null, fired = false, startPt = null, pressed = null, moved = false;
+
+        var rowOf = function (t) {
+            while (t && t !== c) {
+                if (t.classList && t.classList.contains('srcrow')) return t;
+                t = t.parentNode;
+            }
+            return null;
+        };
+        var ptOf = function (e) {
+            if (e.touches && e.touches[0]) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+            return { x: e.clientX, y: e.clientY };
+        };
+        var clear = function () {
+            if (timer) { clearTimeout(timer); timer = null; }
+        };
+
+        var start = function (e) {
+            // 多选态里不弹菜单，只做勾选
+            if (App.multiSrc) return;
+            var row = rowOf(e.target);
+            if (!row) return;
+            pressed = row;
+            moved = false;
+            fired = false;
+            startPt = ptOf(e);
+            clear();
+            timer = setTimeout(function () {
+                timer = null;
+                var id = row.getAttribute('data-sid');
+                if (!id) return;
+                fired = true;
+                try { if (navigator.vibrate) navigator.vibrate(12); } catch (ignored) {}
+                // 长按 = 选上这一行 + 进入多选，再在按点弹菜单
+                App.multiSrc = { sel: {}, group: App.srcGroupKey };
+                App.multiSrc.sel[id] = true;
+                paintSrcGroup();
+                srcRowMenu(id, startPt.x, startPt.y);
+            }, LONG);
+        };
+        var move = function (e) {
+            if (!startPt) return;
+            var p = ptOf(e);
+            if (Math.abs(p.x - startPt.x) > 10 || Math.abs(p.y - startPt.y) > 10) {
+                moved = true;
+                clear();
+            }
+        };
+        var end = function (e) {
+            clear();
+            if (fired) { fired = false; pressed = null; return; }
+            if (!pressed || moved) { pressed = null; return; }
+            var row = pressed;
+            pressed = null;
+            // 开关、勾选框上的操作不当作行点击
+            if (e && e.target && e.target.closest &&
+                e.target.closest('.sw, .chk')) return;
+            var id = row.getAttribute('data-sid');
+            if (id) ui.srcRowClick(id);
+        };
+
+        c.addEventListener('touchstart', start, { passive: true });
+        c.addEventListener('touchmove', move, { passive: true });
+        c.addEventListener('touchend', end, { passive: true });
+        c.addEventListener('touchcancel', function () { clear(); pressed = null; });
+        c.addEventListener('mousedown', function (e) { if (e.button === 0) start(e); });
+        c.addEventListener('mousemove', move);
+        c.addEventListener('mouseup', end);
+        c.addEventListener('mouseleave', function () { clear(); pressed = null; });
+        // 桌面右键 = 直接弹菜单
+        c.addEventListener('contextmenu', function (e) {
+            var row = rowOf(e.target);
+            if (!row || App.multiSrc) return;
+            e.preventDefault();
+            srcRowMenu(row.getAttribute('data-sid'), e.clientX, e.clientY);
+        });
+        // 开关：委托 change（行会重绘，绑在容器上不受影响）
+        c.addEventListener('change', function (e) {
+            var t = e.target;
+            if (!t || !t.getAttribute) return;
+            var id = t.getAttribute('data-toggle');
+            if (id) ui.toggleSource(id, !!t.checked);
+        });
+    }
+
+    /**
+     * ★ v3.7.13：源行长按菜单（统一 .ctx-menu 样式）。
+     *
+     * <p>把原来「点一行 → 底部升起 sheet」改成「长按一行 → 在按点弹菜单」，
+     * 与历史/收藏页一致。测试连通、删除、改名、卸载插件都收进这里。
+     */
+    function srcRowMenu(id, x, y) {
+        var s = findSource(id);
+        if (!s) return;
+        var plugPath = pluginPathOf(id);
+        var items = [];
+
+        items.push({
+            label: s.enabled ? '停用这个源' : '启用这个源', icon: '⏻',
+            pick: function () { ui.menuToggle(id, s.enabled); }
+        });
+        items.push({
+            label: '测试连通性', icon: '📡',
+            pick: function () { ui.testSource(id); }
+        });
+        items.push({
+            label: '重命名', icon: '✏️',
+            pick: function () { ui.renameSource(id); }
+        });
+
+        if (s.builtin) {
+            items.push({ label: '内置源不可删除', icon: '🔒', disabled: true, pick: function () {
+                TS.toast('内置源只能停用，不能删除');
+            } });
+        } else if (plugPath) {
+            items.push({
+                label: '卸载插件源', icon: '🧩', danger: true,
+                pick: function () { ui.menuUninstall(id); }
+            });
+        } else {
+            items.push({
+                label: '删除此源', icon: '🗑', danger: true,
+                pick: function () { ui.menuDelete(id); }
+            });
+        }
+        ctxMenu(x, y, items);
     }
 
     /**
@@ -4557,40 +4770,34 @@
         if (del) del.textContent = '删除(' + n + ')';
     }
 
-    /** 长按 600ms 进入多选（与章节多选同一套手势参数） */
-    var _srcPressTimer = null, _srcPressFired = false;
-    ui.srcPressStart = function (ev, id) {
-        if (App.multiSrc) return true;
-        ui.srcPressEnd();
-        _srcPressFired = false;
-        _srcPressTimer = setTimeout(function () {
-            _srcPressTimer = null;
-            _srcPressFired = true;
-            // 长按进入多选，并把长按的这行直接选上（少一次点击）
-            App.multiSrc = { sel: {}, group: App.srcGroupKey };
-            App.multiSrc.sel[id] = true;
-            paintSrcGroup();
-        }, 600);
-        return true;   // oncontextmenu 需要返回 true 才不弹系统菜单
-    };
-
-    ui.srcPressEnd = function () {
-        if (_srcPressTimer) { clearTimeout(_srcPressTimer); _srcPressTimer = null; }
-    };
+    /**
+     * ★ v3.7.13：手势已统一由 {@link bindSrcPress} 委托处理。
+     * 这里保留两个空壳，仅为兼容可能残留的外部调用（旧版内联事件）。
+     */
+    ui.srcPressStart = function () { return true; };
+    ui.srcPressEnd = function () {};
 
     /**
-     * 长按已经触发过之后，浏览器还会补一个 click。
-     * 若不拦，就会紧接着打开详情菜单，把刚进入的多选态顶掉。
+     * ★ v3.7.13：短按一行的处理。
+     * 多选态 → 切换勾选（内置源拒绝）；普通态 → 在行的位置弹同一套菜单。
      */
     ui.srcRowClick = function (id) {
-        if (_srcPressFired) { _srcPressFired = false; return; }
         if (App.multiSrc) {
             var s = findSource(id);
             if (s && s.builtin) { ui.srcLockedTip(); return; }
             ui.toggleSrcSel(id);
             return;
         }
-        ui.sourceMenu(id);
+        // 普通态：用行自身的坐标当"按点"，从右上角弹菜单（与长按同一套）
+        var row = document.querySelector('#srcGroupContent .srcrow[data-sid="' +
+            String(id).replace(/"/g, '\\"') + '"]');
+        if (row) {
+            var r = row.getBoundingClientRect();
+            srcRowMenu(id, Math.max(8, r.right - 190), Math.round(r.top + 8));
+        } else {
+            srcRowMenu(id, Math.round(window.innerWidth * 0.16),
+                Math.round(window.innerHeight * 0.22));
+        }
     };
 
     /** 批量删除：确认 → 逐个删除 → 汇总提示 */
@@ -4658,51 +4865,17 @@
         return '';
     }
 
-    /** 单个源的详情菜单（三级） */
+    /**
+     * ★ v3.7.13：单个源的详情菜单。
+     *
+     * <p>v3.7.13 起，源列表的"点击"与"长按"都直接弹统一菜单（{@link srcRowMenu}），
+     * 这里只保留兼容：外部若还调 `ui.sourceMenu(id)`，就往统一菜单里转发。
+     */
     ui.sourceMenu = function (id) {
         var s = findSource(id);
         if (!s) { TS.toast('源不存在'); return; }
-        var nm = s.alias || s.name;
-        var isBuiltin = !!s.builtin;
-        var plugPath = pluginPathOf(id);
-
-        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
-        h += '<div class="sheet" onclick="event.stopPropagation()">';
-        h += '<div class="sheet-hd">' + TS.esc(nm) + '</div>';
-        h += '<div class="srcmeta">' +
-             TS.esc(s.desc || (s.alias ? ('原名：' + s.name) : '暂无简介')) + '</div>';
-
-        // ★ v3.0：JS 源的额外说明 —— 站点验证与搜索间隔，这两条是用户最容易踩的坑
-        if (s.needsVerification || s.searchDelay) {
-            var tips = [];
-            if (s.needsVerification) tips.push('该源需要站点验证：首次搜索若返回空，请到站点上过一次验证码再重试');
-            if (s.searchDelay) tips.push('两次搜索之间至少间隔 ' + s.searchDelay + ' 秒（站点限流）');
-            if (!s.canSearch) tips.push('该源不支持关键词搜索，只能从分类进入浏览');
-            h += '<div class="srcmeta srcmeta-warn">' + TS.esc(tips.join('；')) + '</div>';
-        }
-
-        // 启用开关：点整行任意处都可切换（label 不拦截事件）
-        h += '<div class="sheet-item srow" onclick="App.ui.menuToggle(\'' +
-             escAttr(id) + '\',' + (s.enabled ? 'true' : 'false') + ')">' +
-             '<span>' + (s.enabled ? '已启用（点击停用）' : '已停用（点击启用）') + '</span>' +
-             '<label class="sw"><input type="checkbox" ' + (s.enabled ? 'checked' : '') +
-             '><i></i></label></div>';
-
-        h += '<div class="sheet-item" onclick="App.ui.menuTest(\'' + escAttr(id) + '\')">测试连通性</div>';
-        h += '<div class="sheet-item" onclick="App.ui.menuRename(\'' + escAttr(id) + '\')">重命名</div>';
-
-        if (isBuiltin) {
-            h += '<div class="sheet-item disabled">内置源不可删除</div>';
-        } else if (plugPath) {
-            h += '<div class="sheet-item danger" onclick="App.ui.menuUninstall(\'' +
-                 escAttr(id) + '\')">卸载插件源</div>';
-        } else {
-            h += '<div class="sheet-item danger" onclick="App.ui.menuDelete(\'' +
-                 escAttr(id) + '\')">删除此源</div>';
-        }
-        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
-        h += '</div></div>';
-        sheet(h);
+        srcRowMenu(id, Math.round(window.innerWidth * 0.16),
+            Math.round(window.innerHeight * 0.22));
     };
 
     ui.menuToggle = function (id, cur) {
@@ -4762,7 +4935,11 @@
             TS.call('removePlugin', req.path);
         } else {
             TS.toast('正在删除…');
-            TS.call('removeCustom', req.id);
+            // ★ v3.7.13：以前这里调的是 removeCustom —— 它只认 SourceStore 里的
+            //   JSON 配置，对 Python 源 / 插件源完全无效，native 返回 ok=false，
+            //   前端就报"删除失败"。其实源根本没被处理。现在统一走
+            //   removeSourceById（v3.7.4 就加好了，但单源删除一直漏接）。
+            TS.call('removeSourceById', req.id);
         }
     };
 
@@ -4802,7 +4979,21 @@
             paintSourceEntry();
             refreshSourceViews();
         } else if (o && o.id) {
-            TS.toast('删除失败');
+            // ★ v3.7.13：失败时不再只丢一句"删除失败"。分两种情况：
+            //   ① 源是内置源 / 插件源 → native 拒绝，属于"本来就不该删"；
+            //   ② 真的没删掉 → 提示去"批量管理"里再试，并说明可能原因。
+            var s = findSource(o.id);
+            var nm = s ? (s.alias || s.name) : o.id;
+            if (s && s.builtin) {
+                TS.toast('「' + nm + '」是内置源，只能停用不能删除');
+            } else if (pluginPathOf(o.id)) {
+                TS.toast('「' + nm + '」由插件提供，请改用「卸载插件源」');
+                if (s) ui.menuUninstall(o.id);
+            } else {
+                TS.toast('「' + nm + '」没删掉（可能文件被占用），请到「批量管理」再试一次');
+            }
+            // 兜底：整表重拉一次，避免本地与 native 状态不一致
+            refreshSourceViews();
         }
     };
 
@@ -4887,22 +5078,70 @@
         }
     };
 
+    /**
+     * ★ v3.7.13：测试单个源的连通性。
+     *
+     * <p>以前的写法里 `$('st_' + id)` 这个元素**根本不存在**（只有底部 sheet
+     * 里才有，而 sheet 一关就没了），所以点「测试连通性」后回调写进一个 null，
+     * 用户看不到任何反应 —— 这就是"点击单个源测试连通没有效果"的根因。
+     *
+     * <p>现在：
+     * <ol>
+     *   <li>行内 `<span class="sctest" id="st_xxx">` 立刻显示「测试中…」（列表里能看见）</li>
+     *   <li>测试结束弹一个**结果弹窗**（自带「关闭」按钮），不管成功失败都能看到结论</li>
+     *   <li>超时 12 秒兜底，避免 native 没回调时一直转</li>
+     * </ol>
+     */
+    var _srcTestTimer = null;
     ui.testSource = function (id) {
         var el = $('st_' + id);
-        if (el) { el.textContent = '测试中…'; el.className = 'sctest'; }
-        var isCustom = false;
-        for (var i = 0; i < (App.sources || []).length; i++) {
-            if (App.sources[i].id === id && !App.sources[i].builtin) isCustom = true;
-        }
-        TS.call(isCustom ? 'testCustom' : 'testSource', id);
+        if (el) { el.textContent = '· 测试中…'; el.className = 'sctest testing'; }
+        App._srcTesting = id;
+
+        // 超时兜底：JS/Python 源跑一次真实搜索可能要等限流，给足 30 秒
+        if (_srcTestTimer) clearTimeout(_srcTestTimer);
+        _srcTestTimer = setTimeout(function () {
+            _srcTestTimer = null;
+            if (App._srcTesting === id) {
+                App._srcTesting = null;
+                var e2 = $('st_' + id);
+                if (e2) { e2.textContent = '· 超时'; e2.className = 'sctest bad'; }
+                ui.srcTestSheet(id, false, '测试超时（30 秒没返回），站点可能被限流或不可达');
+            }
+        }, 30000);
+
+        TS.call('testCustom', id);
+    };
+
+    /**
+     * ★ v3.7.13：测试结果弹窗。用户要求"测试后弹窗提醒，点击关闭"。
+     */
+    ui.srcTestSheet = function (id, ok, msg) {
+        var s = findSource(id);
+        var nm = s ? (s.alias || s.name) : id;
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">测试连通性</div>';
+        h += '<div class="srctest-res ' + (ok ? 'ok' : 'bad') + '">' +
+             '<span class="str-ico">' + (ok ? '✔' : '✘') + '</span>' +
+             '<span class="str-nm">' + TS.esc(nm) + '</span></div>';
+        h += '<div class="srcmeta">' + TS.esc(msg || (ok ? '连通正常' : '测试失败')) + '</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
+        h += '</div></div>';
+        sheet(h);
     };
 
     window.onSourceTested = function (o) {
-        var el = $('st_' + (o && o.id));
+        if (_srcTestTimer) { clearTimeout(_srcTestTimer); _srcTestTimer = null; }
+        var id = o && o.id;
+        App._srcTesting = null;
+        var el = $('st_' + id);
         if (el) {
-            el.textContent = (o.ok ? '✔ ' : '✘ ') + (o.msg || '');
-            el.className = 'sctest ' + (o.ok ? 'ok' : 'bad');
+            el.textContent = (o && o.ok ? ' · ✔ 正常' : ' · ✘ ' + ((o && o.msg) || '失败'));
+            el.className = 'sctest ' + (o && o.ok ? 'ok' : 'bad');
         }
+        // ★ 弹窗提醒（用户明确要求），带「关闭」按钮
+        ui.srcTestSheet(id, !!(o && o.ok), (o && o.msg) || '');
     };
 
     ui.removeCustom = function (id) { ui.menuDelete(id); };
@@ -6223,6 +6462,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.13',
+            date: '2025-10-11',
+            fixes: [
+                '修复书源管理里点「删除此源」总是提示「删除失败」：单源删除一直调的是只认 JSON 配置的老接口，对 Python 源和插件源完全无效（native 直接返回失败）。现在改成按源类型自动分派的删除接口，JSON / Python / 插件源都能删掉；失败时也会按类型给出准确原因（内置源只能停用、插件源请用「卸载插件源」、文件被占用请重试）',
+                '修复点击单个书源的「测试连通性」没有任何反应：测试结果原本写进一个只存在于底部菜单里的元素，菜单一关元素就没了，用户什么都看不到。现在列表行内直接显示「测试中… / ✔ 正常 / ✘ 失败」',
+                '修复播放失败提示互相打架：native 和前端会各弹一句「取链失败」，两句叠在同一位置，用户只看到半截。现在统一由前端展示，且把播放器底层报错原因一并带上',
+                '统一下拉菜单视觉：选集页的「列数 / 区间」和播放页的「更多」以前各有一套自己的气泡样式，现在全部统一成与历史/收藏长按菜单同一套（同一份样式、同一个弹出动画、同一套贴边收敛）'
+            ],
+            adds: [
+                '书源管理改为长按交互：长按任意一行即在按住的位置弹出菜单（启停 / 测试连通性 / 重命名 / 删除），与历史和收藏页的手感完全一致；按住不动会自动进入多选，可批量删除',
+                '测试连通性结束后弹出结果面板，显示源名、结论与失败原因，带「关闭」按钮，不再是一闪而过的提示',
+                '播放失败时弹出面板，说明是哪一集、哪个源、播放器报了什么，并直接提供「换下一集试试」「换一个书源」两个下一步动作，不用自己摸索'
+            ]
+        },
         {
             ver: '3.7.12',
             date: '2025-10-11',

@@ -455,7 +455,10 @@ public class MainActivity extends Activity
                 ui.post(new Runnable() {
                     public void run() {
                         if (url == null) {
-                            toast("取链失败，试试其他源");
+                            // ★ v3.7.13：这里**不再**自己 toast —— 前端 onPlayError
+                            //   会弹一个带「关闭 / 换一集 / 换源」的提示面板。
+                            //   以前这里 toast 一次、前端又 toast 一次，两句话叠在
+                            //   屏幕上互相覆盖，用户只看到一句半截的提示。
                             callJs("window.onPlayError()");
                             return;
                         }
@@ -681,8 +684,16 @@ public class MainActivity extends Activity
                 }
             }
         } catch (Throwable ignored) {}
-        toast(msg);
-        callJs("window.onPlayError()");
+        // ★ v3.7.13：改成把原因交给前端统一展示（前端会弹带「关闭 / 换源」的面板），
+        //   这里不再 toast，避免两条提示互相覆盖。
+        try {
+            JSONObject _o = new JSONObject();
+            _o.put("reason", msg == null ? "" : msg);
+            _o.put("kind", "play");
+            callJs("window.onPlayError(" + _o.toString() + ")");
+        } catch (Throwable t) {
+            callJs("window.onPlayError()");
+        }
     }
 
     // ==================== 通知栏同步 ====================

@@ -690,6 +690,23 @@ button.mini:active { opacity: .7; }
 .sctest { font-size: 12.5px; color: var(--text2); }
 .sctest.ok { color: #34c759; }
 .sctest.bad { color: #ff3b30; }
+.sctest.testing { color: var(--primary); }
+
+/* ★ v3.7.13：长按提示（替代原来的「批量管理」按钮） */
+.srchint {
+    font-size: 12px; color: var(--text2); line-height: 1.5;
+    padding: 0 2px;
+}
+
+/* ★ v3.7.13：测试连通结果弹窗的头部（图标 + 源名） */
+.srctest-res {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 16px 18px 8px;
+}
+.srctest-res .str-ico { font-size: 20px; line-height: 1; }
+.srctest-res .str-nm { font-size: 15.5px; font-weight: 600; }
+.srctest-res.ok .str-ico, .srctest-res.ok .str-nm { color: #34c759; }
+.srctest-res.bad .str-ico, .srctest-res.bad .str-nm { color: #ff3b30; }
 
 /* ---- 书源管理：一级分组行 ---- */
 .grprow {
@@ -1556,22 +1573,9 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
     font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .chs-tool:active { background: var(--line2); color: var(--text); }
-/* 下拉菜单（挂在按钮正下方，右对齐） */
-.chs-dd {
-    position: fixed; z-index: 10001;
-    min-width: 128px; max-height: 46vh; overflow-y: auto;
-    background: var(--card); border: 1px solid var(--line2); border-radius: 12px;
-    box-shadow: 0 10px 32px rgba(0,0,0,.18); padding: 4px;
-    animation: chsDdIn .16s ease-out both;
-}
-@keyframes chsDdIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-.chs-dd-item {
-    padding: 11px 14px; font-size: 13.5px; color: var(--text);
-    border-radius: 8px; cursor: pointer; white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}
-.chs-dd-item:active { background: var(--line2); }
-.chs-dd-item.on { color: var(--primary); font-weight: 600; }
+/* ★ v3.7.13：列数/区间下拉以前有自己一套 .chs-dd，现已统一到 .ctx-menu
+   （见文件后段「长按上下文菜单」），此处不再重复定义。 */
+
 /* ★ v3.7.10：选集列表分列（与详情页章节列表同一套栅格逻辑） */
 .chlist-inner.cols-2, .chlist-inner.cols-3 {
     display: grid; gap: 0; padding: 0 6px;
@@ -2105,33 +2109,9 @@ html.dark .cl-blk-t.fix { color: #4cd964; }
 .sheet-item.on { color: var(--primary); font-weight: 600; }
 
 /* ★ v3.2：「更多」下拉气泡。贴在「⋯ 更多」按钮右上方，
-   只占一小块、不压暗背景（对比之前的底部 sheet 少了整片遮罩，观感轻很多）。 */
-.more-drop {
-    position: fixed; z-index: 70;
-    min-width: 168px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
-    overflow: hidden;
-    animation: moreDrop .16s ease-out;
-}
-@keyframes moreDrop {
-    from { opacity: 0; transform: translateY(6px) scale(.97); }
-    to { opacity: 1; transform: none; }
-}
-.more-item {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 18px; padding: 12px 14px;
-    font-size: 14px; color: var(--text);
-    cursor: pointer; white-space: nowrap;
-}
-.more-item + .more-item { border-top: 1px solid var(--line); }
-.more-item:active { background: var(--bg); }
-.more-val {
-    font-size: 12.5px; color: var(--text2);
-    font-variant-numeric: tabular-nums;
-}
+   只占一小块、不压暗背景。
+   ★ v3.7.13：已统一到 .ctx-menu（见后段「长按上下文菜单」），
+   .more-drop / .more-item / .more-val 全部废弃，改用 .ctx-item / .ci-val。 */
 /* 下拉展开时「更多」按钮保持高亮，让用户知道菜单是它弹出来的 */
 .fop.on { background: var(--primary); color: #fff; border-color: var(--primary); }
 
@@ -2313,6 +2293,7 @@ body.multi-src-on .chk-src { display: block; }
 .ctx-menu {
     position: fixed; z-index: 9990;
     min-width: 168px; max-width: 260px;
+    max-height: 56vh; overflow-y: auto;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -2343,8 +2324,18 @@ body.multi-src-on .chk-src { display: block; }
     font-size: 15px; opacity: .9;
 }
 .ctx-item .ci-tx { overflow: hidden; text-overflow: ellipsis; }
+.ctx-item .ci-val {
+    margin-left: auto; padding-left: 14px;
+    font-size: 12.5px; color: var(--text2);
+    font-variant-numeric: tabular-nums;
+}
 .ctx-item.danger { color: #e5484d; }
 .ctx-item.danger:active { background: rgba(229, 72, 77, .12); }
+/* ★ v3.7.13：选中项（选集列数/区间、开启/关闭分组全开全关等） */
+.ctx-item.on { color: var(--primary); font-weight: 600; }
+.ctx-item.on .ci-val { color: var(--primary); }
+/* ★ v3.7.13：不可选项（内置源不可删除），灰掉且不响应点击 */
+.ctx-item.disabled { color: var(--text2); opacity: .55; pointer-events: none; }
 
 /* 长按提示：卡片按住时轻微下压，给"可长按"的触感反馈 */
 .bookcard[data-hist-key],
