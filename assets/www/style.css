@@ -510,7 +510,18 @@ img.imgfail { opacity: .12 !important; }
     font-variant-numeric: tabular-nums; text-align: right;
 }
 .chapter .tt { flex: 1; font-size: 14.5px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+    text-overflow: ellipsis; white-space: nowrap;
+    /* ★ v3.7.16：flex 子项必须 min-width:0 才会真正收缩，
+       否则跑马灯测量拿到的可用宽度是错的（内容会把行撑开）。 */
+    min-width: 0; }
+/* ★ v3.7.16：多列布局下不做跑马灯（格子太窄，滚动反而难读），
+   保持省略号；单列时由 bridge.js 的 marquee() 自动接管。 */
+.chapter-list.cols-2 .chapter .tt .mq-in,
+.chapter-list.cols-3 .chapter .tt .mq-in { animation: none !important; }
+.chapter-list.cols-2 .chapter .tt.mq,
+.chapter-list.cols-3 .chapter .tt.mq { text-overflow: ellipsis; }
+.chapter-list.cols-2 .chapter .tt.mq .mq-seg.mq-dup,
+.chapter-list.cols-3 .chapter .tt.mq .mq-seg.mq-dup { display: none; }
 .chapter.playing .no, .chapter.playing .tt { color: var(--primary); font-weight: 600; }
 .chapter .dl { font-size: 14px; color: var(--text2); cursor: pointer;
     padding: 4px 8px; flex-shrink: 0; min-width: 22px; text-align: center;
@@ -1601,6 +1612,22 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
     font-variant-numeric: tabular-nums; }
 .chitem .chtt { flex: 1; font-size: 14px; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ★ v3.7.16：章节名过长 → 复用全局跑马灯（bridge.js 的 marquee()，
+   样式是 .mq / .mq-in / .mq-seg，见文件前段「跑马灯」一节）。
+   这里只补两点：
+     1) 多列布局下不做跑马灯 —— 2/3 列的格子太窄，滚动反而难读，
+        继续用省略号；
+     2) .chtt 是 flex 子项，必须给 min-width:0 它才会真正收缩，
+        否则跑马灯测量出的可用宽度是错的（这是 flex 的经典坑）。 */
+.chitem .chtt { min-width: 0; }
+.chlist-inner.cols-2 .chitem .chtt .mq-in,
+.chlist-inner.cols-3 .chitem .chtt .mq-in {
+    animation: none !important;
+}
+.chlist-inner.cols-2 .chitem .chtt.mq,
+.chlist-inner.cols-3 .chitem .chtt.mq { text-overflow: ellipsis; }
+.chlist-inner.cols-2 .chitem .chtt.mq .mq-seg.mq-dup,
+.chlist-inner.cols-3 .chitem .chtt.mq .mq-seg.mq-dup { display: none; }
 .chitem.on { background: rgba(232, 80, 58, .08); }
 .chitem.on .chtt { color: var(--primary); font-weight: 600; }
 .chitem.on .chno { color: var(--primary); }
@@ -2278,8 +2305,19 @@ body.multi-on .chk { display: block; }
    ============================================================ */
 .ctx-menu {
     position: fixed; z-index: 9990;
-    min-width: 168px; max-width: 260px;
-    max-height: 56vh; overflow-y: auto;
+    min-width: 168px;
+    /* ★ v3.7.16：宽度上限从固定 260px 改成视口百分比 ——
+       窄屏（分屏/小屏）下 260px 会顶到屏幕边缘，菜单被切掉一半。
+       82vw 保证左右各留出约 9% 的呼吸位；再多就交给横向滚动。 */
+    max-width: 82vw;
+    max-height: 56vh;
+    /* ★ v3.7.16：横向可滑。菜单项比较多字/长文案时不换行、
+       不撑破屏幕，而是让菜单自己横向滚动（配合下面 .ctx-item 的
+       max-width: none，否则 white-space:nowrap 会被 ellipsis 截断）。 */
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -2287,7 +2325,7 @@ body.multi-on .chk { display: block; }
     padding: 5px;
     animation: ctxIn .16s cubic-bezier(.2, .8, .3, 1.2);
     transform-origin: top left;
-    overflow: hidden;
+    box-sizing: border-box;
 }
 @keyframes ctxIn {
     from { opacity: 0; transform: scale(.88); }
@@ -2302,6 +2340,10 @@ body.multi-on .chk { display: block; }
     border-radius: 9px;
     font-size: 14.5px; color: var(--text);
     cursor: pointer; white-space: nowrap;
+    /* ★ v3.7.16：不设 max-width —— 让内容决定宽度，
+       由 .ctx-menu 的 max-width:82vw + overflow-x:auto 兜底。
+       这样短菜单保持紧凑，长菜单横向滑动而不是被"…"截断。 */
+    max-width: none;
     transition: background .12s;
 }
 .ctx-item:active { background: var(--line2); }
@@ -2309,7 +2351,9 @@ body.multi-on .chk { display: block; }
     width: 20px; text-align: center; flex-shrink: 0;
     font-size: 15px; opacity: .9;
 }
-.ctx-item .ci-tx { overflow: hidden; text-overflow: ellipsis; }
+/* ★ v3.7.16：不再 ellipsis 截断（配合横向滚动）。
+   菜单宽度已被 82vw 限死，超出部分由 .ctx-menu 横向滑动查看。 */
+.ctx-item .ci-tx { flex-shrink: 0; }
 .ctx-item .ci-val {
     margin-left: auto; padding-left: 14px;
     font-size: 12.5px; color: var(--text2);

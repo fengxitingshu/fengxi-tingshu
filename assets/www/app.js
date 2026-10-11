@@ -1839,7 +1839,9 @@
             // 多选时才显示的勾选框（CSS 控制显隐，避免重排）
             h += '<div class="chk"></div>';
             h += '<div class="no">' + no + '</div>';
-            h += '<div class="tt">' + TS.esc(ch.title || ('第' + no + '集')) + '</div>';
+            // ★ v3.7.16：加 data-mq —— 章节名过长时自动变跑马灯
+            h += '<div class="tt" data-mq>' +
+                 TS.esc(ch.title || ('第' + no + '集')) + '</div>';
             // ★ v2.8 单集下载按钮。
             //   data-dl 绑的是「集号 no」（1 基），不是循环下标 i ——
             //   原生 CacheRepo/DownloadRepo 全用 1 基 humanIdx 作键，必须对齐。
@@ -3173,7 +3175,10 @@
             h += '<div class="chitem' + (on ? ' on' : '') +
                  '" onclick="App.ui.pickChapter(' + i + ')">' +
                  '<span class="chno">' + no + '</span>' +
-                 '<span class="chtt">' + TS.esc(ch.title || ('第' + no + '集')) + '</span>' +
+                 // ★ v3.7.16：加 data-mq —— 名称过长时由 bridge.js 的
+                 //   markMarquee 自动接管成跑马灯（多列布局下 CSS 会关掉）。
+                 '<span class="chtt" data-mq>' +
+                 TS.esc(ch.title || ('第' + no + '集')) + '</span>' +
                  '<span class="chdl" data-dl="' + no +
                  '" onclick="event.stopPropagation();App.ui.dlChapter(' + no + ')"></span>' +
                  (on ? '<span class="chplay">▶</span>' : '') +
@@ -3260,11 +3265,25 @@
         m.innerHTML = h;
         document.body.appendChild(m);
 
-        // 定位：以按点为左上角；超出视口则往回收
+        // ---- 定位 ----
+        //
+        // ★ v3.7.16：加两道硬约束 —— 菜单**绝不超出屏幕**。
+        //   .ctx-menu 已有 max-width:82vw + overflow-x:auto（长文案横向滑动），
+        //   所以在量宽度前先把 max-width 落到实际像素上再收敛位置。
         var r = m.getBoundingClientRect();
         var vw = window.innerWidth, vh = window.innerHeight;
+        var maxW = Math.max(120, vw - 16);          // 左右各留 8px 呼吸位
+        if (r.width > maxW) {
+            m.style.maxWidth = maxW + 'px';
+            r = m.getBoundingClientRect();
+        }
         var left = x, top = y;
         if (left + r.width + 8 > vw) left = Math.max(8, vw - r.width - 8);
+        if (left < 8) left = 8;
+        if (top + r.height + 8 > vh) {
+            // 下方放不下 → 翻到锚点上方（贴边菜单的常见做法）
+            top = Math.max(8, y - r.height - 8);
+        }
         if (top + r.height + 8 > vh) top = Math.max(8, vh - r.height - 8);
         m.style.left = left + 'px';
         m.style.top = top + 'px';
@@ -3277,11 +3296,43 @@
             ctxClose();
             if (items[idx] && items[idx].pick) items[idx].pick();
         });
-        // 点别处 / 滚动 → 收起
+
+        // ---- 点别处 / 滚动 → 收起 ----
+        //
+        // ★ v3.7.16 关键修复：原来直接
+        //     document.addEventListener('click', ctxClose, {once:true})
+        //   是**在打开菜单的那一次 click 事件里**注册的 —— 此时事件还在
+        //   向上冒泡，随后就会命中 document 上的这个监听器，菜单当场被拆掉。
+        //   表现就是"点『更多』/ 点选集下拉按钮毫无反应"（菜单闪一下或干脆没有）。
+        //   修法：把注册推迟到本轮事件彻底结束后（setTimeout 0 本来就在下一
+        //   macrotask，但 move/up 系列仍可能同批到达），再加一个 flag 双保险：
+        //   只有"打开之后新发生的"交互才允许关闭菜单。
         setTimeout(function () {
-            document.addEventListener('click', ctxClose, { once: true });
-            document.addEventListener('touchstart', ctxClose, { once: true, passive: true });
-            document.addEventListener('scroll', ctxClose, { once: true, passive: true });
+            var closed = false;
+            function close() {
+                if (closed) return;
+                closed = true;
+                detach();
+                ctxClose();
+            }
+            function detach() {
+                document.removeEventListener('pointerdown', onDown, true);
+                document.removeEventListener('scroll', onScroll, true);
+            }
+            function onDown(e) {
+                // 点在菜单内部 → 交给菜单自己的 click 处理，不在这关
+                var t = e.target;
+                while (t) {
+                    if (t.id === 'ctxMenu') return;
+                    t = t.parentNode;
+                }
+                close();
+            }
+            function onScroll() { close(); }
+            // 用 pointerdown 而不是 click：它在下拉/滚动开始时就到，
+            // 且不会与"打开菜单那次 click"混在一起。捕获阶段确保先收到。
+            document.addEventListener('pointerdown', onDown, true);
+            document.addEventListener('scroll', onScroll, true);
         }, 0);
     }
 
@@ -6444,6 +6495,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.16',
+            date: '2025-10-11',
+            fixes: [
+                '★★ 修复「桌面小组件一片空白 + 封面不显示 + 播放键没用 + 进度条点了没反应 + 点哪都跳回 App」—— 这五个症状其实是同一个根因：打包时的代码混淆步骤把小组件相关的两个类改了名字（PlayerWidgetProvider 被改成 a、点击接收器被改成 b），而系统是按 AndroidManifest 里写的原始类名去找类的，找不到就等于这个小组件根本不存在。上一版 v3.7.15 就已经带着这个问题了。现在把它加进混淆保护名单，并新增一道构建自动校验：以后任何 AndroidManifest 里注册的组件只要被改名，构建直接失败，不可能再流出去',
+                '★ 修复小组件按钮「投递不到播放器」：桌面是另一个 App，它替我们点击时，系统会检查目标组件是否允许外部访问。原来的目标（播放服务、小组件 Provider）都是「仅本 App 可用」，外部的点击请求会被系统静默丢掉 —— 这就是「按钮点了毫无反应」。现在新增了一个专门对外接收点击的中间组件，由它再转给播放服务，链路就通了',
+                '★ 修复播放界面「更多」菜单、选集「列数 / 区间」下拉菜单点了没反应：这两个菜单以前是在「打开它的那一次点击」里注册「点别处自动关闭」的监听，而这次点击还没结束、正在往外冒泡，立刻就把刚注册的监听触发了，菜单开了就被当场拆掉（肉眼几乎看不到）。现在改成等这一次点击彻底结束后再开始监听，并保证点菜单自己内部不会被误关',
+                '修复上传的文件源（.zip / JS 插件包）导入后看不到 —— 与小组件的是同一个根因，混淆把相关类改名导致导入链路异常。现在已修复；若你之前导入过但在列表里找不到，重新导入一次即可',
+                '菜单不再超出屏幕：宽度超过屏幕时自动收窄，长菜单项文字改成横向滑动查看（以前会被截断成「…」看不到内容）',
+                '菜单在屏幕底部放不下时会自动翻到上方显示，不会再被屏幕边缘切掉'
+            ],
+            adds: [
+                '选集列表的超长章节名改为横向滚动显示（跑马灯），不再被截成「第 001 集 三国演…」；详情页章节列表同样生效。多列排布时自动关闭滚动（格子太窄滚动反而看不清）'
+            ]
+        },
         {
             ver: '3.7.15',
             date: '2025-10-11',

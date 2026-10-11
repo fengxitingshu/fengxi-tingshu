@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 42', /android:versionCode="42"/.test(man));
-  check('versionName = 3.7.15（三段式）', /android:versionName="3\.7\.15"/.test(man));
+  check('versionCode = 43', /android:versionCode="43"/.test(man));
+  check('versionName = 3.7.16（三段式）', /android:versionName="3\.7\.16"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.7.15', /id="appVer">3\.7\.15</.test(idx));
-  check('关于页版本显示 3.7.15', /id="aboutVer">3\.7\.15</.test(idx));
+  check('设置页版本显示 3.7.16', /id="appVer">3\.7\.16</.test(idx));
+  check('关于页版本显示 3.7.16', /id="aboutVer">3\.7\.16</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1176,8 +1176,8 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=42 / versionName=3.7.15',
-    /android:versionCode="42"/.test(mf) && /android:versionName="3\.7\.15"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=43 / versionName=3.7.16',
+    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1210,10 +1210,19 @@ function check(name, ok, detail) {
   check('v3.7.10/v3.7.13：列数/区间下拉转发到统一菜单 chsDropdown → ctxMenu',
     /function chsDropdown\(/.test(appJs) && /ctxMenu\(/.test(appJs)
     && !/id = 'chsDropdown'/.test(appJs));
-  check('v3.7.10/v3.7.13：点空白 / 触摸 / 滚动都会收起统一菜单',
-    /document\.addEventListener\('click', ctxClose, \{ once: true \}\)/.test(appJs)
-    && /document\.addEventListener\('touchstart', ctxClose, \{ once: true, passive: true \}\)/.test(appJs)
-    && /document\.addEventListener\('scroll', ctxClose, \{ once: true, passive: true \}\)/.test(appJs));
+  // ★ v3.7.16：菜单收起机制从 click+once 改为 pointerdown（捕获阶段）+ closed 标志。
+  //   旧写法有个致命 bug：ctxClose 在「打开菜单的那次 click 事件里」用 {once:true} 注册，
+  //   同一次 click 继续冒泡到 document 时立即命中它 → 菜单当场被拆掉。
+  //   这就是「更多」菜单和选集下拉「点了没反应」的根因。
+  check('v3.7.16/MENU：点空白 / 滚动都会收起统一菜单',
+    /document\.addEventListener\('pointerdown', onDown, true\)/.test(appJs)
+    && /document\.addEventListener\('scroll', onScroll, true\)/.test(appJs)
+    && /if \(closed\) return;/.test(appJs)
+    && /closed = true;/.test(appJs)
+    // 点菜单内部不能关：命中 #ctxMenu 直接 return
+    && /if \(t\.id === 'ctxMenu'\) return;/.test(appJs)
+    // 旧的 click+once 自毁写法必须已消失
+    && !/addEventListener\('click', ctxClose, \{ once: true \}\)/.test(appJs));
   check('v3.7.10：列数下拉含 1/2/3 三档',
     /\{ label: '1 列'/.test(appJs) && /\{ label: '3 列'/.test(appJs));
   check('v3.7.10/v3.7.13：选项点击后立即收起菜单',
@@ -1247,8 +1256,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=42 / versionName=3.7.15',
-    /android:versionCode="42"/.test(mf) && /android:versionName="3\.7\.15"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=43 / versionName=3.7.16',
+    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1272,11 +1281,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=42 / versionName=3.7.15',
-    /android:versionCode="42"/.test(mf) && /android:versionName="3\.7\.15"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=43 / versionName=3.7.16',
+    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.7.15',
-    /id="appVer">3\.7\.15</.test(idxHtml) && /id="aboutVer">3\.7\.15</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.7.16',
+    /id="appVer">3\.7\.16</.test(idxHtml) && /id="aboutVer">3\.7\.16</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1319,6 +1328,12 @@ function check(name, ok, detail) {
   const wgLay14 = fs.readFileSync('/root/tingshu-app/res/layout/widget_player.xml', 'utf8');
   const wgBg14 = fs.readFileSync('/root/tingshu-app/res/drawable/wg_bg.xml', 'utf8');
 
+  // ★ v3.7.16：小组件点击链路的三个关键文件
+  const provider16 = provider14;
+  const clickRecv16 = fs.readFileSync(
+    '/root/tingshu-app/src/com/tingshu/app/widget/WidgetClickReceiver.java', 'utf8');
+  const manifest16 = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
+
   check('v3.7.14/W：wgRoot 上不再挂 PendingIntent（按钮不再被整块面板吞掉）',
     !/setOnClickPendingIntent\(\s*R\.id\.wgRoot/.test(providerCode14));
   check('v3.7.14/W：三个控制键各自挂独立 PendingIntent',
@@ -1328,8 +1343,27 @@ function check(name, ok, detail) {
   check('v3.7.14/W：只有封面区/信息区可点开 App',
     /setOnClickPendingIntent\(R\.id\.wgCoverTap/.test(provider14)
     && /setOnClickPendingIntent\(R\.id\.wgInfoTap/.test(provider14));
-  check('v3.7.14/W：控制键改 getService 直投播放服务',
-    /PendingIntent\.getService\(ctx, req, i, flags\)/.test(provider14));
+  // ★ v3.7.16：控制键不再"直投 PlayerService"。
+  //   原因：桌面 launcher 是另一个 App，它触发小组件 PendingIntent 时
+  //   系统按目标组件的 android:exported 校验；PlayerService 和 Provider
+  //   都是 exported="false" → 投递被静默丢弃 → 按钮/进度条全部无反应。
+  //   现在统一改投 exported="true" 的 WidgetClickReceiver（getBroadcast）。
+  check('v3.7.16/W：控制键改投 exported 的 WidgetClickReceiver（不再直投 Service）',
+    /PendingIntent\.getBroadcast\(ctx, req, i, flags\)/.test(provider16)
+    && /new Intent\(ctx, WidgetClickReceiver\.class\)/.test(provider16)
+    && !/PendingIntent\.getService\(ctx, req, i, flags\)/.test(provider16));
+  check('v3.7.16/W：WidgetClickReceiver 是独立 exported receiver（桌面才能投递）',
+    /class WidgetClickReceiver extends BroadcastReceiver/.test(clickRecv16)
+    && /android:exported="true"/.test(manifest16)
+    && /\.widget\.WidgetClickReceiver/.test(manifest16)
+    && /com\.tingshu\.app\.widget\.ACTION/.test(manifest16));
+  check('v3.7.16/W：Receiver 转发到 PlayerService（TOGGLE/PREV/NEXT/SEEK 四动作齐）',
+    /PlayerWidgetProvider\.WIDGET_TOGGLE\.equals\(act\)[\s\S]{0,200}?ACT_TOGGLE/.test(clickRecv16)
+    && /WIDGET_PREV[\s\S]{0,120}?ACT_PREV/.test(clickRecv16)
+    && /WIDGET_NEXT[\s\S]{0,120}?ACT_NEXT/.test(clickRecv16)
+    && /WIDGET_SEEK[\s\S]{0,400}?ACT_SEEK/.test(clickRecv16));
+  check('v3.7.16/W：进度条 20 格各挂独立 requestCode（PendingIntent 去重只看 req/action）',
+    /seekPi\(ctx, 100 \+ i\)/.test(provider16) || /100 \+ i/.test(provider16));
   check('v3.7.14/W：进程被回收后 CTL 为空时降级拉起 App',
     /Ctl c = CTL;[\s\S]{0,3000}?startActivity\(ui\)/.test(psvc14));
   check('v3.7.14/W：小组件封面上屏（CoverListener 回调链路完整）',
@@ -1508,8 +1542,73 @@ function check(name, ok, detail) {
     /monospace/.test(css15) && /max-height: 52vh; overflow: auto/.test(css15));
 
   // ---- 版本号 ----
-  check('v3.7.15/V：前端关于页版本号已到 3.7.15',
-    /id="aboutVer">3\.7\.15/.test(idx15) && /id="appVer">3\.7\.15/.test(idx15));
+  const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
+  check('v3.7.16/V：前端关于页版本号已到 3.7.16',
+    /id="aboutVer">3\.7\.16/.test(idx16s) && /id="appVer">3\.7\.16/.test(idx16s));
+  check('v3.7.16/V：AndroidManifest 版本号同步到 3.7.16 / code 43',
+    /android:versionCode="43"/.test(manifest16)
+    && /android:versionName="3\.7\.16"/.test(manifest16));
+  check('v3.7.16/LOG：CHANGELOG 首条即 3.7.16（更新公告能弹出）',
+    /ver: '3\.7\.16'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
+
+  // ==================== v3.7.16 ====================
+  // 本轮修的全是「点了像没点」类问题，根因集中在三处：
+  //   1) R8 把 Manifest 注册的小组件类改名 → 系统找不到类
+  //   2) PendingIntent 投给 exported=false 的组件 → 桌面投递被丢弃
+  //   3) ctxMenu 用 click+once 自毁 → 菜单开了就关
+  const pro16 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
+  const css16 = fs.readFileSync('/root/tingshu-app/assets/www/style.css', 'utf8');
+  const bld16 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
+
+  // --- 1) R8 混淆闸门（本轮最核心的根因） ---
+  check('v3.7.16/PG：proguard 保留 widget 包（Manifest 注册类不能被改名）',
+    /-keep class com\.tingshu\.app\.widget\.\*\* \{ \*; \}/.test(pro16));
+  check('v3.7.16/PG：所有 Manifest 组件所在包都在 keep 名单里',
+    /-keep class com\.tingshu\.app\.MainActivity \{ \*; \}/.test(pro16)
+    && /-keep class com\.tingshu\.app\.core\.App \{ \*; \}/.test(pro16)
+    && /-keep class com\.tingshu\.app\.player\.PlayerService \{ \*; \}/.test(pro16)
+    && /-keep class com\.tingshu\.app\.player\.FloatBallService \{ \*; \}/.test(pro16)
+    && /-keep class com\.tingshu\.app\.player\.PlayerBrowserService \{ \*; \}/.test(pro16));
+  check('v3.7.16/BLD：build.sh 新增「Manifest 组件保名闸门」（防再犯）',
+    /Manifest 组件保名闸门/.test(bld16)
+    && /mapping\.txt/.test(bld16)
+    && /proguard-rules\.pro/.test(bld16));
+
+  // --- 2) exported 投递链路 ---
+  check('v3.7.16/W：Provider 仍保持 exported=false（状态刷新只由本 App 发）',
+    /PlayerWidgetProvider[\s\S]{0,300}?exported="false"/.test(manifest16));
+  check('v3.7.16/W：WidgetClickReceiver 在 manifest 里声明了 intent-filter ACTION',
+    /WidgetClickReceiver[\s\S]{0,500}?<action android:name="com\.tingshu\.app\.widget\.ACTION"/.test(manifest16));
+  check('v3.7.16/W：Provider 提供 dispatch() 静态分发（Receiver 复用）',
+    /static void dispatch\(Context ctx, String svcAction\)/.test(provider16));
+  check('v3.7.16/W：dispatch 用 startForegroundService（O+ 后台起服务不被拒）',
+    /startForegroundService\(i\)/.test(provider16));
+  check('v3.7.16/W：Provider.onReceive 不再处理 TOGGLE/PREV/NEXT（已迁到 Receiver）',
+    !/WIDGET_TOGGLE\.equals\(action\)/.test(provider16.replace(/\/\*[\s\S]*?\*\//g, '')));
+
+  // --- 3) 菜单自毁 + 限位 + 跑马灯 ---
+  check('v3.7.16/MENU：菜单 max-width 为 82vw（不超出屏幕）',
+    /\.ctx-menu\s*\{[\s\S]{0,400}?max-width:\s*82vw/.test(css16));
+  check('v3.7.16/MENU：菜单横向可滚动（超宽内容横滑）',
+    /\.ctx-menu\s*\{[\s\S]{0,600}?overflow-x:\s*auto/.test(css16));
+  check('v3.7.16/MENU：JS 侧先落 max-width 再量宽（量出的是真实可用宽度）',
+    /var maxW = Math\.max\(120, vw - 16\)/.test(appJs)
+    && /m\.style\.maxWidth = maxW \+ 'px'/.test(appJs)
+    && /r = m\.getBoundingClientRect\(\)/.test(appJs));
+  check('v3.7.16/MENU：下方放不下时翻到锚点上方',
+    /top = Math\.max\(8, y - r\.height - 8\)/.test(appJs)
+    // 翻上去还是放不下 → 贴底（第三道兜底）
+    && /top = Math\.max\(8, vh - r\.height - 8\)/.test(appJs));
+  check('v3.7.16/MQ：章节名挂 data-mq（交给 bridge.js 的自动跑马灯）',
+    (appJs.match(/data-mq/g) || []).length >= 4);
+  check('v3.7.16/MQ：.chtt / .chapter .tt 加 min-width:0（flex 子项才能正确测宽）',
+    /\.chitem \.chtt\s*\{[\s\S]{0,300}?min-width:\s*0/.test(css16)
+    && /\.chapter \.tt\s*\{[\s\S]{0,300}?min-width:\s*0/.test(css16));
+  check('v3.7.16/MQ：多列排布时关掉跑马灯（避免 1/3 宽度里横滚）',
+    /\.chapter \.tt[\s\S]{0,700}?animation:\s*none !important/.test(css16));
+  check('v3.7.16/MENU：菜单项文本不再省略号截断（.ci-tx 不收缩）',
+    /\.ctx-item\s*\{[\s\S]{0,400}?max-width:\s*none/.test(css16)
+    && /\.ci-tx\s*\{[\s\S]{0,300}?flex-shrink:\s*0/.test(css16));
 }
 
 // 打包后复核用：从 APK 里反解小组件布局的真实标签名

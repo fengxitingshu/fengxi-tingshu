@@ -54,6 +54,20 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String WIDGET_NEXT = "com.tingshu.app.widget.NEXT";
     /** 点进度条某格 → seek（extra "sec" = 目标秒），v3.7.15 */
     public static final String WIDGET_SEEK = "com.tingshu.app.widget.SEEK";
+    /**
+     * ★ v3.7.16：小组件的三个控制键与进度条统一经由
+     * {@link WidgetClickReceiver} 这个**独立且 exported** 的接收器投递。
+     *
+     * <p>为什么不直接在这里处理（v3.7.15 的做法，已证实失效）：
+     * 本 Provider 在清单里是 {@code exported="false"}。桌面（launcher）是
+     * **另一个 App**，它替我们触发 PendingIntent 时会被 exported 检查拦下 ——
+     * 于是点播放键、点进度条全都静默失败，只有 "打开 App" 那个
+     * {@code getActivity} 能生效（Activity 是 exported 的），
+     * 表现正好就是用户报的「点击只能回到 App」。
+     */
+    public static final String WIDGET_ACTION =
+            "com.tingshu.app.widget.ACTION";
+
     /** 进度条点击分区数（每格 5%），与布局里 wgSeek0..19 一一对应 */
     static final int SEEK_SEGMENTS = 20;
 
@@ -72,40 +86,11 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         super.onReceive(ctx, intent);
         String a = intent == null ? null : intent.getAction();
         if (a == null) return;
-        // ★ v3.7.15：进度条点击 → 精确 seek（extra 带秒数，不能靠 PendingIntent 复用）
-        if (WIDGET_SEEK.equals(a)) {
-            int sec = intent.getIntExtra("sec", -1);
-            if (sec >= 0) {
-                try {
-                    Intent i = new Intent(ctx, PlayerService.class);
-                    i.setAction(PlayerService.ACT_SEEK);
-                    i.putExtra("sec", sec);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        ctx.startForegroundService(i);
-                    } else {
-                        ctx.startService(i);
-                    }
-                } catch (Throwable ignored) {}
-            }
-            return;
-        }
-        // ★ 按钮点击 → 转发给 PlayerService（走服务 action，与通知栏同一通路）
-        String svc = null;
-        if (WIDGET_TOGGLE.equals(a)) svc = PlayerService.ACT_TOGGLE;
-        else if (WIDGET_PREV.equals(a)) svc = PlayerService.ACT_PREV;
-        else if (WIDGET_NEXT.equals(a)) svc = PlayerService.ACT_NEXT;
-        if (svc != null) {
-            try {
-                Intent i = new Intent(ctx, PlayerService.class);
-                i.setAction(svc);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    ctx.startForegroundService(i);
-                } else {
-                    ctx.startService(i);
-                }
-            } catch (Throwable ignored) {}
-            return;
-        }
+
+        // ★ v3.7.16：控制键 / 进度条点击已改由 WidgetClickReceiver 处理
+        //   （本 Provider 是 exported="false"，桌面无法把 PendingIntent 投进来）。
+        //   这里只负责状态刷新广播。
+
         // 状态变化广播（由 WidgetState.requestUpdate 发出）
         if (AppWidgetManager.ACTION_APPWIDGET_UPDATE.equals(a)) {
             int[] ids = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS);
@@ -117,6 +102,29 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             }
             onUpdate(ctx, AppWidgetManager.getInstance(ctx), ids == null ? new int[0] : ids);
         }
+    }
+
+    /**
+     * ★ v3.7.16：把一条控制命令投给 PlayerService。
+     *
+     * <p>由 {@link WidgetClickReceiver} 调用 —— 那里是 exported 的，
+     * 桌面点按钮才递得进来。
+     *
+     * <p>用 {@code startForegroundService}：进程被回收时也要能把服务拉起来，
+     * 否则"点了毫无动静"。Android 8+ 起后台启动前台服务受限，但这里属于
+     * **用户交互触发的点击**（有 PendingIntent 的临时代理授权），是允许的。
+     */
+    static void dispatch(Context ctx, String svcAction) {
+        if (ctx == null || svcAction == null) return;
+        try {
+            Intent i = new Intent(ctx, PlayerService.class);
+            i.setAction(svcAction);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+        } catch (Throwable ignored) {}
     }
 
     /** 组装一块小组件的视图（读 WidgetState 快照） */
@@ -206,18 +214,17 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
 
         // ---- 点击 ----
         //
-        // ★ v3.7.14 关键修复：三个按钮各自挂**独立**的 PendingIntent，
+        // ★ v3.7.14：三个按钮各自挂**独立**的 PendingIntent，
         //   并且**不**在 wgRoot（整块面板）上挂任何 PendingIntent。
+        //   原来挂在 wgRoot 上，它的点击区域覆盖所有子 View，于是点哪都被
+        //   "打开 App"吃掉。
         //
-        //   原来的写法是 v.setOnClickPendingIntent(R.id.wgRoot, openApp(...))，
-        //   而 wgRoot 是整块面板的根布局 → 它的点击区域覆盖了所有子 View，
-        //   于是无论点哪里（包括三个按钮）都被"打开 App"吃掉，
-        //   表现为"点击直接回软件、不能控制"。这就是用户报的两个毛病同一个根因。
-        //
-        //   现在改成语义化分区：封面区 / 信息区 可点开 App，控制键只管控制。
-        v.setOnClickPendingIntent(R.id.wgToggle, pi(ctx, WIDGET_TOGGLE, 11));
-        v.setOnClickPendingIntent(R.id.wgPrev, pi(ctx, WIDGET_PREV, 12));
-        v.setOnClickPendingIntent(R.id.wgNext, pi(ctx, WIDGET_NEXT, 13));
+        // ★ v3.7.16：投递目标从本 Provider/PlayerService 换成 exported 的
+        //   WidgetClickReceiver —— 前两者都是 exported="false"，桌面作为
+        //   另一个 App 触发 PendingIntent 时会被拦住，点击全部静默失效。
+        v.setOnClickPendingIntent(R.id.wgToggle, xpi(ctx, WIDGET_TOGGLE, 11));
+        v.setOnClickPendingIntent(R.id.wgPrev, xpi(ctx, WIDGET_PREV, 12));
+        v.setOnClickPendingIntent(R.id.wgNext, xpi(ctx, WIDGET_NEXT, 13));
         // 点封面 / 书名 → 打开 App 播放页（只有这两块）
         v.setOnClickPendingIntent(R.id.wgCoverTap, openApp(ctx, 14));
         v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 15));
@@ -252,31 +259,36 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     /**
      * 控制类 PendingIntent。
      *
-     * <p>★ v3.7.14 改成 {@code getService} 直投 PlayerService —— 原来走的是
-     * {@code getBroadcast} + onReceive 里 startForegroundService 转一手。
-     * 那条路在 Android 8+ 上有个坑：从**后台广播**里启动前台服务会被限制，
-     * 点一下没反应是常态。直接投给服务就没有这个问题，也与通知栏按钮一致。
+     * <p>★ v3.7.16 关键修复：改为投给 {@link WidgetClickReceiver}
+     * （独立、{@code exported="true"} 的 BroadcastReceiver），
+     * <b>不再</b>投给本 Provider / PlayerService。
+     *
+     * <p>为什么非改不可：本 Provider 在清单里 exported="false"，桌面是另一个 App，
+     * 它触发 PendingIntent 时会被 exported 检查拦掉 —— 这就是「三个控制键
+     * 和进度条全都没反应、只有点封面能回 App」的根因。投给 service 同样受
+     * exported 限制（PlayerService 也是 exported="false"）。
      */
-    private PendingIntent pi(Context ctx, String action, int req) {
-        Intent i = new Intent(ctx, PlayerService.class);
-        i.setAction(action);
+    private PendingIntent xpi(Context ctx, String action, int req) {
+        Intent i = new Intent(ctx, WidgetClickReceiver.class);
+        i.setAction(WIDGET_ACTION);
+        i.putExtra("act", action);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getService(ctx, req, i, flags);
+        return PendingIntent.getBroadcast(ctx, req, i, flags);
     }
 
     /**
-     * ★ v3.7.15 进度条点击的 PendingIntent。
+     * ★ v3.7.15 进度条点击的 PendingIntent（v3.7.16 改投 exported 接收器）。
      *
-     * <p>与 {@link #pi} 的区别只有一处：带 {@code sec} extra。
-     * Android 判定两个 PendingIntent "是否相同"只看 requestCode + Intent 的
-     * action/data/component/categories，**不看 extras**。所以 20 格必须用
+     * <p>Android 判定两个 PendingIntent "是否相同"只看 requestCode + Intent 的
+     * action/data/component/categories，<b>不看 extras</b>。所以 20 格必须用
      * 20 个不同 requestCode（见调用处的 {@code 100 + i}），
-     * 且这里**不能**用 FLAG_UPDATE_CURRENT 之外的复用技巧。
+     * 否则 FLAG_UPDATE_CURRENT 会让最后注册的那个覆盖全部。
      */
     private PendingIntent seekPi(Context ctx, int sec, int req) {
-        Intent i = new Intent(ctx, PlayerWidgetProvider.class);
-        i.setAction(WIDGET_SEEK);
+        Intent i = new Intent(ctx, WidgetClickReceiver.class);
+        i.setAction(WIDGET_ACTION);
+        i.putExtra("act", WIDGET_SEEK);
         i.putExtra("sec", sec);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;

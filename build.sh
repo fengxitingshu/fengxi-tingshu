@@ -366,5 +366,47 @@ if ! unzip -l "$PROJ/TingShu.apk" "META-INF/MANIFEST.MF" >/dev/null 2>&1; then
 fi
 echo "    + 签名闸门通过（已签名且与 aligned.apk 不同）"
 
+# ★ v3.7.16：Manifest 组件保名闸门（R8 混淆回归防线）。
+#
+#   教训：v3.7.15 起 `com.tingshu.app.widget.**` 不在 proguard 的 keep 名单里，
+#   于是 R8 把 Manifest 注册的 PlayerWidgetProvider 改名成了 `a`、
+#   WidgetClickReceiver 改名成了 `b`。系统按 manifest 里的原始类名实例化，
+#   结果就是：
+#     - 小组件一片空白（Provider 找不到）
+#     - 小组件上按钮 / 进度条点击全部失灵（Receiver 找不到，投递被丢弃）
+#     - 点卡片「只能回到 App」（只有 keep 了的 MainActivity 还能响应）
+#   build 一切正常、无任何告警，问题要等用户装上才暴露。
+#
+#   这里把「Manifest 声明的类名 == 混淆后的类名」变成硬断言，
+#   从机制上堵死这类漏 keep 的坑。
+python3 - "$PROJ" <<'PYCHK'
+import re, sys, os
+proj = sys.argv[1]
+mf = open(os.path.join(proj, "AndroidManifest.xml"), encoding="utf-8").read()
+pkg = re.search(r'package="([^"]+)"', mf).group(1)
+comps = set()
+for n in re.findall(r'android:name="([^"]+)"', mf):
+    if n.startswith("android.") or "permission" in n or n.endswith(".ACTION"):
+        continue
+    if n.startswith("."):
+        comps.add(pkg + n)
+mp = open(os.path.join(proj, "out", "mapping.txt"), encoding="utf-8").read()
+bad = []
+for c in sorted(comps):
+    m = re.search(r'^' + re.escape(c) + r' -> ([^:]+):', mp, re.M)
+    if not m:
+        bad.append((c, "mapping 中找不到"))
+    elif m.group(1) != c:
+        bad.append((c, m.group(1)))
+if bad:
+    print("    !! 以下 Manifest 组件被 R8 改名 —— 系统将找不到类：", file=sys.stderr)
+    for c, t in bad:
+        print("       %s  ->  %s" % (c, t), file=sys.stderr)
+    print("       修法：在 proguard-rules.pro 里 -keep class <它们所在包>.** { *; }", file=sys.stderr)
+    sys.exit(1)
+PYCHK
+if [ $? -ne 0 ]; then exit 1; fi
+echo "    + Manifest 组件保名闸门通过（无组件被混淆）"
+
 ls -la "$PROJ/TingShu.apk"
 echo "==> BUILD OK"

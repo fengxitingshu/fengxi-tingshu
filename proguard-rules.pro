@@ -18,6 +18,17 @@
 -keep class com.tingshu.app.player.PlayerService { *; }
 -keep class com.tingshu.app.player.FloatBallService { *; }
 -keep class com.tingshu.app.player.PlayerBrowserService { *; }
+# ★ v3.7.16 关键修复：小组件相关类必须保名。
+#   AppWidgetProvider / BroadcastReceiver 都是"Manifest 注册类"，
+#   系统按 manifest 里的**原始类名**实例化；一旦被 R8 改名，
+#   系统就找不到类 —— 表现为：
+#     - 小组件加不上 / 一片空白（Provider 找不到）
+#     - 小组件上的按钮、进度条点击全部无反应（Receiver 找不到，
+#       PendingIntent 投递被系统丢弃）
+#     - 点击卡片"只能回到 App"（MainActivity 恰好在 keep 名单里，所以只有它还能响应）
+#   这个坑在 v3.7.15 就存在（当时 PlayerWidgetProvider 被改名为 a），
+#   直到 v3.7.16 排查"小组件全失灵"时才定位到。
+-keep class com.tingshu.app.widget.** { *; }
 
 # ---------- 2. WebView JS 桥 ----------
 -keep class com.tingshu.app.Bridge { *; }
