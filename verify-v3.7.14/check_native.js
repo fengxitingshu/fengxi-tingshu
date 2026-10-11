@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 44', /android:versionCode="44"/.test(man));
-  check('versionName = 3.7.17（三段式）', /android:versionName="3\.7\.17"/.test(man));
+  check('versionCode = 45', /android:versionCode="45"/.test(man));
+  check('versionName = 3.7.18（三段式）', /android:versionName="3\.7\.18"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.7.17', /id="appVer">3\.7\.17</.test(idx));
-  check('关于页版本显示 3.7.17', /id="aboutVer">3\.7\.17</.test(idx));
+  check('设置页版本显示 3.7.18', /id="appVer">3\.7\.18</.test(idx));
+  check('关于页版本显示 3.7.18', /id="aboutVer">3\.7\.18</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1174,10 +1174,15 @@ function check(name, ok, detail) {
   check('v3.7.9：CSS 定义 .ab-link',
     /\.ab-link\s*\{/.test(css));
 
+  // ★ v3.7.18：Manifest 读取放在这里（公共位置）。
+  //   原来它只在被删掉的「小组件 exported 投递链路」段落里定义过一次，
+  //   那段删除后，版本号断言与 PlayerBrowserService 断言都会引用到未定义变量。
+  const manifest16 = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
+
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=44 / versionName=3.7.17',
-    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=45 / versionName=3.7.18',
+    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1256,8 +1261,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=44 / versionName=3.7.17',
-    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=45 / versionName=3.7.18',
+    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1281,11 +1286,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=44 / versionName=3.7.17',
-    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=45 / versionName=3.7.18',
+    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.7.17',
-    /id="appVer">3\.7\.17</.test(idxHtml) && /id="aboutVer">3\.7\.17</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.7.18',
+    /id="appVer">3\.7\.18</.test(idxHtml) && /id="aboutVer">3\.7\.18</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1316,96 +1321,56 @@ function check(name, ok, detail) {
   check('v3.7.14/B：只支持浏览的源改测分类页（testByBrowse + categories）',
     /testByBrowse/.test(bsrc14) && /BrowsableSource[\s\S]{0,200}?categories\(\)/.test(bsrc14));
 
-  // --- W 小组件 ---
-  const provider14 = fs.readFileSync(
-    '/root/tingshu-app/src/com/tingshu/app/widget/PlayerWidgetProvider.java', 'utf8');
-  // 注释里也写了 wgRoot 的旧写法，先剥注释再断言，避免命中说明文字
-  const providerCode14 = provider14.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  // --- W 小组件：★ v3.7.18 已整体删除 ---
+  //
+  //  用户长期反馈小组件无法正常工作（空白、控制键失灵、点击只回 App）。
+  //  排查过程中先后定位到三个独立根因并修复（R8 改名 / exported 投递 /
+  //  RemoteViews 白名单），但小组件在不同 ROM（尤其 iQOO / vivo）上的
+  //  兼容性始终无法保证 —— 用户最终决定放弃这个小部件。
+  //
+  //  本轮把相关代码**整体移除**，并在此断言"删干净"，
+  //  避免日后再冒出来半截残留（这才是最容易出事的形态）。
   const psvc14 = fs.readFileSync(
     '/root/tingshu-app/src/com/tingshu/app/player/PlayerService.java', 'utf8');
   const mact14 = fs.readFileSync(
     '/root/tingshu-app/src/com/tingshu/app/MainActivity.java', 'utf8');
-  const wgLay14 = fs.readFileSync('/root/tingshu-app/res/layout/widget_player.xml', 'utf8');
-  const wgBg14 = fs.readFileSync('/root/tingshu-app/res/drawable/wg_bg.xml', 'utf8');
+  const manifest14 = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
+  const pg14 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
 
-  // ★ v3.7.16：小组件点击链路的三个关键文件
-  const provider16 = provider14;
-  const clickRecv16 = fs.readFileSync(
-    '/root/tingshu-app/src/com/tingshu/app/widget/WidgetClickReceiver.java', 'utf8');
-  const manifest16 = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-
-  check('v3.7.14/W：wgRoot 上不再挂 PendingIntent（按钮不再被整块面板吞掉）',
-    !/setOnClickPendingIntent\(\s*R\.id\.wgRoot/.test(providerCode14));
-  check('v3.7.14/W：三个控制键各自挂独立 PendingIntent',
-    /setOnClickPendingIntent\(R\.id\.wgToggle/.test(provider14)
-    && /setOnClickPendingIntent\(R\.id\.wgPrev/.test(provider14)
-    && /setOnClickPendingIntent\(R\.id\.wgNext/.test(provider14));
-  check('v3.7.14/W：只有封面区/信息区可点开 App',
-    /setOnClickPendingIntent\(R\.id\.wgCoverTap/.test(provider14)
-    && /setOnClickPendingIntent\(R\.id\.wgInfoTap/.test(provider14));
-  // ★ v3.7.16：控制键不再"直投 PlayerService"。
-  //   原因：桌面 launcher 是另一个 App，它触发小组件 PendingIntent 时
-  //   系统按目标组件的 android:exported 校验；PlayerService 和 Provider
-  //   都是 exported="false" → 投递被静默丢弃 → 按钮/进度条全部无反应。
-  //   现在统一改投 exported="true" 的 WidgetClickReceiver（getBroadcast）。
-  check('v3.7.16/W：控制键改投 exported 的 WidgetClickReceiver（不再直投 Service）',
-    /PendingIntent\.getBroadcast\(ctx, req, i, flags\)/.test(provider16)
-    && /new Intent\(ctx, WidgetClickReceiver\.class\)/.test(provider16)
-    && !/PendingIntent\.getService\(ctx, req, i, flags\)/.test(provider16));
-  check('v3.7.16/W：WidgetClickReceiver 是独立 exported receiver（桌面才能投递）',
-    /class WidgetClickReceiver extends BroadcastReceiver/.test(clickRecv16)
-    && /android:exported="true"/.test(manifest16)
-    && /\.widget\.WidgetClickReceiver/.test(manifest16)
-    && /com\.tingshu\.app\.widget\.ACTION/.test(manifest16));
-  check('v3.7.16/W：Receiver 转发到 PlayerService（TOGGLE/PREV/NEXT/SEEK 四动作齐）',
-    /PlayerWidgetProvider\.WIDGET_TOGGLE\.equals\(act\)[\s\S]{0,200}?ACT_TOGGLE/.test(clickRecv16)
-    && /WIDGET_PREV[\s\S]{0,120}?ACT_PREV/.test(clickRecv16)
-    && /WIDGET_NEXT[\s\S]{0,120}?ACT_NEXT/.test(clickRecv16)
-    && /WIDGET_SEEK[\s\S]{0,400}?ACT_SEEK/.test(clickRecv16));
-  check('v3.7.16/W：进度条 20 格各挂独立 requestCode（PendingIntent 去重只看 req/action）',
-    /seekPi\(ctx, 100 \+ i\)/.test(provider16) || /100 \+ i/.test(provider16));
-  check('v3.7.14/W：进程被回收后 CTL 为空时降级拉起 App',
-    /Ctl c = CTL;[\s\S]{0,3000}?startActivity\(ui\)/.test(psvc14));
-  check('v3.7.14/W：小组件封面上屏（CoverListener 回调链路完整）',
-    /interface CoverListener/.test(psvc14) && /cl\.onCoverReady\(bmp\)/.test(psvc14)
+  check('v3.7.18/W：widget 包与 WidgetState 已从源码删除',
+    !fs.existsSync('/root/tingshu-app/src/com/tingshu/app/widget')
+    && !fs.existsSync('/root/tingshu-app/src/com/tingshu/app/player/WidgetState.java'));
+  check('v3.7.18/W：布局与绘制资源已删除（widget_player / wg_*）',
+    !fs.existsSync('/root/tingshu-app/res/layout/widget_player.xml')
+    && !fs.existsSync('/root/tingshu-app/res/xml/widget_player_info.xml')
+    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_bg.xml')
+    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_btn_bg.xml')
+    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_cover_bg.xml')
+    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_progress.xml'));
+  check('v3.7.18/W：Manifest 已无 receiver / APPWIDGET_UPDATE / widget 引用',
+    !/<receiver/.test(manifest14)
+    && !/appwidget/i.test(manifest14)
+    && !/\.widget\./.test(manifest14));
+  check('v3.7.18/W：MainActivity 已无 syncWidget / WidgetState / lastCoverBmp',
+    !/syncWidget/.test(mact14) && !/WidgetState/.test(mact14)
+    && !/lastCoverBmp/.test(mact14));
+  check('v3.7.18/W：PlayerService 已无 WidgetState 引用（CoverListener 保留给通知栏）',
+    !/WidgetState/.test(psvc14) && /interface CoverListener/.test(psvc14)
+    && /cl\.onCoverReady\(bmp\)/.test(psvc14));
+  check('v3.7.18/W：proguard 的 widget keep 指令已撤掉（包没了，规则会告警）',
+    !/^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pg14));
+  check('v3.7.18/W：封面回调改为重绘通知栏（不再推小组件快照）',
+    /interface CoverListener/.test(psvc14) && /onCoverReady\(Bitmap bmp\)/.test(psvc14)
     && /bindCoverListener\(\)/.test(mact14));
-  check('v3.7.14/W：切书/切集也同步小组件（onStarted → syncWidget）',
-    /public void onStarted\(Book book, int chapterIdx\)[\s\S]*?syncWidget\(\)/.test(mact14));
-  check('v3.7.14/W：书名与副标题设 marquee + 代码触发 setSelected',
-    /id="@\+id\/wgTitle"[\s\S]{0,500}?ellipsize="marquee"/.test(wgLay14)
-    && /id="@\+id\/wgSub"[\s\S]{0,500}?ellipsize="marquee"/.test(wgLay14)
-    && /setBoolean\(R\.id\.wgTitle, "setSelected", true\)/.test(provider14)
-    && /setBoolean\(R\.id\.wgSub, "setSelected", true\)/.test(provider14));
-  // ---- v3.7.15 小组件改版：仿通知播放器 + 可点进度条 ----
-  check('v3.7.15/W：背景改为中性半透明灰玻璃（#CC2A2E3A，26dp 圆角）',
-    wgBg14.indexOf('#CC2A2E3A') > 0 && /corners android:radius="26dp"/.test(wgBg14));
-  check('v3.7.15/W：背景保留高光层与淡白描边',
-    /#30FFFFFF/.test(wgBg14) && /stroke android:width="1dp" android:color="#30FFFFFF"/.test(wgBg14));
-  check('v3.7.15/W：控制键去掉背板（不再引用 wg_btn_bg）',
-    (wgLay14.match(/@drawable\/wg_btn_bg/g) || []).length === 0);
-  check('v3.7.15/W：封面改为方形 62×62dp',
-    /android:layout_width="62dp"/.test(wgLay14) && /android:layout_height="62dp"/.test(wgLay14));
-  check('v3.7.15/W：三个控制键统一染白（android:tint）',
-    (wgLay14.match(/android:tint="#FFFFFF"/g) || []).length === 3);
 
-  // 可点进度条：20 格 + 左右时间 + ACT_SEEK 通路
-  check('v3.7.15/W：进度条上盖 20 格点击层（wgSeek0..19）',
-    wgLay14.indexOf('@+id/wgSeek0') > 0 && wgLay14.indexOf('@+id/wgSeek19') > 0
-    && (wgLay14.match(/@\+id\/wgSeek\d+/g) || []).length === 20);
-  check('v3.7.15/W：进度条左侧显示当前时间、右侧显示总时长',
-    /@\+id\/wgTimeCur/.test(wgLay14) && /@\+id\/wgTimeDur/.test(wgLay14));
-  check('v3.7.15/W：Provider 为每格挂独立 requestCode（100+i，避免 extras 被覆盖）',
-    /100 \+ i/.test(provider14) && /getIdentifier\(/.test(provider14)
-    && /wgSeek/.test(provider14));
-  check('v3.7.15/W：seek 走广播 + sec extras',
-    /WIDGET_SEEK/.test(provider14) && /putExtra\("sec", sec\)/.test(provider14)
-    && /seekPi\(/.test(provider14));
-  check('v3.7.15/W：PlayerService 新增 ACT_SEEK 并消费 sec',
-    /ACT_SEEK = "com\.tingshu\.app\.SEEK"/.test(psvc14)
-    && /ACT_SEEK\.equals\(a\)[\s\S]{0,200}?getIntExtra\("sec"/.test(psvc14)
-    && /c\.svcSeek\(sec\)/.test(psvc14));
-  check('v3.7.15/W：seek 复用 svcSeek → MediaSession 同步（MainActivity 已有实现）',
-    /public void svcSeek\(int sec\)[\s\S]{0,200}?refreshNotification\(\)/.test(mact14));
+  // （原「进程被回收后降级拉起 App」「小组件封面上屏」「切书/切集同步小组件」
+  //   「书名/副标题 marquee + setSelected」四条断言随小组件删除，v3.7.18）
+
+  // ---- v3.7.15 小组件改版断言已随小组件删除（v3.7.18）----
+  //   原来的「仿通知播放器 + 20 格可点进度条」断言组（wgSeek / wgTimeCur /
+  //   ACT_SEEK / setFloat API31 守卫等）全部作废：那些控件与代码已不存在。
+  //   进度条 / 时间显示改由「通知栏 MediaStyle + 系统 MediaSession」承担，
+  //   相关断言见下方通知栏一节。
 
   // ★ 签名闸门（防 v3.7.14 未签名包再流出）
   const bs15 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
@@ -1423,53 +1388,12 @@ function check(name, ok, detail) {
   check('v3.7.15/SIGN：发布脚本上传前先验签',
     /apksigner" verify "\$APK"[\s\S]{0,400}?exit 1/.test(rs15));
 
-  check('v3.7.14/W：setFloat 加 API 31 守卫（低版本不崩）',
-    /Build\.VERSION\.SDK_INT >= 31[\s\S]{0,600}?setFloat/.test(provider14));
-
   // ==================== ★ v3.7.15-fix：三项回归（小组件空白 / JS 源丢失 / 闪退） ====================
 
-  // ---- 1) 小组件空白：RemoteViews 白名单 ----
-  //
-  // 根因回顾：v3.7.15 进度条上盖的 20 个点击分区用了 <View>，
-  // 而 RemoteViews 白名单里没有 View（只有 LinearLayout/FrameLayout/
-  // RelativeLayout/ImageView/TextView/ProgressBar/Button 等），
-  // 桌面启动器 inflate 直接失败 → 整块小组件渲染成空白。
-  // 这里把"布局里绝不能出现非白名单控件"固化成断言，
-  // 以后再往小组件里加控件时会被当场拦下。
-  check('v3.7.15-fix/W：布局里已无 <View>（RemoteViews 白名单不含 View）',
-    !/<View\b/.test(wgLay14));
-  check('v3.7.15-fix/W：进度条 20 格点击分区全部是 ImageView',
-    (wgLay14.match(/@\+id\/wgSeek\d+/g) || []).length === 20
-    && (wgLay14.match(/<ImageView/g) || []).length >= 24);
-  //
-  // 白名单校验：把布局里出现过的所有标签名抽出来，逐个比对。
-  // 任何一个不在名单里的标签都会让桌面渲染失败。
-  const allowedRv = ['LinearLayout', 'FrameLayout', 'RelativeLayout', 'ImageView',
-    'TextView', 'ProgressBar', 'Button', 'ImageButton', 'ViewFlipper', 'ViewStub',
-    'Chronometer', 'AnalogClock', 'Space', 'GridLayout', 'GridLayout$Alignment',
-    'ScrollView', 'HorizontalScrollView', 'ListView', 'GridView', 'StackView',
-    'AdapterViewFlipper', 'ViewSwitcher', 'CheckedTextView', 'RadioButton',
-    'RadioGroup', 'CheckBox', 'Switch', 'ToggleButton', 'Spinner', 'RatingBar',
-    'SeekBar', 'DatePicker', 'TimePicker', 'NumberPicker', 'CalendarView',
-    'TextClock', 'EditText', 'AutoCompleteTextView', 'MultiAutoCompleteTextView',
-    'ExpandableListView', 'WebView', 'TableLayout', 'TableRow', 'AbsoluteLayout',
-    'ViewAnimator', 'MediaController', 'SurfaceView', 'TextureView', 'ProgressBar'];
-  // 只取"真正的控件标签"：形如 <Tag 或 </Tag，排除 <attr/ 之类的属性元素
-  const tags = (wgLay14.match(/<\/?([A-Z][A-Za-z0-9$_.]*)/g) || [])
-    .map(s => s.replace(/^<\/?/, ''));
-  const illegal = tags.filter(t => allowedRv.indexOf(t) < 0)
-    .filter(t => ['shape', 'corners', 'gradient', 'stroke', 'solid', 'item',
-      'selector', 'layer-list', 'ripple'].indexOf(t.toLowerCase()) < 0);
-  check('v3.7.15-fix/W：布局控件全在 RemoteViews 白名单内（非法控件：'
-    + (illegal.length ? illegal.join(',') : '无') + '）',
-    illegal.length === 0);
-  //
-  // 打包后复核：以 aapt2 反解出的真实标签为准，避免"源码改了但没进包"。
-  const rvTagsInApk = rvTagsFromApk();
-  check('v3.7.15-fix/W：打包后布局中 <View> 数量为 0（aapt2 复核）',
-    rvTagsInApk.filter(t => t === 'View').length === 0);
-  check('v3.7.15-fix/W：打包后 ImageView ≥ 24（封面 + 3 键 + 20 分区）',
-    rvTagsInApk.filter(t => t === 'ImageView').length >= 24);
+  // ---- 1) 小组件空白 / RemoteViews 白名单校验：断言随小组件删除（v3.7.18）----
+  //   「布局控件必须在 RemoteViews 白名单内」这条约束已无对象 ——
+  //   小组件布局本身不存在了。若将来重新引入桌面小部件，
+  //   请把 RemoteViews 白名单校验（含 <View> 不在名单内这一坑）一并恢复。
 
   // ---- 2) JS 源消失：加载失败不再静默 ----
   const sr15 = fs.readFileSync(
@@ -1543,13 +1467,13 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('v3.7.17/V：前端关于页版本号已到 3.7.17',
-    /id="aboutVer">3\.7\.17/.test(idx16s) && /id="appVer">3\.7\.17/.test(idx16s));
-  check('v3.7.17/V：AndroidManifest 版本号同步到 3.7.17 / code 44',
-    /android:versionCode="44"/.test(manifest16)
-    && /android:versionName="3\.7\.17"/.test(manifest16));
-  check('v3.7.17/LOG：CHANGELOG 首条即 3.7.17（更新公告能弹出）',
-    /ver: '3\.7\.17'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
+  check('v3.7.18/V：前端关于页版本号已到 3.7.18',
+    /id="aboutVer">3\.7\.18/.test(idx16s) && /id="appVer">3\.7\.18/.test(idx16s));
+  check('v3.7.18/V：AndroidManifest 版本号同步到 3.7.18 / code 45',
+    /android:versionCode="45"/.test(manifest16)
+    && /android:versionName="3\.7\.18"/.test(manifest16));
+  check('v3.7.18/LOG：CHANGELOG 首条即 3.7.18（更新公告能弹出）',
+    /ver: '3\.7\.18'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
   // ★ v3.7.17：Rhino 反射类保名（NoClassDefFoundError: org.mozilla.javascript.W2 的根因）
   const pg17 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
   const bld17 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
@@ -1568,8 +1492,9 @@ function check(name, ok, detail) {
   const bld16 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
 
   // --- 1) R8 混淆闸门（本轮最核心的根因） ---
-  check('v3.7.16/PG：proguard 保留 widget 包（Manifest 注册类不能被改名）',
-    /-keep class com\.tingshu\.app\.widget\.\*\* \{ \*; \}/.test(pro16));
+  check('v3.7.16/PG：widget 包 keep 规则已在 v3.7.18 撤销（包已不存在）',
+    !/^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pro16));
+
   check('v3.7.16/PG：所有 Manifest 组件所在包都在 keep 名单里',
     /-keep class com\.tingshu\.app\.MainActivity \{ \*; \}/.test(pro16)
     && /-keep class com\.tingshu\.app\.core\.App \{ \*; \}/.test(pro16)
@@ -1582,16 +1507,15 @@ function check(name, ok, detail) {
     && /proguard-rules\.pro/.test(bld16));
 
   // --- 2) exported 投递链路 ---
-  check('v3.7.16/W：Provider 仍保持 exported=false（状态刷新只由本 App 发）',
-    /PlayerWidgetProvider[\s\S]{0,300}?exported="false"/.test(manifest16));
-  check('v3.7.16/W：WidgetClickReceiver 在 manifest 里声明了 intent-filter ACTION',
-    /WidgetClickReceiver[\s\S]{0,500}?<action android:name="com\.tingshu\.app\.widget\.ACTION"/.test(manifest16));
-  check('v3.7.16/W：Provider 提供 dispatch() 静态分发（Receiver 复用）',
-    /static void dispatch\(Context ctx, String svcAction\)/.test(provider16));
-  check('v3.7.16/W：dispatch 用 startForegroundService（O+ 后台起服务不被拒）',
-    /startForegroundService\(i\)/.test(provider16));
-  check('v3.7.16/W：Provider.onReceive 不再处理 TOGGLE/PREV/NEXT（已迁到 Receiver）',
-    !/WIDGET_TOGGLE\.equals\(action\)/.test(provider16.replace(/\/\*[\s\S]*?\*\//g, '')));
+  //   v3.7.16 修的是「小组件 PendingIntent 投给 exported=false 组件被丢弃」。
+  //   ★ v3.7.18 小组件已整体删除，相关断言（Provider exported=false /
+  //   WidgetClickReceiver intent-filter / dispatch() / startForegroundService /
+  //   onReceive 分支迁移）一并作废。
+  //   当前唯一 exported="true" 的业务组件是 PlayerBrowserService
+  //   （系统音源选择器需要扫描到它），下面补一条断言守住它。
+  check('v3.7.18/MANIFEST：PlayerBrowserService 仍 exported=true（系统音源选择器要扫到）',
+    /PlayerBrowserService[\s\S]{0,400}?exported="true"/.test(manifest16)
+    && /android\.media\.browse\.MediaBrowserService/.test(manifest16));
 
   // --- 3) 菜单自毁 + 限位 + 跑马灯 ---
   check('v3.7.16/MENU：菜单 max-width 为 82vw（不超出屏幕）',
@@ -1611,26 +1535,82 @@ function check(name, ok, detail) {
   check('v3.7.16/MQ：.chtt / .chapter .tt 加 min-width:0（flex 子项才能正确测宽）',
     /\.chitem \.chtt\s*\{[\s\S]{0,300}?min-width:\s*0/.test(css16)
     && /\.chapter \.tt\s*\{[\s\S]{0,300}?min-width:\s*0/.test(css16));
-  check('v3.7.16/MQ：多列排布时关掉跑马灯（避免 1/3 宽度里横滚）',
-    /\.chapter \.tt[\s\S]{0,700}?animation:\s*none !important/.test(css16));
+  check('v3.7.18/MQ：多列排布不再关跑马灯（用户要求超长就滚动）',
+    // v3.7.16 曾用 `animation: none !important` 关掉多列滚动；v3.7.18 按用户
+    // 要求删除该规则 —— 2/3 列下同样要滚。断言它确实不复存在。
+    !/\.chapter-list\.cols-[23] \.chapter \.tt \.mq-in[\s\S]{0,120}?animation:\s*none !important/.test(css16)
+    && !/\.chlist-inner\.cols-[23] \.chitem \.chtt \.mq-in[\s\S]{0,120}?animation:\s*none !important/.test(css16));
   check('v3.7.16/MENU：菜单项文本不再省略号截断（.ci-tx 不收缩）',
     /\.ctx-item\s*\{[\s\S]{0,400}?max-width:\s*none/.test(css16)
     && /\.ci-tx\s*\{[\s\S]{0,300}?flex-shrink:\s*0/.test(css16));
+
+  // ==================== ★ v3.7.18 ====================
+  // 本轮用户的五项诉求：失败提示时机 / 存储占用 / 删小组件 /
+  //                      选集 3 列等宽 / 章节名滚动
+  const css18 = css16;
+  const app18 = appJs;
+  const bld18 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
+  const html18 = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
+  const cm18 = fs.readFileSync(
+    '/root/tingshu-app/src/com/tingshu/app/core/CacheManager.java', 'utf8');
+  const br18 = fs.readFileSync('/root/tingshu-app/src/com/tingshu/app/Bridge.java', 'utf8');
+  const pg18 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
+
+  // --- ① 播放失败提示时机：两级（静默重试 → 彻底失败才弹） ---
+  check('v3.7.18/ERR：失败分两级，先静默重试再弹面板',
+    /_playRetry/.test(app18) && /tries < 1/.test(app18)
+    && /setTimeout\(function \(\) \{[\s\S]{0,400}?ui\.playChapter\(chIdx\)/.test(app18));
+  check('v3.7.18/ERR：重试期间保持转圈（不提前 setBuffering(false)）',
+    /转圈保持转着（不 setBuffering\(false\)）/.test(app18));
+  check('v3.7.18/ERR：用户已切集/已开播则放弃重试（不抢回控制权）',
+    /App\.chapIdx !== chIdx \|\| App\.playing \|\| !App\.book/.test(app18));
+  check('v3.7.18/ERR：重试计数在 onPlaying 清零',
+    /window\.onPlaying = function \(o\) \{[\s\S]{0,400}?App\._playRetry = null/.test(app18));
+  check('v3.7.18/ERR：面板仍在「彻底失败」分支才弹（找不到第一级里弹面板）',
+    !/tries < 1[\s\S]{0,500}?ui\.playFailSheet/.test(app18)
+    && /ui\.playFailSheet\(lines\.join/.test(app18));
+
+  // --- ② 存储占用：修 bug + 可视化 + 一键清理 ---
+  check('v3.7.18/STO：单集缓存后也执行容量上限（原 bug：只整本缓存才清）',
+    /public static void cacheChapter[\s\S]{0,1800}?CacheRepo\.enforceLimit\(CTX/.test(cm18));
+  check('v3.7.18/STO：Bridge 新增 storageInfo 接口',
+    /public void storageInfo\(\)/.test(br18) && /onStorageInfo/.test(br18));
+  check('v3.7.18/STO：Bridge 新增 clearAllCache 接口',
+    /public void clearAllCache\(\)/.test(br18) && /onCacheCleared/.test(br18));
+  check('v3.7.18/STO：清理不清书源/Python 源（保留 js_plugins/python_sources）',
+    /不清.*js_plugins \/ python_sources/.test(br18));
+  check('v3.7.18/STO：设置页有「存储占用」「一键清理缓存」两个入口',
+    /存储占用/.test(html18) && /一键清理缓存/.test(html18));
+  check('v3.7.18/STO：设置页打开即自动统计一次占用',
+    /ui\.storageRefresh\(\);/.test(app18));
+  check('v3.7.18/STO：占用展示区分可清理 / 不可清理',
+    /不可清理/.test(app18) && /fmtMB/.test(app18));
+
+  // --- ③ 删小组件：见上方 v3.7.18/W 断言组 ---
+  check('v3.7.18/W（复核）：build.sh 的闸门保留（守所有 Manifest 组件，不止小组件）',
+    /Manifest 组件保名闸门/.test(bld18)
+    && /小组件已整体删除，上述具体症状不复存在，但\*\*这条闸门必须留\*\*/.test(bld18));
+
+  // --- ④ 选集 3 列等宽 ---
+  check('v3.7.18/GRID：选集列宽用 minmax(0,1fr)（1fr 的 auto 最小值会撑破容器）',
+    /\.chlist-inner\.cols-3\s*\{[\s\S]{0,300}?grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\) minmax\(0, 1fr\)/.test(css18));
+  check('v3.7.18/GRID：详情页列宽同步改 minmax(0,1fr)（两处栅格保持一致）',
+    /\.chapter-list\.cols-3\s*\{[\s\S]{0,300}?grid-template-columns:\s*minmax\(0, 1fr\)/.test(css18));
+  check('v3.7.18/GRID：选集栅格容器 box-sizing:border-box + width:100%（防 padding 溢出）',
+    /\.chlist-inner\.cols-2, \.chlist-inner\.cols-3\s*\{[\s\S]{0,600}?box-sizing:\s*border-box/.test(css18)
+    && /\.chlist-inner\.cols-2, \.chlist-inner\.cols-3\s*\{[\s\S]{0,600}?max-width:\s*100%/.test(css18));
+  check('v3.7.18/GRID：多列子项 chitem 补 min-width:0 + overflow:hidden（同详情页 .chapter）',
+    /\.chlist-inner\.cols-2 \.chitem, \.chlist-inner\.cols-3 \.chitem\s*\{[\s\S]{0,300}?min-width:\s*0;\s*overflow:\s*hidden/.test(css18));
+
+  // --- ⑤ 章节名滚动（多列也滚） ---
+  check('v3.7.18/MQ：章节名滚动说明改为「多列也要滚」',
+    /多列排布时关掉跑马灯、退回省略号/.test(css18)
+    && /已删除/.test(css18)
+    && /章节名称超了滚动显示/.test(css18));
 }
 
-// 打包后复核用：从 APK 里反解小组件布局的真实标签名
-function rvTagsFromApk() {
-  try {
-    const out = require('child_process').execSync(
-      '/root/android/android-14/aapt2 dump xmltree '
-      + '/root/tingshu-app/TingShu.apk --file res/layout/widget_player.xml 2>/dev/null',
-      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-    return (out.match(/E: ([A-Za-z][A-Za-z0-9_.]*)/g) || [])
-      .map(s => s.replace(/^E: /, ''));
-  } catch (e) {
-    return [];
-  }
-}
+// （原 rvTagsFromApk()：从 APK 里反解 widget_player.xml 的标签名做 RemoteViews
+//   白名单复核。小组件布局已于 v3.7.18 移除，函数随之删除。）
 
 // ---------- 输出 ----------
 let pass = 0, fail = 0;

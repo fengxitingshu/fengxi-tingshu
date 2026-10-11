@@ -144,6 +144,18 @@ public final class CacheManager {
                 } finally {
                     QUEUED.remove(jk);
                 }
+                // ★ v3.7.18：单集缓存**也要**跑容量上限。
+                //   原 bug：`enforceLimit` 只在 `cacheBook()`（整本缓存）末尾调过一次，
+                //   而日常真正在跑的是这条路 —— `autoCacheAhead()` 每播一集就
+                //   预读 3 集，走的全是 `cacheChapter()` → `downloadOne()`。
+                //   结果是：一边不停往下存、一边从来没人清理，缓存只涨不落，
+                //   单文件约 10~15MB，听一下午就能把存储顶到几百 MB。
+                //   这是用户报「App 占了 500 多 M」的直接原因之一。
+                //   现在每集缓存完都顺手清一次，上限立即生效。
+                try {
+                    CacheRepo.enforceLimit(CTX,
+                            Settings.cacheLimitMb() * 1024L * 1024L);
+                } catch (Throwable ignored) {}
                 // ★ v2.8：单集也要回推结束事件，章节行的下载按钮才知道该亮 ✓ 还是 ↻
                 chapterDone(book, humanIdx, ok);
             }

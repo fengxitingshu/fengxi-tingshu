@@ -575,11 +575,6 @@ public class MainActivity extends Activity
             }
             com.tingshu.app.source.Aggregator.preloadNext(book, nextHuman, null);
         } catch (Throwable ignored) {}
-        // ★ v3.7.14：切书 / 切集时立刻把新书名、集号、封面推给桌面小组件。
-        //   原来只在 onStateChanged（播放/暂停）里同步 —— 上一集自然播完
-        //   自动跳下一集时 playing 没变（一直是 true），onStateChanged 不触发，
-        //   小组件就一直停在上集的信息上。
-        syncWidget();
     }
 
     @Override
@@ -589,17 +584,14 @@ public class MainActivity extends Activity
         refreshNotification();
         // ★ v2.8：悬浮球跟随播放状态 —— 开播显示、停播收起
         syncFloatBall(playing);
-        // ★ v3.7.11：桌面小组件跟随播放状态
-        syncWidget();
     }
 
     /**
-     * ★ v3.7.14：注册「封面已下载好」的回调。
+     * ★ v3.7.14：注册「封面已下载好」的回调（★ v3.7.18 起服务于通知栏封面）。
      *
-     * <p>封面是异步下载的（PlayerService.loadCover 起线程），而第一次
-     * syncWidget() 发生在 onStateChanged，那时封面通常还没回来 →
-     * 小组件快照里的 cover 是 null，于是一直显示占位音符。
-     * 这里挂上回调：封面到位后立刻补一次同步，小组件马上就有图了。
+     * <p>封面是异步下载的（PlayerService.loadCover 起线程），而通知栏通常在
+     * 状态变化那一刻就刷了一次，那时封面往往还没回来 → 通知里只有占位图。
+     * 这里挂上回调：封面到位后立刻重绘一次通知，封面马上就有图了。
      */
     private void bindCoverListener() {
         try {
@@ -609,64 +601,14 @@ public class MainActivity extends Activity
                 @Override
                 public void onCoverReady(android.graphics.Bitmap bmp) {
                     if (bmp == null) return;
-                    try {
-                        com.tingshu.app.player.WidgetState.cover = bmp;
-                        com.tingshu.app.player.WidgetState.requestUpdate(MainActivity.this);
-                    } catch (Throwable ignored) {}
+                    // 封面到位 → 立刻重绘通知栏（封面存在 PlayerService 缓存里，
+                    // refreshNotification 会自己取到新图）
+                    MainActivity.this.runOnUiThread(new Runnable() {
+                        public void run() { refreshNotification(); }
+                    });
                 }
             });
         } catch (Throwable ignored) {}
-    }
-
-    /**
-     * ★ v3.7.11：把当前播放状态推给桌面小组件。
-     *
-     * <p>从 {@link PlayerCore} 读一次真实状态（书名、集号、进度、播放中），
-     * 连同封面写进 {@link com.tingshu.app.player.WidgetState} 快照，
-     * 再让 Provider 重绘所有实例。
-     *
-     * <p>封面只在"状态变化"时传（切书/切集），进度刷新时不传 ——
-     * 位图跨进程/跨 RemoteViews 传递有开销，没必要每秒传一次。
-     */
-    private void syncWidget() {
-        try {
-            com.tingshu.app.player.WidgetState st = null;
-            com.tingshu.app.data.Models.Book bk = core.book();
-            if (bk == null) {
-                com.tingshu.app.player.WidgetState.clear();
-                com.tingshu.app.player.WidgetState.requestUpdate(this);
-                return;
-            }
-            // 状态快照
-            com.tingshu.app.player.WidgetState.hasContent = true;
-            com.tingshu.app.player.WidgetState.playing = core.isPlaying();
-            com.tingshu.app.player.WidgetState.title = bk.title == null ? "" : bk.title;
-            com.tingshu.app.player.WidgetState.artist = bk.artist == null ? "" : bk.artist;
-            int idx = core.index();
-            java.util.List<com.tingshu.app.data.Models.Chapter> chs = core.chapters();
-            com.tingshu.app.player.WidgetState.index = idx;
-            com.tingshu.app.player.WidgetState.total = chs == null ? 0 : chs.size();
-            if (chs != null && idx >= 0 && idx < chs.size()) {
-                com.tingshu.app.data.Models.Chapter c = chs.get(idx);
-                int no = (c != null && c.index > 0) ? c.index : (idx + 1);
-                com.tingshu.app.player.WidgetState.epText = no + " / " + chs.size();
-            }
-            com.tingshu.app.player.WidgetState.curSec = core.curSec();
-            com.tingshu.app.player.WidgetState.durSec = core.durSec();
-            // 封面：优先复用通知里已经下好的那张，避免重复下载
-            android.graphics.Bitmap cover = lastCoverBmp();
-            if (cover != null) com.tingshu.app.player.WidgetState.cover = cover;
-            com.tingshu.app.player.WidgetState.requestUpdate(this);
-        } catch (Throwable ignored) {}
-    }
-
-    /** 复用 PlayerService 缓存里的封面位图（拿不到就返回 null，小组件显示占位） */
-    private android.graphics.Bitmap lastCoverBmp() {
-        try {
-            com.tingshu.app.player.PlayerService svc = PlayerService.get();
-            if (svc != null) return svc.coverBitmap();
-        } catch (Throwable ignored) {}
-        return null;
     }
 
     /**
@@ -728,18 +670,6 @@ public class MainActivity extends Activity
         if (svc != null && core.book() != null) {
             svc.updateProgress(cur * 1000L, dur * 1000L);
         }
-        // ★ v3.7.11：桌面小组件进度跟随（不传封面，只更新进度/时间，开销极小）
-        syncWidgetProgress(cur, dur);
-    }
-
-    /** ★ v3.7.11：小组件的轻量进度同步（每秒一次，只写标量字段） */
-    private void syncWidgetProgress(int cur, int dur) {
-        try {
-            com.tingshu.app.player.WidgetState.curSec = cur;
-            com.tingshu.app.player.WidgetState.durSec = dur;
-            com.tingshu.app.player.WidgetState.playing = core.isPlaying();
-            com.tingshu.app.player.WidgetState.requestUpdate(this);
-        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -1243,8 +1173,8 @@ public class MainActivity extends Activity
         PlayerService.bindCtl(this);
         // ★ v3.7.14：封面到位回调也要跟着补挂（服务重启后 listener 会丢）
         bindCoverListener();
-        // 顺带把当前状态再推一次，避免小组件停在旧信息
-        syncWidget();
+        // 回到前台补刷一次通知（后台期间标题/进度可能已陈旧）
+        refreshNotification();
     }
 
     @Override

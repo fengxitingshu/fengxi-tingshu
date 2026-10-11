@@ -485,9 +485,15 @@ img.imgfail { opacity: .12 !important; }
 /* 章节列表容器：1 列 = 原来的纵向列表；2/3 列 = 网格 */
 .chapter-list.cols-1 { display: block; }
 .chapter-list.cols-2,
-.chapter-list.cols-3 { display: grid; gap: 1px; }
-.chapter-list.cols-2 { grid-template-columns: 1fr 1fr; }
-.chapter-list.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.chapter-list.cols-3 { display: grid; gap: 1px; box-sizing: border-box; }
+/* ★ v3.7.18：轨道显式 minmax(0, 1fr)。`1fr` 的隐含最小值是 auto ——
+   不低于内容的 min-content 宽度，长中文章节名（不可断行）会把每列撑到
+   整串文字的宽度，多列时整体超出屏幕。minmax(0,1fr) 把最小值钉为 0。
+   （与选集 .chlist-inner 同一处修复，两处栅格必须保持一致。） */
+.chapter-list.cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.chapter-list.cols-3 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+}
 /* 多列时每格内容收紧一点，否则集名基本看不到字 */
 .chapter-list.cols-2 .chapter,
 .chapter-list.cols-3 .chapter {
@@ -514,14 +520,10 @@ img.imgfail { opacity: .12 !important; }
     /* ★ v3.7.16：flex 子项必须 min-width:0 才会真正收缩，
        否则跑马灯测量拿到的可用宽度是错的（内容会把行撑开）。 */
     min-width: 0; }
-/* ★ v3.7.16：多列布局下不做跑马灯（格子太窄，滚动反而难读），
-   保持省略号；单列时由 bridge.js 的 marquee() 自动接管。 */
-.chapter-list.cols-2 .chapter .tt .mq-in,
-.chapter-list.cols-3 .chapter .tt .mq-in { animation: none !important; }
-.chapter-list.cols-2 .chapter .tt.mq,
-.chapter-list.cols-3 .chapter .tt.mq { text-overflow: ellipsis; }
-.chapter-list.cols-2 .chapter .tt.mq .mq-seg.mq-dup,
-.chapter-list.cols-3 .chapter .tt.mq .mq-seg.mq-dup { display: none; }
+/* ★ v3.7.16：多列布局下原来关掉跑马灯（格子太窄，滚动反而难读），
+   改为省略号。
+   ★ v3.7.18：用户要求「章节名称超了滚动显示」，故**删除**这三条关断规则 ——
+   单列 / 多列一律由 bridge.js 的 marquee() 按实测宽度决定是否滚动。 */
 .chapter.playing .no, .chapter.playing .tt { color: var(--primary); font-weight: 600; }
 .chapter .dl { font-size: 14px; color: var(--text2); cursor: pointer;
     padding: 4px 8px; flex-shrink: 0; min-width: 22px; text-align: center;
@@ -1590,17 +1592,43 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
 /* ★ v3.7.10：选集列表分列（与详情页章节列表同一套栅格逻辑） */
 .chlist-inner.cols-2, .chlist-inner.cols-3 {
     display: grid; gap: 0; padding: 0 6px;
+    /* ★ v3.7.18：栅格容器必须自带 box-sizing: border-box，
+       否则 padding 0 6px 会加在 100% 宽度之外，整块向右溢出 12px。 */
+    box-sizing: border-box;
+    width: 100%; max-width: 100%;
 }
-.chlist-inner.cols-2 { grid-template-columns: 1fr 1fr; }
-.chlist-inner.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+/* ★ v3.7.18 关键修复：3 列（及 2 列）选集超屏。
+   根因：`grid-template-columns: 1fr 1fr 1fr` 里的 `1fr` 等价于
+       `minmax(auto, 1fr)` —— 而这个 `auto` 的最小值**不小于内容的最小宽度**。
+   章节名是长中文串（无空格，不可断行），它的 "min-content 宽度" 就是整串
+   文字的宽度（实测 375px）。于是每列被撑到 375px，3 列 = 1125px，
+   远超容器的 393px → 第 2、3 列被推到屏幕外（实测 scrollWidth=1132）。
+   修法两条一起上：
+     1) 轨道显式写成 `minmax(0, 1fr)` —— 把最小值钉死为 0，
+        轨道就能真正按 1/3 均分容器宽度（这是 CSS Grid 的经典坑，
+        和 flex 的 `min-width: 0` 是同一类问题）；
+     2) 子项 `.chitem` 补 `min-width: 0; overflow: hidden` ——
+        与详情页 `.chapter` 保持一致，让内容能被裁掉而不是撑开轨道。
+   两者缺一不可：只改子项，`auto` 最小值仍按内容算；只改轨道，
+   子项里的 flex 布局又会按内容重新撑开。 */
+.chlist-inner.cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.chlist-inner.cols-3 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+}
 .chlist-inner.cols-2 .chitem, .chlist-inner.cols-3 .chitem {
-    padding: 11px 8px; gap: 6px;
+    padding: 11px 8px; gap: 6px; min-width: 0; overflow: hidden;
 }
 .chlist-inner.cols-2 .chtt, .chlist-inner.cols-3 .chtt {
     font-size: 12.5px; -webkit-line-clamp: 1; display: block;
+    /* ★ v3.7.18：flex 子项不设 min-width:0 会被内容撑开，跑马灯也测不准宽度 */
+    min-width: 0;
 }
-.chlist-inner.cols-2 .chno, .chlist-inner.cols-3 .chno { min-width: 24px; font-size: 11px; }
-.chlist-inner.cols-2 .chdl, .chlist-inner.cols-3 .chdl { padding: 2px 4px; min-width: 18px; font-size: 12px; }
+.chlist-inner.cols-2 .chno, .chlist-inner.cols-3 .chno {
+    min-width: 24px; font-size: 11px; flex-shrink: 0;
+}
+.chlist-inner.cols-2 .chdl, .chlist-inner.cols-3 .chdl {
+    padding: 2px 4px; min-width: 18px; font-size: 12px; flex-shrink: 0;
+}
 .chsheet-list { overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-bottom: var(--safe-b); }
 .chitem {
@@ -1614,20 +1642,14 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ★ v3.7.16：章节名过长 → 复用全局跑马灯（bridge.js 的 marquee()，
    样式是 .mq / .mq-in / .mq-seg，见文件前段「跑马灯」一节）。
-   这里只补两点：
-     1) 多列布局下不做跑马灯 —— 2/3 列的格子太窄，滚动反而难读，
-        继续用省略号；
-     2) .chtt 是 flex 子项，必须给 min-width:0 它才会真正收缩，
-        否则跑马灯测量出的可用宽度是错的（这是 flex 的经典坑）。 */
+   .chtt 是 flex 子项，必须给 min-width:0 它才会真正收缩，
+   否则跑马灯测量出的可用宽度是错的（这是 flex 的经典坑）。
+   ★ v3.7.18：原来「多列排布时关掉跑马灯、退回省略号」的三条规则**已删除** ——
+   用户明确要求「章节名称超了滚动显示」，多列下同样要滚。
+   多列格子确实窄，但滚动 + 两端渐隐遮罩比"只有前几个字看得见"要好得多；
+   滚动速度由 bridge.js 按实测文字宽度换算，窄格子里节奏自然更快，
+   不会出现「半天移不动」的观感。 */
 .chitem .chtt { min-width: 0; }
-.chlist-inner.cols-2 .chitem .chtt .mq-in,
-.chlist-inner.cols-3 .chitem .chtt .mq-in {
-    animation: none !important;
-}
-.chlist-inner.cols-2 .chitem .chtt.mq,
-.chlist-inner.cols-3 .chitem .chtt.mq { text-overflow: ellipsis; }
-.chlist-inner.cols-2 .chitem .chtt.mq .mq-seg.mq-dup,
-.chlist-inner.cols-3 .chitem .chtt.mq .mq-seg.mq-dup { display: none; }
 .chitem.on { background: rgba(232, 80, 58, .08); }
 .chitem.on .chtt { color: var(--primary); font-weight: 600; }
 .chitem.on .chno { color: var(--primary); }

@@ -377,6 +377,11 @@ echo "    + 签名闸门通过（已签名且与 aligned.apk 不同）"
 #     - 点卡片「只能回到 App」（只有 keep 了的 MainActivity 还能响应）
 #   build 一切正常、无任何告警，问题要等用户装上才暴露。
 #
+#   ★ v3.7.18：小组件已整体删除，上述具体症状不复存在，但**这条闸门必须留** ——
+#   它守的是「所有 Manifest 注册类」，不止小组件。MainActivity / PlayerService /
+#   FloatBallService / PlayerBrowserService 同样依赖保名，将来再加任何
+#   Activity/Service/Receiver/Provider 也自动被它保护。
+#
 #   这里把「Manifest 声明的类名 == 混淆后的类名」变成硬断言，
 #   从机制上堵死这类漏 keep 的坑。
 python3 - "$PROJ" <<'PYCHK'

@@ -1477,6 +1477,128 @@ public class Bridge {
         });
     }
 
+    // ==================== 存储占用（★ v3.7.18） ====================
+    //
+    //  用户反馈「App 全部占用 500 多 M」，此前 App 里**没有任何地方能看到
+    //  各部分的真实占用** —— 设置页只有一个「缓存上限」下拉，看不见现在用了多少。
+    //  这里补两个接口：
+    //    · storageInfo()    返回分区占用（B），前端换算成 MB 展示
+    //    · clearAllCache()  清掉"可再生成"的部分（音频缓存 + 详情缓存 + 封面/WebView 缓存）
+    //  注意**不清** js_plugins / python_sources / chaquopy / 数据库 ——
+    //  那些是书源与用户数据，清了等于丢配置。
+
+    @JavascriptInterface
+    public void storageInfo() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    android.content.Context c = com.tingshu.app.core.App.ctx();
+
+                    // 1) 音频缓存（离线缓存 + 预读落下来的）
+                    long audio = 0;
+                    try {
+                        audio = com.tingshu.app.data.CacheRepo.totalSize();
+                    } catch (Throwable ignored) {}
+                    o.put("audioCache", audio);
+
+                    // 2) 应用私有目录各分区
+                    o.put("files", dirSize(c.getFilesDir()));
+                    o.put("cache", dirSize(c.getCacheDir()));
+                    try {
+                        java.io.File[] ext = c.getExternalCacheDirs();
+                        long e = 0;
+                        if (ext != null) for (java.io.File f : ext) e += dirSize(f);
+                        o.put("extCache", e);
+                    } catch (Throwable ignored) { o.put("extCache", 0); }
+
+                    // 3) 细分：书源插件 / Python 源 / Chaquopy 运行时
+                    o.put("jsPlugins", dirSize(new java.io.File(c.getFilesDir(), "js_plugins")));
+                    o.put("pySources", dirSize(new java.io.File(c.getFilesDir(), "python_sources")));
+                    o.put("chaquopy", dirSize(new java.io.File(c.getFilesDir(), "chaquopy")));
+
+                    // 4) 整包占用（含 lib / dex / assets，用户最直观的那个数）
+                    long apk = 0;
+                    try {
+                        android.content.pm.PackageInfo pi = c.getPackageManager()
+                                .getPackageInfo(c.getPackageName(), 0);
+                        if (pi != null) apk = new java.io.File(pi.applicationInfo.sourceDir).length();
+                    } catch (Throwable ignored) {}
+                    o.put("apk", apk);
+
+                    // 5) 上限值（前端对照展示"已用 x / 上限 y"）
+                    o.put("limitMb", com.tingshu.app.data.Settings.cacheLimitMb());
+                    o.put("ok", true);
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onStorageInfo", o);
+            }
+        });
+    }
+
+    /** 清空"可再生成"的缓存（音频缓存 / 详情缓存 / 封面与 WebView 缓存） */
+    @JavascriptInterface
+    public void clearAllCache() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    android.content.Context c = com.tingshu.app.core.App.ctx();
+                    long before = 0;
+                    try {
+                        before = com.tingshu.app.data.CacheRepo.totalSize()
+                                + dirSize(c.getCacheDir());
+                    } catch (Throwable ignored) {}
+
+                    // 音频缓存（filesDir/cache_audio）
+                    try { com.tingshu.app.data.CacheRepo.clearAll(c); } catch (Throwable ignored) {}
+                    // 详情页缓存（Aggregator 的 detail 缓存）
+                    try { com.tingshu.app.source.Aggregator.clearDetailCache(); } catch (Throwable ignored) {}
+                    // 封面 + WebView 缓存（cacheDir）
+                    try { deleteDir(c.getCacheDir()); } catch (Throwable ignored) {}
+                    try { android.webkit.WebView w = web;
+                          if (w != null) { w.clearCache(true); } } catch (Throwable ignored) {}
+
+                    long after = 0;
+                    try {
+                        after = com.tingshu.app.data.CacheRepo.totalSize()
+                                + dirSize(c.getCacheDir());
+                    } catch (Throwable ignored) {}
+                    o.put("freed", Math.max(0, before - after));
+                    // 清完立刻回一份新的占用，前端不用再请求一次
+                    o.put("ok", true);
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onCacheCleared", o);
+            }
+        });
+    }
+
+    /** 递归统计目录占用（含子目录） */
+    private static long dirSize(java.io.File d) {
+        if (d == null || !d.exists()) return 0;
+        if (d.isFile()) return d.length();
+        long n = 0;
+        java.io.File[] fs = d.listFiles();
+        if (fs == null) return 0;
+        for (java.io.File f : fs) n += dirSize(f);
+        return n;
+    }
+
+    /** 递归删除目录内容（保留目录本身） */
+    private static void deleteDir(java.io.File d) {
+        if (d == null || !d.exists()) return;
+        java.io.File[] fs = d.listFiles();
+        if (fs != null) {
+            for (java.io.File f : fs) {
+                if (f.isDirectory()) deleteDir(f);
+                else f.delete();
+            }
+        }
+    }
+
     // ==================== 设置 ====================
 
     /** 读全部设置给前端 */

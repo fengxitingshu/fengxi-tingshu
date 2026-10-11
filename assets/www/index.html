@@ -174,7 +174,7 @@
       <div class="eicon">&#8505;</div>
       <div class="einfo">
         <div class="et">关于</div>
-        <div class="es" id="aboutEntrySub">版本 3.7.7 · 更新与交流</div>
+        <div class="es" id="aboutEntrySub">版本 3.7.18 · 更新与交流</div>
       </div>
       <div class="setval">&#8250;</div>
     </div>
@@ -255,6 +255,24 @@
       </select>
     </div>
 
+    <!-- ★ v3.7.18：存储占用可视化 + 一键清理。
+         此前 App 内看不到"到底占了多少、占在哪"，用户只能去系统设置里
+         看到一个大数字（反馈的 500+ MB）。这里把占用的构成逐项列出来，
+         并区分「可清理」与「不可清理（书源/运行时）」两类。 -->
+    <div class="setrow">
+      <div class="setlabel">存储占用<span class="setdesc" id="stDesc">正在统计…</span></div>
+      <button class="btn-mini" onclick="App.ui.storageRefresh()">刷新</button>
+    </div>
+    <div class="setrow" onclick="App.ui.clearAllCache()">
+      <div class="setlabel">一键清理缓存<span class="setdesc" id="stClearDesc">清音频缓存 / 封面 / 详情缓存，不动书源</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" id="stDetailRow" style="display:none">
+      <div class="setlabel" style="flex:1">
+        <div class="setdesc" id="stDetail" style="line-height:1.9;white-space:pre-line"></div>
+      </div>
+    </div>
+
     <!-- ★ v2.9：下载节 —— 与缓存完全独立，不受缓存上限管理 -->
     <div class="chapter-hd"><span>下载</span></div>
     <div class="setrow">
@@ -298,11 +316,11 @@
     <div class="ab-hero">
       <div class="ab-logo">&#127925;</div>
       <div class="ab-name">枫兮听书</div>
-      <div class="ab-ver">版本 <span id="aboutVer">3.7.17</span></div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.7.18</span></div>
     </div>
 
     <div class="chapter-hd"><span>信息</span></div>
-    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.17</div></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.18</div></div>
     <div class="setrow" onclick="App.ui.openChangelog()">
       <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
       <div class="setval">&#8250;</div>

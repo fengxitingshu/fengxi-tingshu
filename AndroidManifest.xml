@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.tingshu.app"
-    android:versionCode="44"
-    android:versionName="3.7.17">
+    android:versionCode="45"
+    android:versionName="3.7.18">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
 
@@ -63,34 +63,11 @@
             </intent-filter>
         </service>
 
-        <!-- ★ v3.7.11：桌面播放控制小组件。
-             通过 PlayerService 已有的控制 action 驱动播放，与通知栏、
-             系统 MediaSession（原子随身听 / 音乐控制中心）共用同一条通路。
-             ★ exported="false"：状态刷新广播只由本 App 自己发，不对外暴露。 -->
-        <receiver
-            android:name=".widget.PlayerWidgetProvider"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_player_info"/>
-        </receiver>
-
-        <!-- ★ v3.7.16：小组件点击接收器。
-             必须 exported="true" —— 桌面是另一个 App，它触发小组件上的
-             PendingIntent 时系统会按 exported 校验；投给 exported="false"
-             的组件会被静默丢弃，表现为"按钮和进度条点了没反应、
-             只有点封面能回 App"。本接收器只做「转发到 PlayerService」一件事。 -->
-        <receiver
-            android:name=".widget.WidgetClickReceiver"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.tingshu.app.widget.ACTION"/>
-            </intent-filter>
-        </receiver>
+        <!-- ★ v3.7.18：桌面播放控制小组件已整体移除（用户反馈其长期无法正常
+             工作，且占用额外资源）。相关代码 —— PlayerWidgetProvider、
+             WidgetClickReceiver、WidgetState、widget_player.xml 布局与
+             wg_*.xml 绘制资源 —— 已全部删除。
+             桌面播放控制改由「通知栏控制条 + 系统 MediaSession」承担，
+             原子随身听 / 音乐控制中心仍可正常读取与操控播放。 -->
     </application>
 </manifest>

@@ -90,14 +90,15 @@ public class PlayerService extends Service {
     public static boolean alive() { return INSTANCE != null; }
 
     /**
-     * ★ v3.7.14：封面位图下载完成通知。
+     * ★ v3.7.14：封面位图下载完成通知（★ v3.7.18 起服务于通知栏封面）。
      *
-     * <p>根因：封面是**异步**下载的（{@link #loadCover} 起独立线程），而小组件的
-     * 同步是在 {@code onStateChanged} 里同步做的 —— 那一刻封面往往还没下完，
-     * {@code lastCoverBmp()} 拿到 null，于是 {@code WidgetState.cover} 永远为空，
-     * 小组件就一直显示占位音符。用户反馈的"不显示封面"就是这么来的。
+     * <p>根因：封面是**异步**下载的（{@link #loadCover} 起独立线程），而通知栏
+     * 与播放页的封面同步往往是同步做的 —— 那一刻封面还没下完，取到 null
+     * 就只能显示占位音符。所以这里加一个回调：封面到位后主动喊一声，
+     * 让 MainActivity 立刻重绘一次通知栏封面。
      *
-     * <p>所以这里加一个回调：封面到位后主动喊一声，让 MainActivity 再推一次快照。
+     * <p>（原话是「小组件同步」，小组件已在 v3.7.18 整体移除，
+     *   这条回调改为服务于通知栏封面刷新。）
      */
     public interface CoverListener { void onCoverReady(Bitmap bmp); }
 
@@ -492,8 +493,8 @@ public class PlayerService extends Service {
                     }
                     if (bmp != null && session != null) {
                         coverBmp = bmp;   // 缓存，后续 update 直接复用
-                        // ★ v3.7.14：封面到位 → 通知 MainActivity 重推小组件快照，
-                        //   否则小组件永远停在"无封面"的占位状态。
+                        // ★ v3.7.14：封面到位 → 通知 MainActivity 重绘一次通知栏封面。
+                        //   （原文是"重推小组件快照"，小组件已于 v3.7.18 移除）
                         try {
                             CoverListener cl = coverListener;
                             if (cl != null) cl.onCoverReady(bmp);

@@ -2708,6 +2708,8 @@
         setBuffering(false);
         // ★ v3.7.13：播放成功就把"连续失败次数"清零，失败提示才不会误报累积
         App.playErrStreak = 0;
+        // ★ v3.7.18：这一集播起来了 → 静默重试计数清零
+        App._playRetry = null;
         // ★ 图标真源只有一个：native 说在播就是在播
         App.playing = true;
         paintPlayIcon(true);
@@ -2750,18 +2752,68 @@
      * 并给出「换一集」「换本地其它源」两个直接可点的动作。
      * 同一个源连续报错只在第一次弹窗，避免连播时刷屏。
      */
+    /**
+     * ★ v3.7.13：播放（取链）失败提示。
+     *
+     * <p>以前只有一个 toast「取链失败，换一集或换个源试试」，问题有三：
+     * <ol>
+     *   <li>native 那边**也会** toast 一句（"取链失败，试试其他源"），两句糊在一起，
+     *       用户看到的提示是重复且错位的；</li>
+     *   <li>toast 1.6 秒就没了，用户切回列表时什么都没留下；</li>
+     *   <li>取链失败往往意味着**这个源的这一集废了**，但没有任何"下一步"入口 ——
+     *       用户只能自己去摸索怎么换源。</li>
+     * </ol>
+     *
+     * <p>现在改成：一个带「关闭」按钮的结果弹窗，正文说明发生了什么 + 最可能的原因，
+     * 并给出「换一集」「换本地其它源」两个直接可点的动作。
+     * 同一个源连续报错只在第一次弹窗，避免连播时刷屏。
+     *
+     * <p>★ v3.7.18：提示时机改为「彻底确定无法连接播放之后」。
+     * <p>用户反馈：加载中经常直接弹「播放失败」面板 —— 但很多次只是源站
+     * 瞬时抖动 / 直链过期，native 在 onError 里已把该集的取链缓存剔掉
+     * （Aggregator.invalidateAudio），重新解析（含自动换源）就能救回来，
+     * 根本没必要立刻打扰用户。
+     * <p>所以现在分两级：
+     * <ol>
+     *   <li><b>第一级（静默自救）</b>：同一集的第一次失败**不弹任何面板**，
+     *       保持转圈，延迟 800ms 后自动重走一次完整取链（playChapter）；
+     *       若期间用户已手动点了别的集 / 别的书，则放弃这次重试。</li>
+     *   <li><b>第二级（彻底失败）</b>：同一集重试后仍失败 → 确实救不回来了，
+     *       这时才弹出「播放失败」面板（换下一集 / 换源动作不变）。</li>
+     * </ol>
+     * 重试计数按「书 + 集」记，换集 / 播成功（onPlaying）都会清零。
+     */
     window.onPlayError = function (o) {
-        setBuffering(false);
         App.playing = false;
         paintPlayIcon(false);
-        App.playErrStreak = (App.playErrStreak || 0) + 1;
 
         var bk = App.book || {};
-        var ch = (App.chapters && App.chapIdx >= 0) ? App.chapters[App.chapIdx] : null;
+        var chIdx = App.chapIdx;
+        var retryKey = (bk.key || bk.title || '?') + ':' + chIdx;
+
+        // ---- 第一级：静默自救（同一集只自救一次） ----
+        var tries = (App._playRetry && App._playRetry.key === retryKey)
+            ? App._playRetry.tries : 0;
+        if (tries < 1 && chIdx >= 0) {
+            App._playRetry = { key: retryKey, tries: tries + 1 };
+            // 转圈保持转着（不 setBuffering(false)），用户知道还在加载
+            setTimeout(function () {
+                // 用户已经手动切了别的集 / 换了书 / 开始播了 → 放弃这次重试
+                if (App.chapIdx !== chIdx || App.playing || !App.book) return;
+                ui.playChapter(chIdx);
+            }, 800);
+            return;
+        }
+        App._playRetry = null;
+
+        // ---- 第二级：彻底失败，弹面板 ----
+        setBuffering(false);
+        var ch = (App.chapters && chIdx >= 0) ? App.chapters[chIdx] : null;
         var sec = Math.floor(Date.now() / 1000);
         // 5 秒内重复报错 → 视为同一次故障，只提示一次（自动连播时可能连撞两集）
         if (App._playErrAt && sec - App._playErrAt < 5) return;
         App._playErrAt = sec;
+        App.playErrStreak = (App.playErrStreak || 0) + 1;
 
         var lines = [];
         lines.push('「' + ((o && o.title) || (ch && ch.title) ||
@@ -6120,6 +6172,8 @@
         TS.call('floatBallState');
         // ★ v2.9：下载目录状态也从原生拉一次（设置页要显示当前目录）
         TS.call('downloadDirState');
+        // ★ v3.7.18：顺带统计一次存储占用（进设置页就能看到，不用手动点刷新）
+        ui.storageRefresh();
     };
 
     function setCheck(id, v) { var el = $(id); if (el) el.checked = !!v; }
@@ -6129,6 +6183,79 @@
     ui.setNumber = function (key, v) {
         var n = parseInt(v, 10);
         if (!isNaN(n)) TS.call('setSetting', key, String(n));
+    };
+
+    // ==================== 存储占用（★ v3.7.18） ====================
+    //
+    // 需求背景：用户报「App 全部占用 500 多 M，核对下是不是有异常」。
+    // 排查发现三件事：
+    //   1) 500M 里的**大头是音频缓存**（单集 10~15MB），
+    //      而 enforceLimit 只在「整本缓存」结束时跑 —— 自动预读那条路
+    //      从来不清理，缓存只涨不落（已在 native 侧修掉）；
+    //   2) 其次是不可清理的固定开销：APK 18M + 解压出的 so ≈ 8M
+    //      + Chaquopy Python 运行时 ≈ 7M（不用 Python 源也照装）；
+    //   3) App 里**看不到**这些数，只能去系统设置里看一个总数。
+    // 所以这里补「占用可视化 + 一键清理」，让用户自己能核对与处理。
+
+    function fmtMB(b) {
+        if (!b) return '0 MB';
+        var mb = b / 1024 / 1024;
+        if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
+        return (mb >= 100 ? mb.toFixed(0) : mb.toFixed(1)) + ' MB';
+    }
+
+    ui.storageRefresh = function () {
+        var el = $('stDesc');
+        if (el) el.textContent = '正在统计…';
+        TS.call('storageInfo');
+    };
+
+    /** native 回传的占用明细 */
+    window.onStorageInfo = function (o) {
+        o = o || {};
+        if (!o.ok) {
+            var d0 = $('stDesc');
+            if (d0) d0.textContent = '统计失败';
+            return;
+        }
+        var total = (o.files || 0) + (o.cache || 0) + (o.extCache || 0) + (o.apk || 0);
+        var d = $('stDesc');
+        if (d) d.textContent = '合计约 ' + fmtMB(total) + '（含安装包与运行时）';
+
+        var row = $('stDetailRow');
+        var box = $('stDetail');
+        if (box) {
+            box.textContent =
+                '音频缓存：' + fmtMB(o.audioCache) + '（上限 ' + (o.limitMb || 0) + ' MB）\n'
+              + '应用数据：' + fmtMB(o.files) + '\n'
+              + '临时缓存：' + fmtMB((o.cache || 0) + (o.extCache || 0)) + '\n'
+              + '　· 书源插件：' + fmtMB(o.jsPlugins) + '（不可清理）\n'
+              + '　· Python 源：' + fmtMB(o.pySources) + '（不可清理）\n'
+              + '　· Python 运行时：' + fmtMB(o.chaquopy) + '（不可清理）\n'
+              + '安装包：' + fmtMB(o.apk);
+        }
+        if (row) row.style.display = '';
+        App._storage = o;
+    };
+
+    ui.clearAllCache = function () {
+        var o = App._storage || {};
+        var audio = fmtMB(o.audioCache);
+        ui.confirmSheet('清空全部缓存？\n'
+            + '将清除：音频缓存（当前 ' + audio + '）、封面图、详情缓存。\n'
+            + '不会动：书源、收藏、收听历史、播放进度。',
+            function () {
+                TS.toast('正在清理…');
+                TS.call('clearAllCache');
+            });
+    };
+
+    /** native 清理完成 */
+    window.onCacheCleared = function (o) {
+        o = o || {};
+        if (!o.ok) { TS.toast('清理失败，请重试'); return; }
+        TS.toast('已释放 ' + fmtMB(o.freed));
+        ui.storageRefresh();      // 顺手刷新占用数字
     };
 
     // ==================== 下载 ====================
@@ -6495,6 +6622,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.18',
+            date: '2025-10-11',
+            fixes: [
+                '★★ 播放失败提示不再「加载中就弹」：以前一取链失败就立刻弹「播放失败」面板，但很多次只是源站瞬时抖动或直链临期，重新解析（含自动换源）就能救回来。现在改成两级 —— 第一次失败静默重试一次（转圈继续保持，不打扰你）；只有重试后仍然失败、确实连不上时，才弹出失败面板（面板里的「换下一集 / 换一个书源」按钮不变）',
+                '★★ 修复存储占用异常增长：自动预读（播放时后台预存后 3 集）的缓存从来不执行「缓存上限」清理 —— 只有整本缓存走完流程才会清一次，所以日常使用中缓存只涨不落，单集音频 10~15MB，听一下午就能涨到几百 MB。现在每次预读落盘后都会立即按上限清理最旧的整本缓存',
+                '★ 修复播放页选集「3 列」超出屏幕：3 列时每列被长章节名撑到接近整屏宽，第 2、3 列被推到屏幕外。根因是网格列宽 `1fr` 的隐含最小值不会小于内容宽度，长中文名（不能断行）就把列撑开了。现在把列宽的最小值显式钉为 0，2 列 / 3 列都能与屏幕等宽，任何机型、任何长度的章节名都不会再溢出',
+                '彻底移除桌面播放控制小组件（长期无法稳定工作：空白、按钮失灵、点击只回 App，且不同手机系统兼容性不一致）。相关代码与资源已全部删除，不再占用任何资源。桌面播放控制请用「通知栏播放条」或系统自带的原子随身听 / 音乐控制中心'
+            ],
+            adds: [
+                '设置页新增「存储占用」，把占了多少、具体占在哪逐项列清楚（音频缓存 / 应用数据 / 书源插件 / Python 运行时 / 安装包），并区分「可清理」与「不可清理」两类，方便你自己核对那个大数字是怎么来的',
+                '设置页新增「一键清理缓存」：一次清掉音频缓存、封面图、详情页缓存，不动书源、收藏、收听历史与播放进度',
+                '章节名称过长时的横向滚动（跑马灯）现在在 2 列 / 3 列布局下同样生效 —— 以前多列时会退化成省略号，只能看到前几个字'
+            ]
+        },
         {
             ver: '3.7.17',
             date: '2025-10-11',
