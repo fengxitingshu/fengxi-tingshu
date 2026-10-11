@@ -94,6 +94,7 @@
         changelog: 'pageChangelog',   // ★ v3.7.3 更新公告
         diag: 'pageDiag',             // ★ v3.7.15-fix 源加载诊断
         crash: 'pageCrash',           // ★ v3.7.15-fix 崩溃日志
+        backup: 'pageBackup',         // ★ v3.8.0 备份与恢复
         dlmanage: 'pageDlManage' };   // ★ v2.9 下载管理
 
     function allPages() {
@@ -6550,6 +6551,537 @@
             : (o.log || '');
     };
 
+    // ==================== ★ v3.8.0 备份与恢复 ====================
+    //
+    // 页面结构：概览 → 本地备份 → 网络备份(WebDAV) → 自动备份 → 执行记录。
+    // 原生侧接口见 Bridge.java 的「★ v3.8.0 备份与恢复」整段。
+    //
+    // 两条不变量（原生已保证，前端只在文案上如实说明）：
+    //   1) 备份包里绝不含音频缓存 / 已下载音频 / Python 运行时；
+    //   2) 任何恢复动作都会先自动打一个当前状态的备份包，失败即中止。
+    //
+    // ★ 本地备份目录（SAF tree uri）存在 localStorage 的 fx_bk_tree_v1 /
+    //   fx_bk_name_v1 两个键里：它是纯界面状态，而且刚好随备份包一起走，
+    //   换机恢复后不必重选目录。原生侧只负责拉起选择器。
+
+    var LS_BK_TREE = 'fx_bk_tree_v1';
+    var LS_BK_NAME = 'fx_bk_name_v1';
+
+    function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+    function lsSet(k, v) {
+        try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {}
+    }
+
+    /** 本地备份的当前状态 */
+    App.bk = {
+        treeUri: lsGet(LS_BK_TREE),
+        dirName: lsGet(LS_BK_NAME),
+        hasDav: false, davUrl: '', davDir: '',
+        lastLocal: null, busy: false
+    };
+
+    /** 执行记录（只在本页面生命周期内累积，不落盘） */
+    var _bkLog = [];
+
+    function bkLog(line) {
+        var t = new Date();
+        var hh = t.getHours(), mm = t.getMinutes(), ss = t.getSeconds();
+        function p2(n) { return n < 10 ? '0' + n : '' + n; }
+        _bkLog.push('[' + p2(hh) + ':' + p2(mm) + ':' + p2(ss) + '] ' + line);
+        if (_bkLog.length > 200) _bkLog.shift();
+        var el = $('bkLog');
+        if (el) {
+            el.textContent = _bkLog.join('\n');
+            el.scrollTop = el.scrollHeight;
+        }
+    }
+
+    ui.bkClearLog = function () {
+        _bkLog = [];
+        var el = $('bkLog');
+        if (el) el.textContent = '（暂无）';
+    };
+
+    /** 统一格式化体积 */
+    function bkSize(n) {
+        n = n || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1) + ' MB';
+        return (n / 1073741824).toFixed(2) + ' GB';
+    }
+
+    /** 打开备份页 */
+    ui.openBackup = function () {
+        goSub('backup');
+        var sum = $('bkSummary');
+        if (sum) sum.textContent = '正在统计本机数据…';
+        App.bk.busy = false;
+        // 先把本地目录状态画出来（来自 localStorage，不用等原生）
+        _bkPaintLocal();
+        TS.call('backupStatus');
+        _bkRefreshAutoList();
+    };
+
+    /** 画本地备份目录一行 */
+    function _bkPaintLocal() {
+        var dv = $('bkDirVal');
+        if (dv) dv.innerHTML = App.bk.dirName
+            ? TS.esc(App.bk.dirName) + ' &#8250;'
+            : '未设置 &#8250;';
+    }
+
+    /** 刷新「网盘备份列表」 */
+    function _bkRefreshDavList() {
+        var box = $('bkDavList');
+        if (!box) return;
+        if (!App.bk.hasDav) {
+            box.innerHTML = '<div class="tip">还没有配置 WebDAV。填入坚果云 / '
+                + 'Nextcloud / 群晖等地址后即可把备份包传到网盘。</div>';
+            return;
+        }
+        box.innerHTML = '<div class="loading"><div class="spinner"></div>正在读取网盘…</div>';
+        TS.call('davList');
+    }
+
+    /** 刷新「自动备份列表」 */
+    function _bkRefreshAutoList() {
+        TS.call('autoBackupList');
+    }
+
+    // ---------- 概览 ----------
+
+    /** 原生：备份页概览状态 */
+    window.onBackupStatus = function (o) {
+        o = o || {};
+        // ★ stats() 的键：fav / favGroup / history / progress / sourceConf /
+        //   customSource / pluginJar / searchHist / jsPlugins / pySources /
+        //   jars / sources / total
+        var c = o.counts || {};
+        App.bk.hasDav = !!o.hasDav;
+        App.bk.davUrl = o.davUrl || '';
+        App.bk.davDir = o.davDir || '';
+
+        var srcCount = c.sources || 0;
+        var pluginCount = (c.jsPlugins || 0) + (c.pySources || 0) + (c.jars || 0);
+        var confCount = c.sourceConf || 0;
+
+        var sum = $('bkSummary');
+        if (sum) {
+            sum.innerHTML = '当前数据：书源 <b>' + srcCount + '</b> 个 · 收藏 <b>'
+                + (c.fav || 0) + '</b> 条 · 历史 <b>' + (c.history || 0)
+                + '</b> 条 · 进度 <b>' + (c.progress || 0) + '</b> 条';
+        }
+        var s1 = $('bkScopeSrc');
+        if (s1) s1.textContent = srcCount + ' 源 / ' + pluginCount + ' 插件 / '
+            + confCount + ' 条源配置';
+        var s2 = $('bkScopeFav');
+        if (s2) s2.textContent = (c.fav || 0) + ' 收藏 · ' + (c.favGroup || 0)
+            + ' 分组 · ' + (c.history || 0) + ' 历史';
+        var s3 = $('bkScopeSet');
+        if (s3) s3.textContent = '全部偏好 + ' + (c.searchHist || 0) + ' 条搜索历史';
+
+        _bkPaintLocal();
+
+        var ds = $('bkDavState');
+        if (ds) ds.textContent = App.bk.hasDav
+            ? ((App.bk.davUrl || '已配置') + (App.bk.davDir ? ' / ' + App.bk.davDir : ''))
+            : '未配置';
+        var up = $('bkDavUpBtn');
+        if (up) up.disabled = !App.bk.hasDav;
+
+        var sub = $('bkEntrySub');
+        if (sub) sub.textContent = App.bk.hasDav
+            ? '本机 + 网盘（WebDAV）'
+            : '本机备份 / 可配置网盘（WebDAV）';
+
+        _bkRefreshDavList();
+    };
+
+    // ---------- 本地备份 ----------
+
+    /** 选备份目录（原生拉起 SAF 目录选择器） */
+    ui.bkPickDir = function () {
+        TS.call('pickBackupDir');
+    };
+
+    /** 原生：目录已选 */
+    window.onBackupDir = function (o) {
+        o = o || {};
+        if (!o.ok) {
+            if (!o.cancel) TS.toast(o.error || '未选择目录');
+            return;
+        }
+        App.bk.treeUri = o.treeUri || '';
+        App.bk.dirName = o.name || '';
+        lsSet(LS_BK_TREE, App.bk.treeUri);
+        lsSet(LS_BK_NAME, App.bk.dirName);
+        _bkPaintLocal();
+        bkLog('已设置本地备份位置：' + (App.bk.dirName || '(未命名)'));
+        TS.toast('备份位置已设置');
+    };
+
+    /** 备份到本机 */
+    ui.bkBackupLocal = function () {
+        if (App.bk.busy) { TS.toast('正在执行上一个操作，请稍候'); return; }
+        if (!App.bk.treeUri) {
+            ui.confirmSheet('还没有选择备份位置。要现在去选一个文件夹吗？', function () {
+                ui.bkPickDir();
+            });
+            return;
+        }
+        var name = _bkDefaultName();
+        ui.inputSheet('备份文件名', name, function (v) {
+            v = (v || '').replace(/[\\/:*?"<>|]/g, '').trim();
+            if (!v) { TS.toast('已取消'); return; }
+            if (!/\.fxbak$/i.test(v)) v += '.fxbak';
+            App.bk.busy = true;
+            bkLog('开始备份到本机：' + v);
+            var sum = $('bkSummary');
+            if (sum) sum.textContent = '正在打包并写入…';
+            TS.call('backupLocal', App.bk.treeUri, v);
+        });
+    };
+
+    function _bkDefaultName() {
+        var d = new Date();
+        function p2(n) { return n < 10 ? '0' + n : '' + n; }
+        return 'fengxi-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate())
+            + '-' + p2(d.getHours()) + p2(d.getMinutes()) + '.fxbak';
+    }
+
+    /** 原生：本地备份完成 */
+    window.onBackupDone = function (o) {
+        o = o || {};
+        App.bk.busy = false;
+        if (o.ok) {
+            bkLog('备份成功：' + (o.name || '') + '（' + bkSize(o.size) + '）');
+            TS.toast('备份完成：' + (o.name || ''));
+            App.bk.lastLocal = o;
+        } else {
+            bkLog('备份失败：' + (o.error || '未知错误'));
+            TS.toast('备份失败：' + (o.error || '未知错误'));
+        }
+        TS.call('backupStatus');
+    };
+
+    /** 从备份包恢复 */
+    ui.bkPickFile = function () {
+        if (App.bk.busy) { TS.toast('正在执行上一个操作，请稍候'); return; }
+        TS.call('pickBackupFile');
+    };
+
+    /** 原生：选到了 .fxbak 文件 */
+    window.onBackupFilePicked = function (o) {
+        o = o || {};
+        if (!o.ok) {
+            if (!o.cancel && o.error) TS.toast(o.error);
+            return;
+        }
+        var msg = '将从「' + (o.name || '备份包') + '」恢复数据。\n\n'
+            + '恢复会先自动备份当前数据（保命包），再整体覆盖书源、收藏、历史与设置。'
+            + '\n\n确认继续？';
+        ui.confirmSheet(msg, function () {
+            App.bk.busy = true;
+            bkLog('开始从本机备份包恢复：' + (o.name || ''));
+            var sum = $('bkSummary');
+            if (sum) sum.textContent = '正在恢复…';
+            TS.call('restoreLocal', o.uri || '');
+        });
+    };
+
+    // ---------- 恢复统一结果 ----------
+
+    /** 原生：恢复前先把包里的 localStorage 灌回网页 */
+    window.onRestoreLocalStorage = function (o) {
+        o = o || {};
+        var ls = o.localStorage || o || {};
+        var n = 0;
+        try {
+            for (var k in ls) {
+                if (!ls.hasOwnProperty(k)) continue;
+                if (k.indexOf('fx_') !== 0) continue;
+                var v = ls[k];
+                if (v == null) continue;
+                localStorage.setItem(k, String(v));
+                n++;
+            }
+        } catch (e) {}
+        if (n) bkLog('已恢复 ' + n + ' 项界面偏好');
+    };
+
+    /** 原生：恢复完成（本机 / 网盘 / 自动备份三路共用） */
+    window.onRestoreDone = function (o) {
+        o = o || {};
+        App.bk.busy = false;
+        // counts 的键与 USER_TABLES 同名（snake_case）
+        var c = o.counts || {};
+        if (o.ok) {
+            var line = '恢复成功：源配置 ' + ((c.source_conf || 0) + (c.custom_source || 0))
+                + ' 条 · 收藏 ' + (c.fav || 0) + ' 条 · 历史 ' + (c.history || 0) + ' 条';
+            if (o.autoBackupName) line += '（已自动备份：' + o.autoBackupName + '）';
+            bkLog(line);
+            if (o.warn) bkLog('提示：' + o.warn);
+            ui.confirmSheet('恢复完成。书源已重新加载，建议回到首页刷新一次。'
+                + (o.warn ? '\n\n（有部分内容未完全恢复：' + o.warn + '）' : ''),
+                function () { if (ui.home) ui.home(); });
+            TS.toast('恢复完成');
+        } else {
+            bkLog('恢复失败：' + (o.error || '未知错误'));
+            TS.toast('恢复失败：' + (o.error || '未知错误'));
+        }
+        TS.call('backupStatus');
+        _bkRefreshAutoList();
+    };
+
+    // ---------- 网络备份（WebDAV） ----------
+
+    ui.bkDavEdit = function () {
+        TS.call('davConfig');
+    };
+
+    /** 原生：返回当前 WebDAV 配置 */
+    window.onDavConfig = function (o) {
+        o = o || {};
+        var url = o.url || '';
+        var user = o.user || '';
+        var dir = o.dir || 'fengxi-backup';
+        var hasPass = !!o.hasPass;
+
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">WebDAV 服务器</div>';
+        h += '<div class="cf-msg">支持坚果云、Nextcloud、群晖、威联通、Alist 等。'
+            + '坚果云请使用「应用密码」而不是登录密码。</div>';
+        h += '<input id="davUrl" class="sheet-input" type="text" placeholder="https://dav.jianguoyun.com/dav/" value="'
+            + escAttr(url) + '">';
+        h += '<input id="davUser" class="sheet-input" type="text" placeholder="账号 / 邮箱" value="'
+            + escAttr(user) + '">';
+        h += '<input id="davPass" class="sheet-input" type="password" placeholder="'
+            + (hasPass ? '已保存，留空则不修改' : '应用密码') + '" value="">';
+        h += '<input id="davDir" class="sheet-input" type="text" placeholder="备份目录" value="'
+            + escAttr(dir) + '">';
+        h += '<div class="sheet-item" id="davOk">保存</div>';
+        if (hasPass) h += '<div class="sheet-item danger" id="davClear">清除配置</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+
+        function val(id) { var e = $(id); return e ? e.value : ''; }
+
+        var ok = $('davOk');
+        if (ok) ok.onclick = function () {
+            var u = val('davUrl').trim();
+            var n = val('davUser').trim();
+            var p = val('davPass');
+            var d = val('davDir').trim();
+            if (!u) { TS.toast('请填写服务器地址'); return; }
+            ui.closeSheet();
+            App.bk.busy = true;
+            bkLog('正在保存 WebDAV 配置…');
+            TS.call('davSave', u, n, p, d);
+        };
+        var cl = $('davClear');
+        if (cl) cl.onclick = function () {
+            ui.closeSheet();
+            ui.confirmSheet('清除已保存的 WebDAV 地址与密码？', function () {
+                App.bk.busy = true;
+                TS.call('davSave', '', '', '', '');
+            });
+        };
+    };
+
+    /** 原生：WebDAV 配置已保存 */
+    window.onDavSaved = function (o) {
+        o = o || {};
+        App.bk.busy = false;
+        if (o.ok) {
+            bkLog('WebDAV 配置已更新' + (o.url ? '：' + o.url : '（已清空）'));
+            TS.toast(o.url ? '已保存' : '已清除配置');
+        } else {
+            bkLog('保存失败：' + (o.error || '未知错误'));
+            TS.toast('保存失败：' + (o.error || '未知错误'));
+        }
+        TS.call('backupStatus');
+    };
+
+    ui.bkDavTest = function () {
+        if (!App.bk.hasDav) { TS.toast('请先填写服务器设置'); ui.bkDavEdit(); return; }
+        var v = $('bkDavTestVal');
+        if (v) v.textContent = '测试中…';
+        bkLog('正在测试 WebDAV 连接…');
+        TS.call('davTest');
+    };
+
+    /** 原生：WebDAV 连接测试结果 */
+    window.onDavTested = function (o) {
+        o = o || {};
+        var v = $('bkDavTestVal');
+        if (o.ok) {
+            var txt = '正常' + (o.latencyMs ? '（' + o.latencyMs + 'ms）' : '');
+            if (v) v.textContent = txt;
+            bkLog('WebDAV 连接正常（HTTP ' + (o.code || 207) + '，' + (o.latencyMs || 0) + 'ms）');
+            TS.toast('连接正常');
+        } else {
+            if (v) v.textContent = '失败';
+            bkLog('WebDAV 连接失败：' + (o.error || ('HTTP ' + (o.code || '?'))));
+            TS.toast('连接失败：' + (o.error || '请检查地址与密码'));
+        }
+    };
+
+    ui.bkDavBackup = function () {
+        if (App.bk.busy) { TS.toast('正在执行上一个操作，请稍候'); return; }
+        if (!App.bk.hasDav) { TS.toast('请先填写服务器设置'); ui.bkDavEdit(); return; }
+        var name = _bkDefaultName();
+        ui.inputSheet('上传到网盘的文件名', name, function (v) {
+            v = (v || '').replace(/[\\/:*?"<>|]/g, '').trim();
+            if (!v) { TS.toast('已取消'); return; }
+            if (!/\.fxbak$/i.test(v)) v += '.fxbak';
+            App.bk.busy = true;
+            bkLog('开始上传到网盘：' + v);
+            TS.call('davBackup', v);
+        });
+    };
+
+    /** 原生：网盘备份完成 */
+    window.onDavBackupDone = function (o) {
+        o = o || {};
+        App.bk.busy = false;
+        if (o.ok) {
+            bkLog('已上传：' + (o.name || '') + '（' + bkSize(o.size) + '）');
+            TS.toast('已上传到网盘');
+            TS.call('davList');
+        } else {
+            bkLog('上传失败：' + (o.error || '未知错误'));
+            TS.toast('上传失败：' + (o.error || '未知错误'));
+        }
+    };
+
+    ui.bkDavRefresh = function () {
+        if (!App.bk.hasDav) { TS.toast('请先填写服务器设置'); ui.bkDavEdit(); return; }
+        _bkRefreshDavList();
+    };
+
+    /** 原生：网盘上的备份列表 */
+    window.onDavList = function (o) {
+        o = o || {};
+        var box = $('bkDavList');
+        if (!box) return;
+        if (!o.ok) {
+            box.innerHTML = '<div class="tip">读取网盘失败：'
+                + TS.esc(o.error || '网络不可用') + '</div>';
+            bkLog('读取网盘列表失败：' + (o.error || ''));
+            return;
+        }
+        var list = o.items || [];
+        if (!list.length) {
+            box.innerHTML = '<div class="tip">网盘上还没有备份包。'
+                + '点上面的「备份到网盘」上传第一份。</div>';
+            return;
+        }
+        var h = '<div class="chapter-hd"><span>共 ' + list.length + ' 份</span></div>';
+        for (var i = 0; i < list.length; i++) {
+            var f = list[i];
+            h += '<div class="setrow">';
+            h += '<div class="setlabel">' + TS.esc(f.name || '')
+                + '<span class="setdesc">' + TS.esc(f.sizeText || bkSize(f.size))
+                + (f.atText ? ' · ' + TS.esc(f.atText) : '') + '</span></div>';
+            h += '<div class="setval">';
+            h += '<button class="mini" data-dav="'
+                + escAttr(f.name || '') + '">恢复</button> ';
+            h += '<button class="mini ghost" data-davdel="'
+                + escAttr(f.name || '') + '">删除</button>';
+            h += '</div></div>';
+        }
+        box.innerHTML = h;
+
+        // 事件委托：避免在 HTML 字符串里嵌套引号导致内联 onclick 出错
+        box.onclick = function (e) {
+            var t = e.target || e.srcElement;
+            if (!t || t.tagName !== 'BUTTON') return;
+            var rn = t.getAttribute('data-dav');
+            if (rn) { _bkDavRestore(rn); return; }
+            var dn = t.getAttribute('data-davdel');
+            if (dn) { _bkDavDelete(dn); }
+        };
+    };
+
+    function _bkDavRestore(name) {
+        if (App.bk.busy) { TS.toast('正在执行上一个操作，请稍候'); return; }
+        var msg = '将从网盘文件「' + name + '」恢复数据。\n\n'
+            + '恢复会先自动备份当前数据，再整体覆盖。确认继续？';
+        ui.confirmSheet(msg, function () {
+            App.bk.busy = true;
+            bkLog('开始从网盘恢复：' + name);
+            TS.call('davRestore', name);
+        });
+    }
+
+    function _bkDavDelete(name) {
+        ui.confirmSheet('删除网盘上的「' + name + '」？此操作不可撤销。', function () {
+            App.bk.busy = true;
+            TS.call('davDelete', name);
+        });
+    }
+
+    /** 原生：网盘文件已删除 */
+    window.onDavDeleted = function (o) {
+        o = o || {};
+        App.bk.busy = false;
+        if (o.ok) {
+            bkLog('已删除网盘文件：' + (o.name || ''));
+            TS.toast('已删除');
+            TS.call('davList');
+        } else {
+            bkLog('删除失败：' + (o.error || '未知错误'));
+            TS.toast('删除失败：' + (o.error || '未知错误'));
+        }
+    };
+
+    // ---------- 自动备份（恢复前的保命包） ----------
+
+    /** 原生：自动备份清单 */
+    window.onAutoBackupList = function (o) {
+        o = o || {};
+        var box = $('bkAutoList');
+        if (!box) return;
+        var list = o.items || [];
+        if (!list.length) {
+            box.innerHTML = '<div class="tip">（还没有自动备份。第一次执行恢复时会自动生成。）</div>';
+            return;
+        }
+        var h = '';
+        for (var i = 0; i < list.length; i++) {
+            var f = list[i];
+            h += '<div class="setrow">';
+            h += '<div class="setlabel">' + TS.esc(f.name || '')
+                + '<span class="setdesc">' + TS.esc(f.sizeText || bkSize(f.size))
+                + (f.atText ? ' · ' + TS.esc(f.atText) : '') + '</span></div>';
+            h += '<div class="setval"><button class="mini" data-auto="'
+                + escAttr(f.name || '') + '">恢复</button></div>';
+            h += '</div>';
+        }
+        box.innerHTML = h;
+        box.onclick = function (e) {
+            var t = e.target || e.srcElement;
+            if (!t || t.tagName !== 'BUTTON') return;
+            var n = t.getAttribute('data-auto');
+            if (!n) return;
+            _bkAutoRestore(n);
+        };
+    };
+
+    function _bkAutoRestore(name) {
+        if (App.bk.busy) { TS.toast('正在执行上一个操作，请稍候'); return; }
+        var msg = '将用自动备份「' + name + '」整体覆盖当前数据。\n\n'
+            + '（恢复前仍会再自动备份一次当前状态）确认继续？';
+        ui.confirmSheet(msg, function () {
+            App.bk.busy = true;
+            bkLog('开始从自动备份恢复：' + name);
+            TS.call('autoBackupRestore', name);
+        });
+    }
+
     // ==================== ★ v3.7.9 关于页：更新检查 / 开源链接 ====================
 
     /** 仓库地址（与原生 checkUpdate 里查的仓库保持一致） */
@@ -6622,6 +7154,18 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.8.0',
+            date: '2025-10-12',
+            fixes: [],
+            adds: [
+                '★★ 新增「备份与恢复」：在「我的」页和设置页都能进入。一次把书源（含自定义源、分组、JS 插件包、Python 源、jar 插件）、收藏与分组、播放历史与播放进度、全部软件设置、搜索历史打包成一个 .fxbak 文件，换手机或重装后原样搬回来',
+                '★ 本地备份：位置自己选（手机存储、SD 卡、外接 U 盘都行），选一次之后长期记住，之后一键生成备份包；恢复时直接选一个 .fxbak 文件即可',
+                '★ 网络备份（WebDAV 协议）：支持坚果云、Nextcloud、群晖 / 威联通 NAS、Alist 等任何标准 WebDAV 服务。填地址、账号、密码、目录，可「测试连接」确认通不通，然后一键上传；网盘上的备份包可以列出、直接恢复、或删除',
+                '恢复前自动留底：每次执行恢复都会先把当前数据自动打一个包存起来（最多保留 3 份），万一恢复到一半不满意，可以一键退回之前的状态',
+                '备份包里不含音频缓存与已下载的音频文件（体积大且可重新获取），所以一份完整备份通常只有几百 KB，上传网盘很快'
+            ]
+        },
         {
             ver: '3.7.18',
             date: '2025-10-11',

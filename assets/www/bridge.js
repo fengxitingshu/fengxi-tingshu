@@ -261,6 +261,20 @@
     window.onCacheDone = noop;
     window.onCacheList = noop;
     window.onDeviceInfo = noop;
+    // ★ v3.8.0 备份与恢复（13 个回调，由备份页按需覆盖）
+    window.onBackupStatus = noop;
+    window.onBackupDir = noop;
+    window.onBackupFilePicked = noop;
+    window.onBackupDone = noop;
+    window.onRestoreDone = noop;
+    window.onRestoreLocalStorage = noop;
+    window.onDavConfig = noop;
+    window.onDavSaved = noop;
+    window.onDavTested = noop;
+    window.onDavBackupDone = noop;
+    window.onDavList = noop;
+    window.onDavDeleted = noop;
+    window.onAutoBackupList = noop;
     window.onBackPressed = function () { return false; };
 
     /** 全局 Toast */

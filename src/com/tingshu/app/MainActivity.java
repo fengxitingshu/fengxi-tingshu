@@ -761,6 +761,10 @@ public class MainActivity extends Activity
     /** 文件选择请求码 */
     private static final int REQ_PICK_SOURCE = 2001;
     private static final int REQ_PICK_DOWNLOAD_DIR = 2002;
+    /** ★ v3.8.0：本地备份存放目录（SAF 目录树） */
+    private static final int REQ_PICK_BACKUP_DIR = 2003;
+    /** ★ v3.8.0：选一个 .fxbak 备份包来恢复 */
+    private static final int REQ_PICK_BACKUP_FILE = 2004;
 
     /**
      * ★ v2.9：打开系统文件夹选择器，挑一个「下载存放目录」。
@@ -813,9 +817,102 @@ public class MainActivity extends Activity
         }
     }
 
+    /**
+     * ★ v3.8.0：打开系统文件夹选择器，挑一个「本地备份存放目录」。
+     *
+     * <p>与 {@link #pickDownloadDir()} 完全同一套 SAF 范式：用
+     * {@code ACTION_OPEN_DOCUMENT_TREE}，不需要任何存储权限；
+     * 拿到目录树 URI 后必须 {@code takePersistableUriPermission}，
+     * 否则重启 App 后授权失效。
+     *
+     * <p>选中的目录存在前端内存里（不落盘到设置），因为备份是低频操作，
+     * 每次重新选一次反而更明确 —— 也避免了「昨天选的目录今天失效」
+     * 这种困惑（授权其实还在，但用户已经不记得选过）。
+     */
+    public void pickBackupDir() {
+        try {
+            Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(it, REQ_PICK_BACKUP_DIR);
+        } catch (Throwable t) {
+            callJs("window.onBackupDir({ok:false,cancel:false,error:'no-picker'})");
+        }
+    }
+
+    /**
+     * ★ v3.8.0：打开系统文件选择器，挑一个 {@code .fxbak} 备份包来恢复。
+     *
+     * <p>用 {@code ACTION_OPEN_DOCUMENT}，返回可读的 {@code content://} URI。
+     * 真正的读取（流式，不限 2MB）在 {@code Bridge.restoreLocal} 里做 ——
+     * 这里只负责把 URI 交给前端，由前端弹确认框后再触发恢复。
+     */
+    public void pickBackupFile() {
+        try {
+            Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            it.addCategory(Intent.CATEGORY_OPENABLE);
+            it.setType("*/*");
+            // 备份包用 octet-stream 更贴切；但很多文件管理器认不出自定义后缀，
+            // 所以 */* 兜底，避免文件变灰不可选。
+            it.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                    "application/octet-stream", "application/zip",
+                    "application/x-zip-compressed", "*/*"});
+            startActivityForResult(it, REQ_PICK_BACKUP_FILE);
+        } catch (Throwable t) {
+            callJs("window.onBackupFilePicked({ok:false,cancel:false,error:'no-picker'})");
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+
+        // ★ v3.8.0：本地备份目录选择（SAF 目录树）—— 与下载目录同一套范式
+        if (requestCode == REQ_PICK_BACKUP_DIR) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                callJs("window.onBackupDir({ok:false,cancel:true})");
+                return;
+            }
+            android.net.Uri tree = data.getData();
+            try {
+                // 持久化授权：不调这句，重启 App 后这个目录就写不了了
+                getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            } catch (Throwable ignored) {
+                // 个别 ROM 不支持持久授权，仍允许本次会话使用
+            }
+            String name = com.tingshu.app.core.SafOut.displayName(this, tree);
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", true);
+                o.put("cancel", false);
+                o.put("uri", tree.toString());
+                o.put("name", name);
+            } catch (Throwable ignored) {}
+            callJs("window.onBackupDir(" + o.toString() + ")");
+            return;
+        }
+
+        // ★ v3.8.0：选一个备份包（.fxbak）来恢复
+        if (requestCode == REQ_PICK_BACKUP_FILE) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                callJs("window.onBackupFilePicked({ok:false,cancel:true})");
+                return;
+            }
+            android.net.Uri uri = data.getData();
+            String name = fileNameOf(uri);
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", true);
+                o.put("cancel", false);
+                o.put("uri", uri.toString());
+                o.put("name", name == null ? "" : name);
+            } catch (Throwable ignored) {}
+            callJs("window.onBackupFilePicked(" + o.toString() + ")");
+            return;
+        }
 
         // ★ v2.9：下载目录选择（SAF 目录树）
         if (requestCode == REQ_PICK_DOWNLOAD_DIR) {

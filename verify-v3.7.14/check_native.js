@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 45', /android:versionCode="45"/.test(man));
-  check('versionName = 3.7.18（三段式）', /android:versionName="3\.7\.18"/.test(man));
+  check('versionCode = 46', /android:versionCode="46"/.test(man));
+  check('versionName = 3.8.0（三段式）', /android:versionName="3\.8\.0"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.7.18', /id="appVer">3\.7\.18</.test(idx));
-  check('关于页版本显示 3.7.18', /id="aboutVer">3\.7\.18</.test(idx));
+  check('设置页版本显示 3.8.0', /id="appVer">3\.8\.0</.test(idx));
+  check('关于页版本显示 3.8.0', /id="aboutVer">3\.8\.0</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1181,8 +1181,8 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=45 / versionName=3.7.18',
-    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=46 / versionName=3.8.0',
+    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1261,8 +1261,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=45 / versionName=3.7.18',
-    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=46 / versionName=3.8.0',
+    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1286,11 +1286,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=45 / versionName=3.7.18',
-    /android:versionCode="45"/.test(mf) && /android:versionName="3\.7\.18"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=46 / versionName=3.8.0',
+    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.7.18',
-    /id="appVer">3\.7\.18</.test(idxHtml) && /id="aboutVer">3\.7\.18</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.8.0',
+    /id="appVer">3\.8\.0</.test(idxHtml) && /id="aboutVer">3\.8\.0</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1467,12 +1467,12 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('v3.7.18/V：前端关于页版本号已到 3.7.18',
-    /id="aboutVer">3\.7\.18/.test(idx16s) && /id="appVer">3\.7\.18/.test(idx16s));
-  check('v3.7.18/V：AndroidManifest 版本号同步到 3.7.18 / code 45',
-    /android:versionCode="45"/.test(manifest16)
-    && /android:versionName="3\.7\.18"/.test(manifest16));
-  check('v3.7.18/LOG：CHANGELOG 首条即 3.7.18（更新公告能弹出）',
+  check('v3.7.18/V：前端关于页版本号已到 3.8.0（v3.7.18 之后又升过版）',
+    /id="aboutVer">3\.8\.0/.test(idx16s) && /id="appVer">3\.8\.0/.test(idx16s));
+  check('v3.7.18/V：AndroidManifest 版本号同步到 3.8.0 / code 46',
+    /android:versionCode="46"/.test(manifest16)
+    && /android:versionName="3\.8\.0"/.test(manifest16));
+  check('v3.7.18/LOG：CHANGELOG 仍保留 3.7.18 条目（历史不丢）',
     /ver: '3\.7\.18'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
   // ★ v3.7.17：Rhino 反射类保名（NoClassDefFoundError: org.mozilla.javascript.W2 的根因）
   const pg17 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
@@ -1609,8 +1609,214 @@ function check(name, ok, detail) {
     && /章节名称超了滚动显示/.test(css18));
 }
 
-// （原 rvTagsFromApk()：从 APK 里反解 widget_player.xml 的标签名做 RemoteViews
-//   白名单复核。小组件布局已于 v3.7.18 移除，函数随之删除。）
+// ==================== ★ v3.8.0：备份与恢复 ====================
+//
+// 分 6 块：
+//   1) 备份格式与安全（ZIP 条目名 ASCII / zip-slip / 炸弹包 / 校验和）
+//   2) 备份范围（8 张表 + 全部设置 + 三类插件文件）
+//   3) 恢复策略（★★ 恢复前必先自动备份 / DB 单事务 / 列白名单）
+//   4) WebDAV 客户端（非标准 HTTP 方法反射 / 不信任自签证书）
+//   5) 桥接口与文件选择器（14 个接口 / SAF 2003/2004）
+//   6) 前端（SUBS 注册 / 两个入口 / 页面骨架 / 13 个 noop / 密码打码）
+{
+  const R = '/root/tingshu-app/';
+  const rd = (p) => fs.readFileSync(R + p, 'utf8');
+
+  const codec  = rd('src/com/tingshu/app/data/BackupCodec.java');
+  const repo   = rd('src/com/tingshu/app/data/BackupRepo.java');
+  const rest   = rd('src/com/tingshu/app/data/BackupRestore.java');
+  const cred   = rd('src/com/tingshu/app/data/BackupCred.java');
+  const dav    = rd('src/com/tingshu/app/data/WebDavClient.java');
+  const bridge = rd('src/com/tingshu/app/Bridge.java');
+  const main   = rd('src/com/tingshu/app/MainActivity.java');
+  const appjs  = rd('assets/www/app.js');
+  const idx    = rd('assets/www/index.html');
+  const brjs   = rd('assets/www/bridge.js');
+
+  // ---------- ① 备份格式与安全 ----------
+  check('v3.8.0/FMT：备份包扩展名为 .fxbak（避免被系统解压 App 抢关联）',
+    /String EXT = "\.fxbak"/.test(codec) || /EXT\s*=\s*"\.fxbak"/.test(codec));
+  check('v3.8.0/FMT：用 java.util.zip 零新增依赖（不引第三方 zip 库）',
+    /import java\.util\.zip\.ZipOutputStream;/.test(codec)
+    && /import java\.util\.zip\.ZipInputStream;/.test(codec));
+  check('v3.8.0/FMT：★ 固定条目时间戳（让同内容包的校验和可复现）',
+    /setTime\(0L\)/.test(codec));
+  check('v3.8.0/FMT：写包前按条目名排序（顺序固定 → 校验和稳定）',
+    /Collections\.sort|new TreeMap/.test(codec) || /sortedKeys|sortKeys/.test(codec));
+
+  check('v3.8.0/SEC：★ 条目名统一 ASCII 化（minSdk 21 不能用 UTF-8 版 ZipOutputStream）',
+    /normEntry/.test(codec) && /ascii\(/.test(codec));
+  check('v3.8.0/SEC：★ 中文文件名挪进 JSON 字段（条目名只用 ASCII）',
+    /plugin_jar\.json/.test(repo) || /file_name/.test(repo)
+    || /file_name/.test(rest));
+  check('v3.8.0/SEC：★ 防 zip-slip：逐段过滤 . / .. / 空段',
+    /"\.\."/.test(codec) && /normEntry/.test(codec));
+  check('v3.8.0/SEC：★ 落盘前再校验路径前缀必须落在临时目录内（防穿越写）',
+    /destPath\.startsWith\(root \+ File\.separator\)/.test(codec));
+  check('v3.8.0/SEC：★ 防炸弹包：单条目上限 16MB',
+    /MAX_ENTRY\s*=\s*16\s*\*\s*1024\s*\*\s*1024/.test(codec));
+  check('v3.8.0/SEC：★ 防炸弹包：累计上限 32MB',
+    /MAX_TOTAL\s*=\s*32\s*\*\s*1024\s*\*\s*1024/.test(codec));
+  check('v3.8.0/SEC：包内带 SHA-256 校验和（manifest.checksum）',
+    /sha256/.test(codec) && /checksum/.test(repo));
+  check('v3.8.0/SEC：validate() 在恢复第一步就跑，失败即零改动返回',
+    /validate\(/.test(codec) && /BackupCodec\.validate/.test(rest));
+  // 注意：WebDavClient 头注释里「明确写了不引入 TrustAllManager」，所以
+  // 不能只做全文否定 —— 要先剥掉注释行再判，否则会误伤自己的安全声明。
+  const davNoComment = dav.split('\n').filter(l => {
+    const t = l.trim();
+    return !(t.startsWith('*') || t.startsWith('//') || t.startsWith('/*'));
+  }).join('\n');
+  check('v3.8.0/SEC：★ 绝不关闭 TLS 校验（无 TrustAll / 无 setDefaultHostnameVerifier）',
+    !/TrustAll|AllowAllHostnameVerifier|setDefaultHostnameVerifier|X509TrustManager/.test(davNoComment));
+
+  // ---------- ② 备份范围 ----------
+  check('v3.8.0/SCOPE：8 张用户表全部在备份清单里',
+    /"fav"/.test(repo) && /"fav_group"/.test(repo) && /"history"/.test(repo)
+    && /"progress"/.test(repo) && /"source_conf"/.test(repo)
+    && /"custom_source"/.test(repo) && /"plugin_jar"/.test(repo)
+    && /"search_hist"/.test(repo));
+  check('v3.8.0/SCOPE：★ 备份内容与用户确认一致（书源+收藏+历史进度+全部设置+搜索历史）',
+    /USER_TABLES/.test(repo) && /SETTINGS_KEYS/.test(repo));
+  check('v3.8.0/SCOPE：★ 备份不含音频缓存 / 下载 / Python 运行时 / 崩溃日志',
+    /cache_audio/.test(repo) && /dl_audio/.test(repo)
+    && /chaquopy/.test(repo) && /crash/.test(repo));
+  check('v3.8.0/SCOPE：三类插件文件都收（JS 整目录 / .py / jar）',
+    /listJsPluginDirs/.test(repo) && /listPySources/.test(repo) && /listJarFiles/.test(repo));
+  check('v3.8.0/SCOPE：jar 从 plugin_jar 表取（不扫目录，避免打包孤儿 jar）',
+    /listJarFiles/.test(repo) && /plugin_jar/.test(repo));
+  check('v3.8.0/SCOPE：导出侧用 cursor.getColumnNames() 动态列名（不吃表结构变化）',
+    /getColumnNames\(\)/.test(repo));
+  check('v3.8.0/SCOPE：备份范围写进 manifest.scope + excludes（可自解释）',
+    /"scope"/.test(repo) && /"excludes"/.test(repo));
+  check('v3.8.0/SCOPE：localStorage 4 个 fx_ 键随包走（界面偏好不丢）',
+    /fx_session_v1/.test(bridge) || /fx_session_v1/.test(appjs));
+  check('v3.8.0/SCOPE：结果里带版本名 + 版本号（恢复时可见来源版本）',
+    /versionName/.test(repo) && /versionCode/.test(repo));
+
+  // ---------- ③ 恢复策略（安全红线） ----------
+  check('v3.8.0/RST：★★ 恢复前必先自动备份当前数据',
+    /autoBackupBeforeRestore/.test(repo) && /autoBackupBeforeRestore/.test(rest));
+  check('v3.8.0/RST：★★ 自动备份失败即中止恢复（不留半截数据）',
+    /恢复前自动备份失败，已取消恢复以保护现有数据/.test(rest));
+  check('v3.8.0/RST：★ DB 恢复走单个 transaction（失败自动回滚）',
+    /Db\.get\(\)\.transaction/.test(rest));
+  check('v3.8.0/RST：★ 不替换 tingshu.db 文件（Db 是静态单例且开了 WAL）',
+    !/renameTo.*tingshu\.db/.test(rest) && !/copy.*tingshu\.db.*replace/i.test(rest));
+  check('v3.8.0/RST：恢复用「清表 + INSERT OR REPLACE」实现整体覆盖',
+    /DELETE FROM/.test(rest) && /Db\.get\(\)\.insert/.test(rest));
+  check('v3.8.0/RST：★ 列白名单：只写「包里有 + 本地也有」的列',
+    /PRAGMA table_info/.test(rest) && /columnsOf/.test(rest));
+  check('v3.8.0/RST：fav_group 清表后补回默认分组（id=0 默认分组）',
+    /fav_group/.test(rest) && /默认分组/.test(rest));
+  check('v3.8.0/RST：文件面走 .bak-<ts> 目录 + 成功才删 + 失败改回（回滚）',
+    /renameTo/.test(rest) && /wipeDir/.test(rest));
+  check('v3.8.0/RST：恢复后重载源表（SourceRegistry.reload）',
+    /SourceRegistry\.reload/.test(rest));
+  check('v3.8.0/RST：自动备份最多保留 3 份（rotateAutoBackups）',
+    /rotateAutoBackups/.test(repo) && /auto_pre_restore/.test(repo));
+  check('v3.8.0/RST：文件落盘二次校验 canonicalPath（防穿越写）',
+    /getCanonicalPath/.test(rest));
+  check('v3.8.0/RST：Settings 恢复后 commit() 立即生效',
+    /commit\(\)/.test(rest));
+
+  // ---------- ④ WebDAV 客户端 ----------
+  // 注意：dav 源码里出现 "com.android.okhttp.internal.huc.HttpURLConnectionImpl"
+  // 是给反射用的「候选类名字符串」，不是编译期依赖。所以判据看 import 语句。
+  check('v3.8.0/DAV：零依赖（import 只有 JDK/Android，不引 okhttp/sardine/dav4j）',
+    /import java\.net\.HttpURLConnection;/.test(dav)
+    && !/^import\s+(com\.squareup|com\.github\.sardine|sardine|dav4j)/m.test(dav));
+  check('v3.8.0/DAV：★ 非标准方法 PROPFIND/MKCOL 走反射改 method 字段',
+    /setMethod/.test(dav) && /getDeclaredField\("method"\)/.test(dav));
+  check('v3.8.0/DAV：★ 反射沿真实继承链向上找 method 字段',
+    /getSuperclass\(\)/.test(dav));
+  check('v3.8.0/DAV：★ 反射兜底候选类含 Android okhttp 实现与 JVM 实现',
+    /com\.android\.okhttp\.internal\.huc\.HttpURLConnectionImpl/.test(dav)
+    && /sun\.net\.www\.protocol\.http\.HttpURLConnection/.test(dav));
+  check('v3.8.0/DAV：★ 改 method 必须在 getOutputStream/getResponseCode 之前',
+    dav.indexOf('f.set(conn, m)') >= 0);
+  check('v3.8.0/DAV：PROPFIND 解析用 org.xmlpull.v1.XmlPullParser（不是 android.util.XmlPullParser）',
+    /org\.xmlpull\.v1\.XmlPullParser/.test(dav)
+    && !/android\.util\.XmlPullParser/.test(dav));
+  check('v3.8.0/DAV：★ 只比 localName，忽略命名空间前缀（D: / d: / 无前缀都能解）',
+    /getLocalName|localName|getName\(\)\.toLowerCase/.test(dav));
+  check('v3.8.0/DAV：XML 解析失败降级正则兜底（parseByRegex）',
+    /parseByRegex|regex/i.test(dav));
+  check('v3.8.0/DAV：提供 test / ensureDir / put / get / list / delete 全链路',
+    /public static Result test\(/.test(dav) && /public static Result ensureDir\(/.test(dav)
+    && /public static Result put\(/.test(dav) && /public static Result getToFile\(/.test(dav)
+    && /public static List<DavFile> list\(/.test(dav) && /public static Result delete\(/.test(dav));
+  check('v3.8.0/DAV：★ 证书不受信任给出明确中文提示（改用 http 或配受信 CA）',
+    /SSLHandshakeException/.test(dav) && /证书/.test(dav));
+  check('v3.8.0/DAV：401 提示坚果云要用应用密码',
+    /401/.test(dav) && /应用密码/.test(dav));
+  check('v3.8.0/DAV：下载有体积上限（防被超大文件拖死）',
+    /final long MAX = 64L \* 1024 \* 1024/.test(dav)
+    && /if \(total > MAX\)/.test(dav));
+
+  // ---------- ⑤ 桥接口与文件选择器 ----------
+  const IFACES = ['backupStatus', 'pickBackupDir', 'pickBackupFile', 'backupLocal',
+    'restoreLocal', 'davConfig', 'davSave', 'davTest', 'davBackup', 'davList',
+    'davRestore', 'davDelete', 'autoBackupList', 'autoBackupRestore'];
+  let missIf = [];
+  for (const m of IFACES) {
+    if (!new RegExp('@JavascriptInterface[\\s\\S]{0,120}public void ' + m + '\\(').test(bridge)) {
+      missIf.push(m);
+    }
+  }
+  check('v3.8.0/IF：14 个备份接口全部 @JavascriptInterface 导出',
+    missIf.length === 0, missIf.join(','));
+
+  check('v3.8.0/IF：文件选择器请求码 2003（目录）/ 2004（备份包）',
+    /REQ_PICK_BACKUP_DIR\s*=\s*2003/.test(main) && /REQ_PICK_BACKUP_FILE\s*=\s*2004/.test(main));
+  check('v3.8.0/IF：★ SAF 目录取持久化权限（takePersistableUriPermission）',
+    /takePersistableUriPermission/.test(main));
+  check('v3.8.0/IF：★ 备份包文件选择器补 MIME 兜底（防 .fxbak 变灰选不中）',
+    /application\/octet-stream/.test(main) || /EXTRA_MIME_TYPES/.test(main));
+  check('v3.8.0/IF：恢复不用 readTextFromUri（它有 2MB 上限），改流式 openInputStream',
+    /openInputStream/.test(bridge) && !/readTextFromUri/.test(rest));
+  check('v3.8.0/IF：★ localStorage 是异步取回，带超时兜底（绝不卡死备份）',
+    /evaluateJavascript/.test(bridge) && /postDelayed/.test(bridge));
+  check('v3.8.0/IF：回传的 JSON 字符串剥一层引号（parseLsJson）',
+    /parseLsJson/.test(bridge));
+  check('v3.8.0/IF：备份走私有目录 → SafOut.createFile + copyInto（SAF 无直接写字节接口）',
+    /SafOut\.createFile/.test(bridge) && /SafOut\.copyInto/.test(bridge));
+  check('v3.8.0/IF：写入后校验 sizeOf == 本地文件长度（防半截文件）',
+    /sizeOf/.test(bridge));
+  check('v3.8.0/IF：WebDAV 凭据存独立 sp（不与业务 settings 混）',
+    /SharedPreferences/.test(cred) && /"backup"/.test(cred));
+  check('v3.8.0/IF：★ 密码单独一个 key 存（界面打码显示）',
+    /dav_pass/.test(cred) && /hasPass/.test(cred));
+
+  // ---------- ⑥ 前端 ----------
+  check('v3.8.0/UI：SUBS 注册 backup → pageBackup',
+    /backup:\s*'pageBackup'/.test(appjs));
+  check('v3.8.0/UI：★ 两个入口 —— 「我的」Tab 卡片 + 设置页行',
+    (idx.match(/openBackup\(\)/g) || []).length >= 2);
+  check('v3.8.0/UI：备份页骨架含四个分区（备份内容 / 本地 / 网盘 / 自动备份）',
+    /本地备份/.test(idx) && /WebDAV/.test(idx) && /自动备份/.test(idx));
+  check('v3.8.0/UI：★ 密码框 type=password（不明文回显）',
+    /id="davPass"[^>]*type="password"/.test(appjs));
+  check('v3.8.0/UI：恢复前有二次确认（破坏性操作）',
+    /ui\.confirmSheet/.test(appjs) && /整体覆盖/.test(appjs));
+  check('v3.8.0/UI：★ 网盘上传按钮在未配置时 disabled',
+    /id="bkDavUpBtn"[^>]*disabled/.test(idx));
+  check('v3.8.0/UI：★ 页面明示「不含音频缓存」与「恢复前自动备份」',
+    /不含音频/.test(idx) && /自动备份/.test(idx));
+  check('v3.8.0/UI：13 个新回调在 bridge.js 有 noop 占位（防未定义）',
+    ['onBackupStatus', 'onBackupDir', 'onBackupFilePicked', 'onBackupDone',
+     'onRestoreDone', 'onRestoreLocalStorage', 'onDavConfig', 'onDavSaved',
+     'onDavTested', 'onDavBackupDone', 'onDavList', 'onDavDeleted',
+     'onAutoBackupList'].every(n => new RegExp('window\\.' + n + '\\s*=').test(brjs)));
+  check('v3.8.0/UI：网盘/自动备份列表用事件委托（避开内联 onclick 引号嵌套）',
+    /data-dav=/.test(appjs) && /data-auto=/.test(appjs));
+  check('v3.8.0/UI：备份文件名默认带时间戳（多次备份不互相覆盖）',
+    /fengxi-/.test(appjs) && /fxbak/.test(appjs));
+  check('v3.8.0/UI：本地备份目录存 localStorage 两个键（换机恢复后免重选）',
+    /fx_bk_tree_v1/.test(appjs) && /fx_bk_name_v1/.test(appjs));
+  check('v3.8.0/LOG：CHANGELOG 首条即 3.8.0（更新公告能弹出）',
+    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.0'/.test(appjs));
+}
 
 // ---------- 输出 ----------
 let pass = 0, fail = 0;

@@ -147,6 +147,16 @@
       <div class="setval" id="dlEntryVal">&#8250;</div>
     </div>
 
+    <!-- ★ v3.8.0：备份与恢复入口。本机备份 + WebDAV 网盘备份 -->
+    <div class="entry-card" onclick="App.ui.openBackup()">
+      <div class="eicon">&#128190;</div>
+      <div class="einfo">
+        <div class="et">备份与恢复</div>
+        <div class="es" id="bkEntrySub">本机备份 / 网盘备份（WebDAV）</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+
     <div class="chapter-hd"><span>其它</span></div>
     <!-- ★ v3.7.3：更新公告入口。只讲「修了什么 / 加了什么」，不写实现细节 -->
     <div class="entry-card" onclick="App.ui.openChangelog()">
@@ -174,7 +184,7 @@
       <div class="eicon">&#8505;</div>
       <div class="einfo">
         <div class="et">关于</div>
-        <div class="es" id="aboutEntrySub">版本 3.7.18 · 更新与交流</div>
+        <div class="es" id="aboutEntrySub">版本 3.8.0 · 更新与交流</div>
       </div>
       <div class="setval">&#8250;</div>
     </div>
@@ -288,6 +298,12 @@
       <div class="setval">&#8250;</div>
     </div>
 
+    <!-- ★ v3.8.0：数据备份与恢复 -->
+    <div class="setrow" onclick="App.ui.openBackup()">
+      <div class="setlabel">备份与恢复<span class="setdesc">书源 / 收藏 / 历史 / 设置，本机或网盘</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
     <!-- ★ v3.2：启动自动验证已移除（冷启动时跑十几个源会明显拖慢首屏）。
          验证改为完全手动的「批量验证」，入口在书源管理页顶部。 -->
 
@@ -316,11 +332,11 @@
     <div class="ab-hero">
       <div class="ab-logo">&#127925;</div>
       <div class="ab-name">枫兮听书</div>
-      <div class="ab-ver">版本 <span id="aboutVer">3.7.18</span></div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.8.0</span></div>
     </div>
 
     <div class="chapter-hd"><span>信息</span></div>
-    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.18</div></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.8.0</div></div>
     <div class="setrow" onclick="App.ui.openChangelog()">
       <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
       <div class="setval">&#8250;</div>
@@ -416,6 +432,81 @@
     </div>
     <div class="tip">
       这一页只显示本机当前状态，不上传任何数据。反馈问题时把这页截图发出来即可。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 备份与恢复（二级页） ★ v3.8.0 ==================== -->
+<div id="pageBackup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">备份与恢复</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <!-- 概览：备份包里会装什么 -->
+    <div class="diag-sum" id="bkSummary">正在统计…</div>
+
+    <div class="chapter-hd"><span>备份内容</span></div>
+    <div class="setrow">
+      <div class="setlabel">书源<span class="setdesc">自定义源 / 分组 / JS 插件包 / Python 源 / jar 插件</span></div>
+      <div class="setval" id="bkScopeSrc">…</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">收藏与历史<span class="setdesc">收藏 / 分组 / 播放历史 / 播放进度</span></div>
+      <div class="setval" id="bkScopeFav">…</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">软件设置<span class="setdesc">播放 / 缓存 / 外观等全部偏好</span></div>
+      <div class="setval" id="bkScopeSet">…</div>
+    </div>
+    <div class="tip">不含音频缓存与已下载文件（体积大且可重新获取）。恢复时会先自动备份当前数据，再整体覆盖。</div>
+
+    <!-- ===== 一、本地备份 ===== -->
+    <div class="chapter-hd"><span>本地备份</span></div>
+    <div class="setrow" onclick="App.ui.bkPickDir()">
+      <div class="setlabel">备份位置<span class="setdesc">选择一个文件夹，长期记住</span></div>
+      <div class="setval" id="bkDirVal">未设置 &#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkBackupLocal()">
+      <div class="setlabel">备份到本机<span class="setdesc">生成 .fxbak 备份包</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkPickFile()">
+      <div class="setlabel">从备份包恢复<span class="setdesc">选择 .fxbak 文件</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ===== 二、网络备份（WebDAV） ===== -->
+    <div class="chapter-hd"><span>网络备份（WebDAV）</span></div>
+    <div class="setrow" id="bkDavStateRow">
+      <div class="setlabel">连接状态<span class="setdesc">支持坚果云 / Nextcloud / 群晖 / 威联通 / Alist 等</span></div>
+      <div class="setval" id="bkDavState">未配置</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkDavEdit()">
+      <div class="setlabel">服务器设置<span class="setdesc">地址 / 账号 / 密码 / 目录</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkDavTest()">
+      <div class="setlabel">测试连接</div>
+      <div class="setval" id="bkDavTestVal">&#8250;</div>
+    </div>
+    <div class="diag-act">
+      <button class="mini" id="bkDavUpBtn" disabled onclick="App.ui.bkDavBackup()">备份到网盘</button>
+      <button class="mini ghost" onclick="App.ui.bkDavRefresh()">网盘备份列表</button>
+    </div>
+    <div id="bkDavList"></div>
+
+    <!-- ===== 三、自动备份（恢复前的保命包） ===== -->
+    <div class="chapter-hd"><span>自动备份</span></div>
+    <div class="tip">每次恢复前都会自动打一个当前状态的包放在这里，最多保留 3 份。恢复出错时可以用它退回。</div>
+    <div id="bkAutoList"></div>
+
+    <!-- ===== 四、恢复实时进度 ===== -->
+    <div class="chapter-hd"><span>执行记录</span></div>
+    <pre class="diag-log" id="bkLog">（暂无）</pre>
+    <div class="diag-act">
+      <button class="mini ghost" onclick="App.ui.bkClearLog()">清空记录</button>
     </div>
   </div>
 </div>

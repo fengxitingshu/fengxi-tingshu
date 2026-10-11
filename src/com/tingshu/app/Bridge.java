@@ -2452,4 +2452,573 @@ public class Bridge {
             }
         });
     }
+
+    // ==================== ★ v3.8.0 备份与恢复 ====================
+    //
+    // 两种通道：
+    //   · 本地备份 —— 用户自选一个目录（SAF），导出一个 .fxbak 包；从本地文件恢复。
+    //   · 网络备份 —— WebDAV（坚果云 / Nextcloud / 群晖 NAS / 威联通 / Alist…），
+    //                 上传 / 列出 / 下载 / 删除。
+    //
+    // 备份内容 = 书源（JSON 源 + jar/JS/Python 插件）+ 收藏与分组 +
+    //            播放历史与进度 + 全部设置 + 搜索历史。**不含音频文件**。
+    //
+    // ★ 恢复是破坏性操作，流程上强制「先自动备份当前数据，再整体覆盖」，
+    //   且 DB 走单个事务（失败自动回滚），见 BackupRestore。
+    //
+    // ★ localStorage 的处理：Java 读不到 WebView 的 DomStorage，必须用
+    //   evaluateJavascript 异步取回。备份时「先取 localStorage，再打包」，
+    //   恢复时反向（native 恢复完 → 回调前端写）。本类用一个 2 秒超时兜底，
+    //   拿不到就置空继续，绝不因为 localStorage 卡住整个备份。
+
+    /** 备份页进页面拉一次的总览 */
+    @JavascriptInterface
+    public void backupStatus() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", true);
+                    o.put("counts", com.tingshu.app.data.BackupRepo.stats());
+                    o.put("hasDav", com.tingshu.app.data.BackupCred.configured());
+                    o.put("davUrl", com.tingshu.app.data.BackupCred.url());
+                    o.put("davDir", com.tingshu.app.data.BackupCred.dir());
+                    o.put("autoBackups", com.tingshu.app.data.BackupRepo.autoBackupList());
+                    o.put("versionName", versionName());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
+                    catch (Throwable ignored) {}
+                }
+                callback("onBackupStatus", o);
+            }
+        });
+    }
+
+    /** 界面标签：当前版本名（用于生成默认备份文件名） */
+    private String versionName() {
+        try {
+            return com.tingshu.app.core.App.ctx().getPackageManager()
+                    .getPackageInfo(com.tingshu.app.core.App.ctx().getPackageName(), 0)
+                    .versionName;
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private int versionCodeInt() {
+        try {
+            return com.tingshu.app.core.App.ctx().getPackageManager()
+                    .getPackageInfo(com.tingshu.app.core.App.ctx().getPackageName(), 0)
+                    .versionCode;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /** 打开系统文件夹选择器挑「本地备份存放目录」（交给 MainActivity 弹 SAF） */
+    @JavascriptInterface
+    public void pickBackupDir() {
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    ((MainActivity) activity).pickBackupDir();
+                } catch (Throwable t) {
+                    js("window.onBackupDir({ok:false,cancel:false,error:'无法打开文件夹选择器'})");
+                }
+            }
+        });
+    }
+
+    /** 打开系统文件选择器挑一个 .fxbak 备份包 */
+    @JavascriptInterface
+    public void pickBackupFile() {
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    ((MainActivity) activity).pickBackupFile();
+                } catch (Throwable t) {
+                    js("window.onBackupFilePicked({ok:false,cancel:false,error:'无法打开文件选择器'})");
+                }
+            }
+        });
+    }
+
+    /**
+     * 备份到本地（SAF 目录）。
+     *
+     * <p>流程：取 localStorage（异步，2 秒超时）→ 打包到私有临时文件 →
+     * {@code SafOut.createFile} + {@code SafOut.copyInto} 搬到用户选的目录 →
+     * 校验字节数 → 删临时文件。
+     */
+    @JavascriptInterface
+    public void backupLocal(final String treeUriStr, final String fileName) {
+        // 先异步取 localStorage，拿到（或超时）后再进后台打包
+        collectLocalStorage(2000, new LocalStorageCb() {
+            public void onResult(final JSONObject ls) {
+                bg(new Runnable() {
+                    public void run() {
+                        JSONObject o = new JSONObject();
+                        java.io.File tmp = null;
+                        try {
+                            android.content.Context c = com.tingshu.app.core.App.ctx();
+                            android.net.Uri tree = android.net.Uri.parse(treeUriStr);
+                            String name = (fileName == null || fileName.length() == 0)
+                                    ? ("fengxi-" + System.currentTimeMillis()
+                                        + com.tingshu.app.data.BackupCodec.EXT)
+                                    : fileName;
+
+                            // 1) 打包
+                            tmp = com.tingshu.app.data.BackupRepo.buildPackage(
+                                    false, ls, versionName(), versionCodeInt());
+
+                            // 2) 建目标文件
+                            android.net.Uri target = com.tingshu.app.core.SafOut
+                                    .createFile(c, tree, name, "application/octet-stream");
+                            if (target == null) throw new IllegalStateException("无法在所选目录创建文件");
+
+                            // 3) 流式搬过去
+                            long wrote = com.tingshu.app.core.SafOut.copyInto(c, tmp, target);
+                            if (wrote < 0) throw new IllegalStateException("写入失败（可能无写入权限）");
+
+                            // 4) 校验字节数
+                            long real = com.tingshu.app.core.SafOut.sizeOf(c, target);
+                            if (real >= 0 && real != tmp.length()) {
+                                throw new IllegalStateException("写入不完整（"
+                                        + real + " / " + tmp.length() + " 字节）");
+                            }
+
+                            o.put("ok", true);
+                            o.put("name", name);
+                            o.put("size", tmp.length());
+                            o.put("counts", com.tingshu.app.data.BackupRepo.stats());
+                        } catch (Throwable t) {
+                            try {
+                                o.put("ok", false);
+                                o.put("error", String.valueOf(t.getMessage()));
+                            } catch (Throwable ignored) {}
+                        } finally {
+                            try { if (tmp != null) tmp.delete(); } catch (Throwable ignored) {}
+                        }
+                        callback("onBackupDone", o);
+                    }
+                });
+            }
+        });
+    }
+
+    /** 从本地文件恢复（content:// URI） */
+    @JavascriptInterface
+    public void restoreLocal(final String uriStr) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                java.io.File tmp = null;
+                try {
+                    android.content.Context c = com.tingshu.app.core.App.ctx();
+                    android.net.Uri uri = android.net.Uri.parse(uriStr);
+
+                    // ★ 用流式读取，**不能用 MainActivity.readTextFromUri**（它有 2MB 上限）
+                    java.io.InputStream in = c.getContentResolver().openInputStream(uri);
+                    if (in == null) throw new IllegalStateException("无法打开该文件");
+
+                    java.io.File work = new java.io.File(c.getFilesDir(), "incoming");
+                    if (!work.exists()) work.mkdirs();
+                    tmp = new java.io.File(work, "incoming-" + System.currentTimeMillis()
+                            + com.tingshu.app.data.BackupCodec.EXT);
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(tmp);
+                    try {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        long total = 0;
+                        final long MAX = 64L * 1024 * 1024;
+                        while ((n = in.read(buf)) > 0) {
+                            total += n;
+                            if (total > MAX) throw new IllegalStateException("备份包超过 64MB");
+                            fo.write(buf, 0, n);
+                        }
+                        fo.flush();
+                    } finally {
+                        try { in.close(); } catch (Throwable ignored) {}
+                        try { fo.close(); } catch (Throwable ignored) {}
+                    }
+
+                    o = com.tingshu.app.data.BackupRestore.restore(tmp);
+                } catch (Throwable t) {
+                    try {
+                        if (o == null) o = new JSONObject();
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                } finally {
+                    try { if (tmp != null) tmp.delete(); } catch (Throwable ignored) {}
+                }
+                // 恢复里的 localStorage 要交给前端写
+                pushLocalStorageThen(o, "onRestoreDone");
+            }
+        });
+    }
+
+    // ---------- WebDAV 配置 ----------
+
+    @JavascriptInterface
+    public void davConfig() {
+        bg(new Runnable() {
+            public void run() {
+                callback("onDavConfig", com.tingshu.app.data.BackupCred.load());
+            }
+        });
+    }
+
+    @JavascriptInterface
+    public void davSave(final String url, final String user, final String pass, final String dir) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    com.tingshu.app.data.BackupCred.save(url, user, pass, dir);
+                    o.put("ok", true);
+                    o.put("url", com.tingshu.app.data.BackupCred.url());
+                    o.put("dir", com.tingshu.app.data.BackupCred.dir());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
+                    catch (Throwable ignored) {}
+                }
+                callback("onDavSaved", o);
+            }
+        });
+    }
+
+    @JavascriptInterface
+    public void davTest() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    String url = com.tingshu.app.data.BackupCred.url();
+                    String user = com.tingshu.app.data.BackupCred.user();
+                    String pass = com.tingshu.app.data.BackupCred.pass();
+                    if (url == null || url.length() == 0) {
+                        o.put("ok", false);
+                        o.put("error", "还没有配置服务器地址");
+                    } else {
+                        long t0 = System.currentTimeMillis();
+                        com.tingshu.app.data.WebDavClient.Result r =
+                                com.tingshu.app.data.WebDavClient.test(url, user, pass);
+                        long ms = System.currentTimeMillis() - t0;
+                        o = com.tingshu.app.data.WebDavClient.toJson(r);
+                        o.put("latencyMs", ms);
+                        // 207 Multi-Status = 认证通过且是合法 WebDAV 根
+                        if (r.ok || r.code == 207) {
+                            o.put("ok", true);
+                            o.put("error", "");
+                        }
+                    }
+                } catch (Throwable t) {
+                    try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
+                    catch (Throwable ignored) {}
+                }
+                callback("onDavTested", o);
+            }
+        });
+    }
+
+    /** 上传备份到 WebDAV */
+    @JavascriptInterface
+    public void davBackup(final String fileName) {
+        collectLocalStorage(2000, new LocalStorageCb() {
+            public void onResult(final JSONObject ls) {
+                bg(new Runnable() {
+                    public void run() {
+                        JSONObject o = new JSONObject();
+                        java.io.File tmp = null;
+                        try {
+                            String base = com.tingshu.app.data.BackupCred.url();
+                            String user = com.tingshu.app.data.BackupCred.user();
+                            String pass = com.tingshu.app.data.BackupCred.pass();
+                            String dir = com.tingshu.app.data.BackupCred.dir();
+                            if (base == null || base.length() == 0) {
+                                throw new IllegalStateException("还没有配置服务器地址");
+                            }
+
+                            String name = (fileName == null || fileName.length() == 0)
+                                    ? ("fengxi-" + System.currentTimeMillis()
+                                        + com.tingshu.app.data.BackupCodec.EXT)
+                                    : fileName;
+
+                            // 1) 本地打包
+                            tmp = com.tingshu.app.data.BackupRepo.buildPackage(
+                                    false, ls, versionName(), versionCodeInt());
+
+                            // 2) 确保远端目录存在
+                            com.tingshu.app.data.WebDavClient.Result dr =
+                                    com.tingshu.app.data.WebDavClient.ensureDir(base, user, pass, dir);
+                            if (!dr.ok) throw new IllegalStateException(
+                                    "创建远端目录失败：" + dr.error);
+
+                            // 3) 上传
+                            String target = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + name;
+                            com.tingshu.app.data.WebDavClient.Result ur =
+                                    com.tingshu.app.data.WebDavClient.put(target, user, pass, tmp);
+                            if (!ur.ok) throw new IllegalStateException("上传失败：" + ur.error);
+
+                            o.put("ok", true);
+                            o.put("name", name);
+                            o.put("size", tmp.length());
+                            o.put("remote", target);
+                        } catch (Throwable t) {
+                            try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
+                            catch (Throwable ignored) {}
+                        } finally {
+                            try { if (tmp != null) tmp.delete(); } catch (Throwable ignored) {}
+                        }
+                        callback("onDavBackupDone", o);
+                    }
+                });
+            }
+        });
+    }
+
+    /** 列出远端备份 */
+    @JavascriptInterface
+    public void davList() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    String base = com.tingshu.app.data.BackupCred.url();
+                    String user = com.tingshu.app.data.BackupCred.user();
+                    String pass = com.tingshu.app.data.BackupCred.pass();
+                    String dir = com.tingshu.app.data.BackupCred.dir();
+                    if (base == null || base.length() == 0) {
+                        o.put("ok", false);
+                        o.put("error", "还没有配置服务器地址");
+                        o.put("items", new org.json.JSONArray());
+                    } else {
+                        java.util.List<com.tingshu.app.data.WebDavClient.DavFile> all =
+                                com.tingshu.app.data.WebDavClient.list(base, user, pass, dir);
+                        org.json.JSONArray arr = new org.json.JSONArray();
+                        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat(
+                                "MM-dd HH:mm", java.util.Locale.getDefault());
+                        for (com.tingshu.app.data.WebDavClient.DavFile f : all) {
+                            if (f == null || f.dir) continue;
+                            if (!f.name.toLowerCase(java.util.Locale.ROOT).endsWith(
+                                    com.tingshu.app.data.BackupCodec.EXT)) continue;
+                            JSONObject it = new JSONObject();
+                            it.put("name", f.name);
+                            it.put("size", f.size);
+                            it.put("at", f.lastModified);
+                            it.put("atText", f.lastModified > 0
+                                    ? fmt.format(new java.util.Date(f.lastModified)) : "");
+                            arr.put(it);
+                        }
+                        o.put("ok", true);
+                        o.put("dir", dir);
+                        o.put("items", arr);
+                    }
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                        if (!o.has("items")) o.put("items", new org.json.JSONArray());
+                    } catch (Throwable ignored) {}
+                }
+                callback("onDavList", o);
+            }
+        });
+    }
+
+    /** 从 WebDAV 下载并恢复 */
+    @JavascriptInterface
+    public void davRestore(final String remoteName) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                java.io.File tmp = null;
+                try {
+                    android.content.Context c = com.tingshu.app.core.App.ctx();
+                    String base = com.tingshu.app.data.BackupCred.url();
+                    String user = com.tingshu.app.data.BackupCred.user();
+                    String pass = com.tingshu.app.data.BackupCred.pass();
+                    String dir = com.tingshu.app.data.BackupCred.dir();
+                    if (base == null || base.length() == 0) {
+                        throw new IllegalStateException("还没有配置服务器地址");
+                    }
+                    String safe = new java.io.File(remoteName == null ? "" : remoteName).getName();
+                    if (safe.length() == 0) throw new IllegalStateException("文件名无效");
+
+                    java.io.File work = new java.io.File(c.getFilesDir(), "incoming");
+                    if (!work.exists()) work.mkdirs();
+                    tmp = new java.io.File(work, "dav-" + System.currentTimeMillis()
+                            + com.tingshu.app.data.BackupCodec.EXT);
+
+                    String url = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + safe;
+                    com.tingshu.app.data.WebDavClient.Result dr =
+                            com.tingshu.app.data.WebDavClient.getToFile(url, user, pass, tmp);
+                    if (!dr.ok) throw new IllegalStateException("下载失败：" + dr.error);
+
+                    o = com.tingshu.app.data.BackupRestore.restore(tmp);
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                } finally {
+                    try { if (tmp != null) tmp.delete(); } catch (Throwable ignored) {}
+                }
+                pushLocalStorageThen(o, "onRestoreDone");
+            }
+        });
+    }
+
+    /** 删除远端备份 */
+    @JavascriptInterface
+    public void davDelete(final String remoteName) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    String base = com.tingshu.app.data.BackupCred.url();
+                    String user = com.tingshu.app.data.BackupCred.user();
+                    String pass = com.tingshu.app.data.BackupCred.pass();
+                    String dir = com.tingshu.app.data.BackupCred.dir();
+                    String safe = new java.io.File(remoteName == null ? "" : remoteName).getName();
+                    if (safe.length() == 0) throw new IllegalStateException("文件名无效");
+
+                    String url = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + safe;
+                    com.tingshu.app.data.WebDavClient.Result r =
+                            com.tingshu.app.data.WebDavClient.delete(url, user, pass);
+                    o.put("ok", r.ok);
+                    o.put("name", safe);
+                    if (!r.ok) o.put("error", r.error);
+                } catch (Throwable t) {
+                    try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
+                    catch (Throwable ignored) {}
+                }
+                callback("onDavDeleted", o);
+            }
+        });
+    }
+
+    // ---------- 恢复前自动备份 ----------
+
+    @JavascriptInterface
+    public void autoBackupList() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", true);
+                    o.put("items", com.tingshu.app.data.BackupRepo.autoBackupList());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onAutoBackupList", o);
+            }
+        });
+    }
+
+    /** 回退到某个恢复前自动备份 */
+    @JavascriptInterface
+    public void autoBackupRestore(final String name) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    java.io.File f = com.tingshu.app.data.BackupRepo.autoBackupFile(name);
+                    if (f == null) throw new IllegalStateException("找不到该自动备份");
+                    // 注意：这里恢复的包本身就是自动备份，恢复流程仍会再自动备份一次
+                    //      （多一层保险，代价是几 KB，可接受）
+                    o = com.tingshu.app.data.BackupRestore.restore(f);
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                pushLocalStorageThen(o, "onRestoreDone");
+            }
+        });
+    }
+
+    // ---------- localStorage 桥 ----------
+
+    private interface LocalStorageCb { void onResult(JSONObject ls); }
+
+    /**
+     * 异步取前端 localStorage 的 4 个 {@code fx_} 键。
+     *
+     * <p><b>为什么要超时</b>：{@code evaluateJavascript} 的回调依赖 WebView
+     * 主线程消息循环。如果此刻 WebView 正好在忙（大页面渲染/GC），
+     * 回调可能迟迟不来。没有超时就会「点备份没反应」。
+     * 超时后按「没有 localStorage」继续，用户数据主体照样备份成功。
+     */
+    private void collectLocalStorage(final long timeoutMs, final LocalStorageCb cb) {
+        final boolean[] done = new boolean[]{false};
+        final LocalStorageCb once = new LocalStorageCb() {
+            public void onResult(JSONObject ls) {
+                synchronized (done) {
+                    if (done[0]) return;
+                    done[0] = true;
+                }
+                cb.onResult(ls);
+            }
+        };
+
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    final String js = "(function(){try{var k=['fx_session_v1',"
+                            + "'fx_last_home_src_v1','fx_chap_view_v1','fx_browse_v1'];"
+                            + "var o={};for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);"
+                            + "if(v!==null)o[k[i]]=v;}return JSON.stringify(o);}catch(e){return '{}';}})()";
+                    web.evaluateJavascript(js, new android.webkit.ValueCallback<String>() {
+                        public void onReceiveValue(String value) {
+                            once.onResult(parseLsJson(value));
+                        }
+                    });
+                } catch (Throwable t) {
+                    once.onResult(new JSONObject());
+                }
+            }
+        });
+
+        // 超时兜底
+        ui.postDelayed(new Runnable() {
+            public void run() {
+                once.onResult(new JSONObject());
+            }
+        }, timeoutMs);
+    }
+
+    /** evaluateJavascript 回传的是「带引号的 JSON 字符串」，要剥一层 */
+    private JSONObject parseLsJson(String raw) {
+        try {
+            if (raw == null) return new JSONObject();
+            String s = raw.trim();
+            if (s.length() == 0 || "null".equals(s)) return new JSONObject();
+            if (s.startsWith("\"") && s.endsWith("\"") && s.length() >= 2) {
+                s = s.substring(1, s.length() - 1);
+                s = s.replace("\\\"", "\"").replace("\\\\", "\\")
+                        .replace("\\n", "\n").replace("\\/", "/");
+            }
+            JSONObject o = com.tingshu.app.core.Json.obj(s);
+            return o == null ? new JSONObject() : o;
+        } catch (Throwable t) {
+            return new JSONObject();
+        }
+    }
+
+    /**
+     * 恢复完成后：若结果里带了 localStorage，先让前端写进去，再回调最终函数。
+     * <p>顺序很重要 —— 前端写 localStorage 是同步的，写完后信息才是完整的。
+     */
+    private void pushLocalStorageThen(final JSONObject result, final String finalFn) {
+        JSONObject ls = null;
+        try { ls = result.optJSONObject("localStorage"); } catch (Throwable ignored) {}
+        if (ls != null && ls.length() > 0) {
+            try { result.remove("localStorage"); } catch (Throwable ignored) {}
+            js("window.onRestoreLocalStorage(" + ls.toString() + ")");
+        }
+        callback(finalFn, result);
+    }
 }
