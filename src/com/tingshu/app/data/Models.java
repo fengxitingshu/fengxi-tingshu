@@ -124,6 +124,15 @@ public final class Models {
         public int index;     // 第几集，1 基
         /** 有些源详情页就把直链给了，这里存着省一次请求 */
         public String directUrl;
+        /**
+         * ★ v3.7.11：TVBox 的 vod_play_from（播放源标识）。
+         *
+         * <p>部分源里同一个作品有多条播放线（{@code vod_play_from} 用 {@code $$$}
+         * 分隔），取链时要把这条线名回传给 {@code playerContent(flag, id, vip)}，
+         * 源才能定位到正确的线路。以前这个值在解析时被丢掉，导致取链拿到
+         * "别的线路"的地址 —— 表现为「内容和标题不符」。
+         */
+        public String flag;
 
         public Chapter() {}
 
@@ -140,6 +149,7 @@ public final class Models {
                 o.put("url", nz(url));
                 o.put("index", index);
                 o.put("directUrl", nz(directUrl));
+                o.put("flag", nz(flag));
             } catch (Throwable ignored) {}
             return o;
         }

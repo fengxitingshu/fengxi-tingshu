@@ -94,6 +94,14 @@ public class PlayerService extends Service {
     /** 当前正在播放/暂停的书；未播放时返回 null */
     public Book currentBook() { return lastBook; }
 
+    /**
+     * ★ v3.7.11：给桌面小组件复用的封面位图。
+     *
+     * <p>通知栏为了大图图标已经在解码并缓存封面，小组件直接拿这张现成的，
+     * 避免为同一本书重复下两次图。
+     */
+    public Bitmap coverBitmap() { return coverBmp; }
+
     /** 当前集；未播放时返回 null */
     public Chapter currentChapter() { return lastChapter; }
 

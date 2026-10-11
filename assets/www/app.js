@@ -244,6 +244,8 @@
     App.homeMoreSince = 0;          // ★ v3.7.9：本次加载开始时间戳（用于超时兜底复位）
     App.homeMoreWait = null;        // 正在等哪一页（{src,cat,page}）
     App.homePageSize = 0;           // ★ v3.7.6：满页基准（首屏这一页的条数）
+    // ★ v3.7.11：整页重复时自动往后连翻的计数（最多 5 次，见 renderHomeList）
+    App._homeEmptyStreak = 0;
     // ★ v3.7.9：Python 运行时状态（冷启动时它会在后台慢慢起）
     App.pyState = 'idle';           // idle | loading | ready | failed
     App.pyBootToast = false;        // 就绪后是否要提示"已就绪 N 个 Python 书源"
@@ -391,7 +393,17 @@
         App.homeMoreSince = 0;
         App.homeMoreWait = null;
         App.homePageSize = 0;
+        // ★ v3.7.11：连同"整页重复自动续翻"的计数一起清掉。
+        //   否则换源/换分类后残留的 streak 会让新源第一次遇到重复页就直接判"到底"。
+        App._resetHomeEmpty();
     }
+
+    /** ★ v3.7.11：清空"自动跳过重复页"连翻计数（换源/换分类/强制刷新时调） */
+    App._resetHomeEmpty = function () {
+        App._homeEmptyStreak = 0;
+        App._homeLastFresh = 0;
+        App._homeLastPage = 0;
+    };
 
     // ==================== ★ v3.7.6：首页默认源（记住上次用的） ====================
     // 之前每次启动 App，首页都要用户手动点一下源才出内容，冷启动第一屏是空白的。
@@ -584,20 +596,17 @@
             App.homePage[catId] = 0;
         }
         var all = App.homeBooks[catId] || (App.homeBooks[catId] = []);
-        // ★ v3.7.10：去重指纹改用「组合键」。
-        //   原来只取 `key || url || title` 中**第一个非空**的字段。问题：
-        //   不少书源给每本书的 key 是"页面级"的固定值（甚至就是站点首页 URL），
-        //   第二页返回的书 key 与第一页**相同** → 全部被判重复丢掉 → fresh=0，
-        //   表现就是"点加载更多后页码变了，但一本书都没多出来"。
-        //   现在把 title + url 一起纳入指纹，任一不同就认为是一本新书，
-        //   既不会误杀（真新书被丢），也不会重复（同书再次插入）。
+        // ★ v3.7.11：去重指纹。
+        //   历史：只取 `key || url || title` 第一个非空字段（v3.7.9 前）→ 不少源的
+        //   key 是页面级固定值，第二页的书全被判重复丢掉；
+        //   v3.7.10 改成 title+url 组合。
+        //   现在保持组合指纹，但**把 key 也纳入**：三者任一不同即视为新书。
         var fp = function (b) {
             if (!b) return '';
             var t = (b.title || '').trim();
             var u = (b.url || '').trim();
             var k = (b.key || '').trim();
-            // title 是最稳的：同名同源的书在同一个分类页里基本就是同一本
-            return (t || k || u) + '@@' + (u || k);
+            return (t || k || u) + '@@' + (u || k) + '@@' + k;
         };
         var seen = {};
         for (var s = 0; s < all.length; s++) seen[fp(all[s])] = true;
@@ -610,7 +619,21 @@
             all.push(bk);
             fresh.push(bk);
         }
-        App.homePage[catId] = page;
+
+        // ★ v3.7.11：★ 关键修复 —— 页码只在"确实追加到了内容"时才前进 ★
+        //   这是「加载更多只变页码、内容不更新」的根因：
+        //   源的第二页返回的是与上一页重复的书（站点翻页参数没生效 / 返回同批热门书），
+        //   fresh=0，但原来照样 `App.homePage[catId] = page` → 页码前进一格，
+        //   底部文案变成「第 N 页」，而列表一本书都没多 —— 用户看到的就是
+        //   "页码变了、内容没更新"。
+        //   现在：追加模式下若零新增，**不推进页码**，并在下方给出明确提示，
+        //   同时由调用方（onBrowse / homeMore）决定是否自动往后再翻一页。
+        var gotFresh = fresh.length > 0;
+        if (!append || gotFresh) {
+            App.homePage[catId] = page;
+        }
+        App._homeLastFresh = fresh.length;
+        App._homeLastPage = page;
 
         if (!all.length) {
             cl.innerHTML = errBlock('这个分类暂时没有内容（可能是站点改版，或该栏目暂无资源）');
@@ -657,7 +680,6 @@
         var pageSize = (books || []).length;
         if (!append && pageSize > 0) App.homePageSize = pageSize;
         var bench = App.homePageSize || 0;
-        if (App._homeSamePageStreak === undefined) App._homeSamePageStreak = 0;
         if (pageSize <= 0) {
             App.homeHasMore = false;                       // 站点返回空 → 真到底
         } else if (bench > 0 && pageSize < bench) {
@@ -666,13 +688,62 @@
             App.homeHasMore = true;
         }
 
-        paintHomeMore(fresh.length, page, pageSize);
+        // ★ v3.7.11：整页无新增（全是重复书）时，自动往后再翻一页。
+        //   场景：源的翻页参数不生效 / 返回同批热门书，直接表现为"点了一次没反应"。
+        //   这里最多连翻 5 页，避免源彻底失效时无限请求；翻的过程中底部显示
+        //   「正在跳过重复内容…」，让用户知道 App 在工作而不是卡死。
+        //   真的连续 5 页都没有新书 → 认为到底，收掉按钮并说明原因。
+        if (append && !gotFresh) {
+            var streak = (App._homeEmptyStreak || 0) + 1;
+            App._homeEmptyStreak = streak;
+            if (pageSize > 0 && App.homeHasMore && streak <= 5) {
+                paintHomeMoreSkipping(streak);
+                var cfg0 = homeCurrentSrc();
+                if (cfg0 && cfg0.id) {
+                    var nxt = page + 1;
+                    App.homeMoreBusy = true;
+                    App.homeMoreSince = Date.now();
+                    App.homeMoreWait = { src: cfg0.id, cat: catId, page: nxt };
+                    TS.call('browse', cfg0.id, catId, nxt);
+                    return;                                   // 等下一页回来继续判
+                }
+            } else if (pageSize > 0 && App.homeHasMore) {
+                // 连翻 5 页都没有新书 → 停止，并给出解释
+                App.homeHasMore = false;
+                App.homeMoreBusy = false;
+                App.homeMoreWait = null;
+                paintHomeMoreEmptyDone();
+                return;
+            }
+        }
+        if (gotFresh) App._homeEmptyStreak = 0;
+
+        paintHomeMore(fresh.length, App.homePage[catId] || page, pageSize);
 
         // ★ v3.7.5：首页书卡没有 .fav-btn（收藏按钮只在收藏/搜索/详情里），
         // 原来每次都调 favStates 白白走一趟 SQLite —— 首屏真正的"卡"点之一。
         // 首页不需要打标，直接跳过。
         // markFavs(fresh);
         if (App._homeMeta) paintHomeContinue(App._homeMeta);
+    }
+
+    /** ★ v3.7.11：正在跳过重复页时的底部提示（替代「加载更多」按钮） */
+    function paintHomeMoreSkipping(streak) {
+        var more = $('homeMore');
+        if (!more) return;
+        more.className = 'home-more';
+        more.innerHTML = '<span class="hm-tip"><span class="spinner"></span>' +
+            '正在跳过重复内容…（第 ' + streak + ' 次）</span>';
+    }
+
+    /** ★ v3.7.11：连翻多页都没有新书 —— 明确告知用户，而不是静默"到底" */
+    function paintHomeMoreEmptyDone() {
+        var more = $('homeMore');
+        if (!more) return;
+        var n = (App.homeBooks[App.home.cat] || []).length;
+        more.className = 'home-more done';
+        more.innerHTML = '<span class="hm-tip">— 后面几页都是重复内容，先到这 · 共 ' +
+            n + ' 本 —</span>';
     }
 
     /** 底部「加载更多」的文案/可用态 + 绑定滚到底自动加载（只绑一次） */
@@ -754,9 +825,18 @@
         if (!cfg || !cfg.id) return;
         var cat = App.home.cat;
         var next = (App.homePage[cat] || 1) + 1;
-        // 缓存命中就直接追加（翻过的页回来时不再联网）
+        // ★ v3.7.11：缓存命中也要走 renderHomeList —— 由它统一判断"这一页有没有新书"，
+        //   零新增时它会自动接着往后翻（见 renderHomeList 里的 _homeEmptyStreak 分支）。
+        //   若恰好缓存的这一页也是空的，会自动续翻网络页，不会卡在"页码空转"。
         var cached = browseLoad(cfg.id, cat, next, false);
-        if (cached) { renderHomeList(cached, cfg.id, cat, next, true); return; }
+        if (cached) {
+            App.homeMoreBusy = true;
+            App.homeMoreSince = now;
+            renderHomeList(cached, cfg.id, cat, next, true);
+            App.homeMoreBusy = false;
+            App.homeMoreSince = 0;
+            return;
+        }
         App.homeMoreBusy = true;
         App.homeMoreSince = now;
         var btn = $('homeMoreBtn');
@@ -1844,6 +1924,7 @@
     window.onFavList = function (arr) {
         var c = $('favContent');
         arr = arr || [];
+        App._favCache = arr;
         var h = '';
 
         h += '<div class="chips">';
@@ -1859,23 +1940,67 @@
             h += '<div class="empty"><div class="big">⭐</div>还没有收藏<br>' +
                  '<span style="font-size:12.5px">搜索到喜欢的书点 ☆ 即可收藏</span></div>';
         } else {
+            // ★ v3.7.11：收藏页从「横向卡片列表」换成了「书本封面陈列」。
+            //   每本书做成一册竖立的书：带书脊、书页裁切、轻投影与倾斜光泽，
+            //   下方配书名/主播/来源。观感更像书架，也符合整体暖橙主题。
+            //   分割沿用同一套「仿制模板」：书脊 + 页边 + 底部书托。
+            h += '<div class="shelf">';
             for (var i = 0; i < arr.length; i++) {
                 var b = arr[i];
-                h += '<div class="bookcard" onclick="App.ui.openBookJson(\'' +
-                     escAttr(JSON.stringify(b)) + '\')">';
-                h += '<img src="' + TS.esc(b.cover) + '" onerror="TS.imgFail(this)" loading="lazy">';
-                h += '<div class="info">';
-                h += '<div class="t" data-mq>' + TS.esc(b.title) + '</div>';
-                if (b.author) h += '<div class="s">作者：' + TS.esc(b.author) + '</div>';
-                if (b.artist) h += '<div class="s">播音：' + TS.esc(b.artist) + '</div>';
+                h += '<div class="bk" data-fav-key="' + escAttr(b.key || '') + '" ' +
+                     'data-fav-json="' + escAttr(JSON.stringify(b)) + '" ' +
+                     'onclick="App.ui.openBookJson(this.getAttribute(\'data-fav-json\'))">';
+                h += '<div class="bk-cover">';
+                if (b.cover) {
+                    h += '<img src="' + TS.esc(b.cover) + '" onerror="TS.imgFail(this)" loading="lazy">';
+                } else {
+                    h += '<div class="bk-ph">' + TS.esc((b.title || '书').slice(0, 1)) + '</div>';
+                }
+                // 书脊（左侧竖条）+ 顶部光泽
+                h += '<span class="bk-spine"></span>';
+                h += '<span class="bk-gloss"></span>';
+                // 收藏星标（右上角），点它可直接取消收藏（保留快捷方式）
+                h += '<span class="bk-star on" onclick="event.stopPropagation();' +
+                     'App.ui.favRemove(\'' + escAttr(b.key || '') + '\')">★</span>';
                 h += '</div>';
-                h += '<div class="fav-btn on" onclick="event.stopPropagation();' +
-                     'App.ui.favRemove(\'' + escAttr(b.key || '') + '\')">★</div>';
+                h += '<div class="bk-info">';
+                h += '<div class="bk-t" data-mq>' + TS.esc(b.title || '') + '</div>';
+                if (b.artist) h += '<div class="bk-s">' + TS.esc(b.artist) + '</div>';
+                else if (b.author) h += '<div class="bk-s">' + TS.esc(b.author) + '</div>';
+                h += '</div>';
                 h += '</div>';
             }
+            h += '</div>';
+            h += '<div class="shelf-hint">长按书本可删除 / 换源 / 搜索</div>';
         }
         c.innerHTML = h;
+        bindFavMenu(c);
     };
+
+    /** ★ v3.7.11：收藏书本长按菜单（与历史页同一套交互） */
+    function bindFavMenu(c) {
+        App._bindLongPress(c, '.bk', function (el) {
+            var key = el.getAttribute('data-fav-key') || '';
+            var bk = null;
+            try { bk = JSON.parse(el.getAttribute('data-fav-json') || 'null'); } catch (e) { bk = null; }
+            var items = [];
+            items.push({
+                label: '取消收藏', icon: '🗑', danger: true,
+                pick: function () { ui.favRemove(key); }
+            });
+            if (bk) {
+                items.push({
+                    label: '换源播放', icon: '🔀',
+                    pick: function () { if (ui.openSwap) ui.openSwap(bk); }
+                });
+                items.push({
+                    label: '搜索这本书', icon: '🔍',
+                    pick: function () { if (ui.searchBook) ui.searchBook(bk); }
+                });
+            }
+            return items;
+        });
+    }
 
     function chip(name, id) {
         return '<div class="chip' + (App.curGroup === id ? ' on' : '') +
@@ -1965,8 +2090,10 @@
             var it = arr[i];
             var b = it.book || {};
             var cur = Math.round((it.lastPosMs || 0) / 1000);
-            h += '<div class="bookcard" onclick="App.ui.openHistoryItem(\'' +
-                 escAttr(b.key || '') + '\')">';
+            // ★ v3.7.11：去掉右上角的删除「✕」——改为**长按卡片**在按点弹菜单
+            //   （删除 / 换源 / 搜索），触屏上更干净、也更不容易误删。
+            h += '<div class="bookcard" data-hist-key="' + escAttr(b.key || '') +
+                 '" onclick="App.ui.openHistoryItem(\'' + escAttr(b.key || '') + '\')">';
             h += '<img src="' + TS.esc(b.cover) + '" onerror="TS.imgFail(this)" loading="lazy">';
             h += '<div class="info">';
             h += '<div class="t" data-mq>' + TS.esc(b.title) + '</div>';
@@ -1975,11 +2102,106 @@
             h += '<div class="s">' + TS.esc(it.updatedText || '') +
                  (it.chapterCount ? ' · 共' + it.chapterCount + '集' : '') + '</div>';
             h += '</div>';
-            h += '<div class="fav-btn" onclick="event.stopPropagation();' +
-                 'App.ui.delHistory(\'' + escAttr(b.key || '') + '\')">✕</div>';
             h += '</div>';
         }
         c.innerHTML = h;
+        bindHistMenu(c);
+    };
+
+    /** ★ v3.7.11：历史卡片长按菜单（删除 / 换源 / 搜索），与收藏页共用同一套 */
+    function bindHistMenu(c) {
+        App._bindLongPress(c, '.bookcard', function (el) {
+            var key = el.getAttribute('data-hist-key') || '';
+            var bk = histBookOf(key);
+            var items = [];
+            items.push({
+                label: '删除这条记录', icon: '🗑', danger: true,
+                pick: function () { ui.delHistory(key); }
+            });
+            if (bk) {
+                items.push({
+                    label: '换源播放', icon: '🔀',
+                    pick: function () { if (ui.openSwap) ui.openSwap(bk); }
+                });
+                items.push({
+                    label: '搜索这本书', icon: '🔍',
+                    pick: function () { if (ui.searchBook) ui.searchBook(bk); }
+                });
+            }
+            return items;
+        });
+    }
+
+    /** 按 key 找历史里的书对象 */
+    function histBookOf(key) {
+        var arr = App._histCache || [];
+        for (var i = 0; i < arr.length; i++) {
+            if (arr[i] && arr[i].book && arr[i].book.key === key) return arr[i].book;
+        }
+        return null;
+    }
+
+    /**
+     * ★ v3.7.11：用书名跳到搜索页并自动发起一次多源搜索。
+     * 目标：在历史/收藏里长按一本书，能"搜同名书"来换源。
+     */
+    ui.searchBook = function (bk) {
+        if (!bk || !bk.title) { TS.toast('没有可搜索的书名'); return; }
+        goTab('search');
+        var inp = $('kw');
+        if (inp) inp.value = bk.title;
+        App.searchFilter = 'all';
+        App.searchBySource = {};
+        App.searchDiag = [];
+        App.searchExpanded = false;
+        App.searchRunning = true;
+        App.books = [];
+        if ($('searchChips')) $('searchChips').classList.add('hide');
+        if ($('searchHist')) $('searchHist').innerHTML = '';
+        if ($('searchEmpty')) $('searchEmpty').style.display = 'none';
+        if ($('searchResult')) {
+            $('searchResult').innerHTML =
+                '<div class="loading"><div class="spinner"></div>正在多源搜索…</div>';
+        }
+        TS.call('search', bk.title, 1);
+    };
+
+    /**
+     * ★ v3.7.11：为一本书打开"换源"列表（同名书/其它源的候选）。
+     *
+     * <p>数据来自 {@code App.book.variants}（聚合搜索时同书不同源会挂在这里）；
+     * 若没有 variants，就退化成"按书名再搜一次"。
+     */
+    ui.openSwap = function (bk) {
+        if (!bk) return;
+        var vars = bk.variants || [];
+        var items = [];
+        for (var i = 0; i < vars.length; i++) {
+            var v = vars[i];
+            if (!v || !v.source) continue;
+            if (bk.source && v.source === bk.source) continue;
+            items.push({
+                label: (v.sourceName || v.source) + ' · ' + (v.artist || '未知主播'),
+                icon: '🔀',
+                pick: (function (vv) {
+                    return function () { openBookObj(vv); };
+                })(v)
+            });
+        }
+        if (!items.length) {
+            // 没有候选 → 直接按书名搜，用户从结果里挑一个源
+            TS.toast('没有已记录的同名源，改为搜索同名书');
+            ui.searchBook(bk);
+            return;
+        }
+        items.unshift({
+            label: '搜索同名书（更多来源）', icon: '🔍',
+            pick: function () { ui.searchBook(bk); }
+        });
+        // 菜单挂在屏幕中央偏上（没有"按点"上下文时）
+        var x = Math.round(window.innerWidth * 0.16);
+        var y = Math.round(window.innerHeight * 0.22);
+        ctxMenu(x, y, items);
     };
 
     ui.openHistoryItem = function (key) {
@@ -2394,15 +2616,29 @@
             if (total > 0) {
                 // 章节自带 index（有些源集号不连续）时优先用它
                 var no = ch.index || (idx + 1);
-                // ★ v3.7.9：括号改成中文全角「（N/M）」。
-                //   半角 (3/120) 在中文语境里字形偏瘦、和字重不搭，
-                //   而且数字贴着括号壁看着挤 —— 全角括号自带内边距，
-                //   与旁边的「主播名」pill 摆在一起也更协调。
-                //   同时把两个数字拆成独立 span，让「当前集」比「总数」重一档，
-                //   一眼能抓住"播到第几集"这个信息。
-                ep.innerHTML = '<i>（</i><b>' + no + '</b><s>/</s><em>' + total +
-                               '</em><i>）</i>';
+                // ★ v3.7.11：集数「括号」重做。
+                //
+                //   用户反馈："当前集数比和外边括号不协调，调整下分布"。
+                //   原写法 <i>（</i><b>no</b><s>/</s><em>total</em><i>）</i> 有两点别扭：
+                //     ① 全角括号（.）自带左右各半个字宽的空隙，数字被"推开"，
+                //        整体显得松散、还比右侧主播 pill 高一截；
+                //     ② 括号、数字、斜杠共 5 个节点挤在一行，基线对齐后
+                //        括号偏下、数字偏上，看着"没坐齐"。
+                //
+                //   现在改成：**细排版紧凑结构** —— 括号用半角并降低字重/透明度，
+                //   当前集与总数用同一字号（数字视觉等宽），斜杠居中做分隔，
+                //   再配一个"进度比例"的底色填充（当前/总数），
+                //   信息层级清晰、分布也均匀： [ 12 / 340 ]（左对齐数字块）。
+                var pct = Math.max(0, Math.min(100, Math.round((idx + 1) * 100 / total)));
+                ep.innerHTML =
+                    '<span class="fep-par">(</span>' +
+                    '<span class="fep-no">' + no + '</span>' +
+                    '<span class="fep-sep">/</span>' +
+                    '<span class="fep-tot">' + total + '</span>' +
+                    '<span class="fep-par">)</span>' +
+                    '<span class="fep-bar" style="--p:' + pct + '%"></span>';
                 ep.style.display = '';
+                ep.title = '第 ' + no + ' 集 / 共 ' + total + ' 集（' + pct + '%）';
             } else {
                 ep.textContent = '';
                 ep.style.display = 'none';
@@ -2922,6 +3158,147 @@
         var old = $('chsDropdown');
         if (old && old.parentNode) old.parentNode.removeChild(old);
     }
+
+    // ==================== ★ v3.7.11：长按弹出的上下文菜单 ====================
+    // 需求：历史/收藏的删除不再用卡片右上角的「✕」，改成**长按卡片**
+    //       后在**长按的位置**弹出一个菜单（删除 / 换源 / 搜索 …）。
+    // 这里做成通用件：传 (x, y, items)，items=[{label, icon, danger, pick}]。
+
+    var _ctxTimer = null;      // 长按计时器
+    var _ctxFired = false;     // 本次是否已触发长按（用于吞掉随后的 click）
+    var _ctxStart = null;      // 按下位置
+
+    /**
+     * 在屏幕坐标 (x, y) 处弹出菜单，自动贴边避免超出视口。
+     */
+    function ctxMenu(x, y, items) {
+        ctxClose();
+        if (!items || !items.length) return;
+        var m = document.createElement('div');
+        m.id = 'ctxMenu';
+        m.className = 'ctx-menu';
+        var h = '';
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            h += '<div class="ctx-item' + (it.danger ? ' danger' : '') +
+                 '" data-i="' + i + '">' +
+                 (it.icon ? '<span class="ci-ico">' + it.icon + '</span>' : '') +
+                 '<span class="ci-tx">' + it.label + '</span></div>';
+        }
+        m.innerHTML = h;
+        document.body.appendChild(m);
+
+        // 定位：以按点为左上角；超出视口则往回收
+        var r = m.getBoundingClientRect();
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var left = x, top = y;
+        if (left + r.width + 8 > vw) left = Math.max(8, vw - r.width - 8);
+        if (top + r.height + 8 > vh) top = Math.max(8, vh - r.height - 8);
+        m.style.left = left + 'px';
+        m.style.top = top + 'px';
+
+        // 点选
+        m.addEventListener('click', function (e) {
+            var t = e.target.closest ? e.target.closest('.ctx-item') : null;
+            if (!t) return;
+            var idx = parseInt(t.getAttribute('data-i'), 10);
+            ctxClose();
+            if (items[idx] && items[idx].pick) items[idx].pick();
+        });
+        // 点别处 / 滚动 → 收起
+        setTimeout(function () {
+            document.addEventListener('click', ctxClose, { once: true });
+            document.addEventListener('touchstart', ctxClose, { once: true, passive: true });
+        }, 0);
+    }
+
+    function ctxClose() {
+        var old = $('ctxMenu');
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+    }
+    App._ctxClose = ctxClose;
+
+    /**
+     * 给一批元素挂"长按 → 在按点弹菜单"。用**事件委托**，只绑一次。
+     *
+     * @param {Element} root    容器（在其上委托）
+     * @param {string}  sel     触发元素选择器（如 '.bookcard'）
+     * @param {function} build  回调 (el, ev) → items[]；返回空数组则不弹
+     */
+    function bindLongPress(root, sel, build) {
+        if (!root || root._lpBound) return;
+        root._lpBound = true;
+        var LONG = 480;   // 长按判定阈值（ms）
+
+        var getEl = function (e) {
+            var t = e.target;
+            while (t && t !== root) {
+                if (t.matches && t.matches(sel)) return t;
+                t = t.parentNode;
+            }
+            return null;
+        };
+        var pt = function (e) {
+            if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            return { x: e.clientX, y: e.clientY };
+        };
+
+        var start = function (e) {
+            var el = getEl(e);
+            if (!el) return;
+            var p = pt(e);
+            _ctxFired = false;
+            _ctxStart = p;
+            clearTimeout(_ctxTimer);
+            _ctxTimer = setTimeout(function () {
+                var items = build(el, e) || [];
+                if (items.length) {
+                    _ctxFired = true;
+                    // 轻微震动反馈（WebView 支持时有，没有就静默）
+                    try { if (navigator.vibrate) navigator.vibrate(12); } catch (ignored) {}
+                    ctxMenu(_ctxStart.x, _ctxStart.y, items);
+                }
+            }, LONG);
+        };
+        var cancel = function () { clearTimeout(_ctxTimer); };
+        // 移动超过 10px 视为滚动，取消长按
+        var move = function (e) {
+            if (!_ctxStart) return;
+            var p = pt(e);
+            if (Math.abs(p.x - _ctxStart.x) > 10 || Math.abs(p.y - _ctxStart.y) > 10) cancel();
+        };
+        // 长按已触发 → 吞掉随后的 click，避免同时打开详情
+        var swallow = function (e) {
+            if (_ctxFired) {
+                _ctxFired = false;
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        };
+
+        root.addEventListener('touchstart', start, { passive: true });
+        root.addEventListener('touchmove', move, { passive: true });
+        root.addEventListener('touchend', cancel, { passive: true });
+        root.addEventListener('touchcancel', cancel, { passive: true });
+        // 鼠标也能长按（桌面/调试）
+        root.addEventListener('mousedown', function (e) { if (e.button === 0) start(e); });
+        root.addEventListener('mousemove', move);
+        root.addEventListener('mouseup', cancel);
+        root.addEventListener('mouseleave', cancel);
+        // capture 阶段吞 click，保证在 onclick 之前
+        root.addEventListener('click', swallow, true);
+        // 右键 = 直接弹菜单（桌面友好）
+        root.addEventListener('contextmenu', function (e) {
+            var el = getEl(e);
+            if (!el) return;
+            var items = build(el, e) || [];
+            if (!items.length) return;
+            e.preventDefault();
+            ctxMenu(e.clientX, e.clientY, items);
+        });
+    }
+    App._bindLongPress = bindLongPress;
 
     /** ★ v3.7.10：列数下拉 */
     ui.chsToggleCols = function (ev) {
@@ -5846,6 +6223,22 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.11',
+            date: '2025-10-11',
+            fixes: [
+                '★ 彻底修复首页「加载更多」只变页码、不加载内容的老问题：源的第二页返回与上一页重复的书时，页码会被虚增一格而书一本没多。现在页码只在真的有新内容时前进；零新增会自动往后连翻（最多 5 页），期间显示「正在跳过重复内容…」，翻到底明确提示「后面几页都是重复内容，先到这」',
+                '修复 Python 书源「读出来的内容与标题不符」：章节页地址被误判成音频直链，导致取链接口根本没被调用，播放器拿到的是网页而是音频。现在按后缀区分页面/音频，只认真正的音频直链，其余交回源取链（同时修复章节地址含 # 被切碎、丢失播放线路名两个连带问题）',
+                '优化播放页集数（当前/总数）与外层括号不协调的观感：括号降字重、缩字号，数字等宽、当前集最重，斜杠居中，并与右侧主播名胶囊上下居中对齐',
+                '历史记录去掉右上角的删除「✕」，避免误删'
+            ],
+            adds: [
+                '历史记录支持长按卡片，在按下的位置弹出菜单：删除这条记录 / 换源播放 / 搜索这本书',
+                '收藏页的收藏书籍换个显示方式：改成「书本封面」书架样式（书脊、光泽、竖版比例），更贴合整体暖橙主题',
+                '收藏页同样支持长按书本弹出菜单：取消收藏 / 换源播放 / 搜索这本书（与历史记录同一套交互）',
+                '新增系统桌面小组件：可在桌面添加播放控制面板，显示封面、书名/主播、当前集数与进度条，并支持上一集 / 播放暂停 / 下一集；已适配原子随身听，可直接用系统随身听控制播放'
+            ]
+        },
         {
             ver: '3.7.10',
             date: '2025-10-11',

@@ -321,6 +321,12 @@ img.imgfail { opacity: .12 !important; }
 }
 .home-more .hm-btn[disabled] { opacity: .6; }
 .home-more .hm-tip { font-size: 12px; color: var(--text2); }
+/* ★ v3.7.11：跳过重复页时，提示行里带一个小转圈（告知"App 在工作"不是卡死） */
+.home-more .hm-tip .spinner {
+    width: 12px; height: 12px; margin-right: 6px;
+    display: inline-block; vertical-align: -1px;
+    border-width: 2px;
+}
 .home-more.done { padding: 14px 14px 20px; }
 
 .tag { font-size: 11px; padding: 2px 7px; border-radius: 4px;
@@ -1180,16 +1186,38 @@ html.dark .fmeta { text-shadow: 0 1px 2px rgba(0, 0, 0, .75), 0 2px 8px rgba(0, 
     /* ★ v3.7.4：底色加深，保证在任何封面上都读得清 */
     background: rgba(255, 255, 255, .6);
     color: var(--text);
-    /* ★ v3.7.9：括号与数字在同一行内基线对齐，别让全角括号把行高顶起来 */
-    display: inline-flex; align-items: baseline; gap: 0;
-    line-height: 1.35;
+    /* ★ v3.7.11：改用「数字块居中 + 括号轻描」的排布。
+       不再用 baseline（全角括号会把基线拉歪），改为 center 对齐，
+       并统一行高，使集数 pill 与右侧主播 pill 等高、上下居中对齐。 */
+    display: inline-flex; align-items: center; gap: 0;
+    line-height: 1.2;
+    min-height: 20px;
+    position: relative;
+    overflow: hidden;
 }
-/* ★ v3.7.9：集数「（当前/总数）」的字重层次 ——
-   当前集最重、总数次之、括号与斜杠最轻，远看能一眼抓住"播到第几集"。 */
-.fmeta .fep i { font-style: normal; opacity: .55; font-weight: 400; }
-.fmeta .fep b { font-weight: 700; color: var(--primary); }
-.fmeta .fep s { text-decoration: none; opacity: .45; margin: 0 1px; font-weight: 400; }
-.fmeta .fep em { font-style: normal; opacity: .8; font-weight: 500; }
+/* ★ v3.7.11：集数「（当前/总数）」的字重层次 ——
+   当前集最重、总数次之、括号与斜杠最轻，远看能一眼抓住"播到第几集"。
+   ★ v3.7.11 重做：括号降字重/降透明度并略缩，斜杠居中，数字等宽。 */
+.fmeta .fep-par {
+    font-weight: 400; opacity: .5;
+    font-size: .92em;
+    padding: 0 1px;
+}
+.fmeta .fep-no { font-weight: 700; color: var(--primary); }
+.fmeta .fep-sep { opacity: .38; font-weight: 400; margin: 0 3px; }
+.fmeta .fep-tot { font-weight: 500; opacity: .82; }
+/* 进度比例底色：从左往右按 --p 铺一层很淡的主色，示意"播到哪了" */
+.fmeta .fep-bar {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: var(--p, 0%); max-width: 100%;
+    background: linear-gradient(90deg,
+        rgba(255, 138, 0, .16), rgba(255, 138, 0, .05));
+    border-radius: 9px 0 0 9px;
+    pointer-events: none;
+    z-index: 0;
+}
+.fmeta .fep-par, .fmeta .fep-no,
+.fmeta .fep-sep, .fmeta .fep-tot { position: relative; z-index: 1; }
 html.dark .fmeta .fep { background: rgba(0, 0, 0, .38); }
 /* 集数右侧的主播名：前面加分隔点，为空时整块不显示 */
 .fmeta .fartist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1201,6 +1229,10 @@ html.dark .fmeta .fep { background: rgba(0, 0, 0, .38); }
     padding: 3px 9px; border-radius: 9px;
     background: rgba(255, 255, 255, .6);
     color: var(--text);
+    /* ★ v3.7.11：与左侧集数 pill 等高、垂直居中对齐（原来两 pill 高度不一） */
+    display: inline-flex; align-items: center;
+    line-height: 1.2;
+    min-height: 20px;
 }
 html.dark .page.full .fmeta .fartist:not(:empty) {
     background: rgba(0, 0, 0, .38);
@@ -2267,3 +2299,132 @@ body.multi-src-on .chk-src { display: block; }
 }
 .dlm-s { font-size: 12px; color: var(--text2); margin-top: 3px; }
 .dlm-acts { padding: 18px 16px 28px; text-align: center; }
+
+/* ============================================================
+   ★ v3.7.11 · 长按上下文菜单（历史 / 收藏 卡片长按删除、换源、搜索）
+   ============================================================ */
+.ctx-menu {
+    position: fixed; z-index: 9990;
+    min-width: 168px; max-width: 260px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .28);
+    padding: 5px;
+    animation: ctxIn .16s cubic-bezier(.2, .8, .3, 1.2);
+    transform-origin: top left;
+    overflow: hidden;
+}
+@keyframes ctxIn {
+    from { opacity: 0; transform: scale(.88); }
+    to   { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ctx-menu { animation: none; }
+}
+.ctx-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 12px;
+    border-radius: 9px;
+    font-size: 14.5px; color: var(--text);
+    cursor: pointer; white-space: nowrap;
+    transition: background .12s;
+}
+.ctx-item:active { background: var(--line2); }
+.ctx-item .ci-ico {
+    width: 20px; text-align: center; flex-shrink: 0;
+    font-size: 15px; opacity: .9;
+}
+.ctx-item .ci-tx { overflow: hidden; text-overflow: ellipsis; }
+.ctx-item.danger { color: #e5484d; }
+.ctx-item.danger:active { background: rgba(229, 72, 77, .12); }
+
+/* 长按提示：卡片按住时轻微下压，给"可长按"的触感反馈 */
+.bookcard[data-hist-key],
+.fav-page .bookcard { -webkit-touch-callout: none; }
+
+/* ============================================================
+   ★ v3.7.11 · 收藏页「书本封面陈列」（书架样式）
+   ============================================================ */
+.shelf {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px 12px;
+    padding: 14px 14px 6px;
+}
+@media (min-width: 520px) { .shelf { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 720px) { .shelf { grid-template-columns: repeat(5, 1fr); } }
+
+.bk {
+    display: flex; flex-direction: column; gap: 7px;
+    cursor: pointer;
+    -webkit-touch-callout: none;
+    animation: bkIn .22s ease both;
+}
+@keyframes bkIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .bk { animation: none; } }
+.bk:active .bk-cover { transform: scale(.965); }
+
+/* 封面本体：竖立的一册书 */
+.bk-cover {
+    position: relative;
+    width: 100%; aspect-ratio: 3 / 4.15;
+    border-radius: 3px 8px 8px 3px;      /* 左侧书脊更方、右侧书口更圆 */
+    overflow: hidden;
+    background: linear-gradient(145deg, var(--line2), var(--card));
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, .35) inset,
+        0 6px 14px rgba(0, 0, 0, .22),
+        0 1px 2px rgba(0, 0, 0, .16);
+    transition: transform .16s ease;
+}
+.bk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bk-ph {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; font-weight: 700; color: var(--text2);
+    letter-spacing: 2px;
+}
+/* 书脊：左侧一条压暗的竖带 + 高光，做出"这是一册书"的厚度感 */
+.bk-spine {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 9px;
+    background: linear-gradient(90deg,
+        rgba(0, 0, 0, .38) 0%,
+        rgba(0, 0, 0, .14) 42%,
+        rgba(255, 255, 255, .16) 62%,
+        rgba(255, 255, 255, 0) 100%);
+    pointer-events: none;
+}
+/* 顶部斜向光泽：模拟塑封/覆膜反光 */
+.bk-gloss {
+    position: absolute; inset: 0;
+    background: linear-gradient(118deg,
+        rgba(255, 255, 255, .30) 0%,
+        rgba(255, 255, 255, .06) 26%,
+        rgba(255, 255, 255, 0) 46%);
+    pointer-events: none;
+}
+/* 右上角收藏星标（可直接点掉） */
+.bk-star {
+    position: absolute; top: 4px; right: 5px;
+    font-size: 15px; line-height: 1; padding: 3px;
+    color: #ffb300;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .55);
+}
+.bk-star:active { transform: scale(.85); }
+
+/* 书名 / 主播 */
+.bk-info { min-height: 34px; padding: 0 1px; }
+.bk-t {
+    font-size: 13px; line-height: 1.32; color: var(--text);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-word;
+}
+.bk-s {
+    font-size: 11.5px; color: var(--text2); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shelf-hint {
+    text-align: center; font-size: 12px; color: var(--text2);
+    padding: 4px 0 18px; opacity: .8;
+}

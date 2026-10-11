@@ -107,24 +107,75 @@ public class PySourceAdapter implements BrowsableSource {
     public String audioUrl(Chapter ch, Book book) throws Exception {
         if (ch == null) return null;
         synchronized (lock) {
-            // 章节里已经有直链就直接用，省一次往返
-            if (ch.directUrl != null && !ch.directUrl.isEmpty()
-                    && (ch.directUrl.startsWith("http"))) {
+            // ★ v3.7.11 修复「Python 源取到的资源和标题不符」：
+            //
+            //   根因有两个，叠在一起会让播放器拿到"和点的那一集毫无关系"的地址：
+            //
+            //   ① detail 阶段 parsePlayUrl 把**章节页 URL**（形如
+            //      https://site/xxx/12.html）当成"直链"塞进了 ch.directUrl，
+            //      只因它以 http 开头。而 TVBox 约定里 vod_play_url 里的地址
+            //      绝大多数是"章节页"，真正的音频要 playerContent 去那页里抠。
+            //   ② 上面这段又只看 directUrl.startsWith("http") 就直接 return，
+            //      于是 playerContent **根本没被调用**，播放器拿到的是 HTML 页面。
+            //
+            //   现在：只有当 directUrl 看起来**确实是音频文件**时才信任它，
+            //   否则一律走 playerContent 正路取链。
+            if (isLikelyAudio(ch.directUrl)) {
                 return ch.directUrl;
             }
-            JSONObject r = PythonHost.call("player_content", key, "", ch.url, false);
+            JSONObject r = PythonHost.call("player_content", key,
+                    ch.flag == null ? "" : ch.flag, ch.url, false);
             if (!r.optBoolean("ok", false)) return null;
             JSONObject d = r.optJSONObject("data");
             if (d == null) return null;
             String url = d.optString("url", "");
-            // TVBox 约定：parse=0 表示 url 就是直链
-            int parse = d.optInt("parse", 0);
-            if (parse == 1 && url.startsWith("http")) {
-                // 需要二次解析的场景，交回宿主播放器 sniff
-                return url;
+            if (url == null || url.isEmpty()) return null;
+            // ★ v3.7.11：源在取链失败时常会把"章节页地址"原样回填（见 [书]听书网.py
+            //   的 `return {'parse':0,'url':str(id),...}`），并附一个 msg 说明原因。
+            //   这种不是音频，直接当失败处理 —— 交给上层走"换源 / 下一候选"，
+            //   而不是把 HTML 当音频塞给播放器（那就是用户看到的"内容与标题不符"）。
+            if (!isLikelyAudio(url)) {
+                return null;
             }
-            return url.isEmpty() ? null : url;
+            return url;
         }
+    }
+
+    /**
+     * ★ v3.7.11：判断一个 URL 是否"看起来就是音频文件"。
+     *
+     * <p>用于区分"真直链"和"章节页地址"。取链失败时源常把页面 URL 原样返回，
+     * 若不加甄别地当音频用，播放器会把 HTML 当媒体流播放，
+     * 表现就是"点第 3 集，播出来的却是别的东西 / 直接放不出"。
+     *
+     * <p>判定规则（宁可放行交给播放器 sniff，也不要误判成音频）：
+     * <ul>
+     *   <li>去掉 query / fragment 后，路径以常见音频扩展名结尾 → 是；</li>
+     *   <li>明确是 .html / .htm / .php / .asp / .jsp / .shtml 页面 → 不是；</li>
+     *   <li>其余（无扩展名、接口地址等）→ 交回播放器 sniff，按"可能"放行。</li>
+     * </ul>
+     */
+    static boolean isLikelyAudio(String url) {
+        if (url == null) return false;
+        String u = url.trim();
+        if (u.isEmpty()) return false;
+        if (!u.startsWith("http")) return false;
+        // 去 query / fragment
+        int q = u.indexOf('?');
+        if (q >= 0) u = u.substring(0, q);
+        int h = u.indexOf('#');
+        if (h >= 0) u = u.substring(0, h);
+        String lower = u.toLowerCase(java.util.Locale.ROOT);
+        // 明确的页面后缀 → 一定不是音频
+        String[] pageExt = {".html", ".htm", ".php", ".asp", ".aspx", ".jsp",
+                ".jspx", ".shtml", ".do", ".action", ".css", ".js", ".json"};
+        for (String e : pageExt) if (lower.endsWith(e)) return false;
+        // 明确的音频后缀 → 是
+        String[] audioExt = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg",
+                ".opus", ".m4b", ".m3u8", ".mp4", ".wma", ".ape", ".amr", ".ts", ".webm"};
+        for (String e : audioExt) if (lower.endsWith(e)) return true;
+        // 没有可辨识后缀：接口型地址，交给播放器 sniff（按"可能"处理）
+        return true;
     }
 
     @Override
@@ -242,7 +293,12 @@ public class PySourceAdapter implements BrowsableSource {
         // vod_play_url: "名称$地址#名称$地址#..."
         String play = o.optString("vod_play_url", "");
         if (play == null || play.isEmpty()) play = o.optString("play_url", "");
-        List<Chapter> chs = parsePlayUrl(play);
+        // ★ v3.7.11：取第一条播放线名（vod_play_from 用 $$$ 分隔），回传给 playerContent。
+        //   以前这个值被完全丢弃，多线路源取链时会拿错线路。
+        String from = o.optString("vod_play_from", "");
+        if (from == null || from.isEmpty()) from = o.optString("play_from", "");
+        String firstFlag = firstSegment(from, "$$$");
+        List<Chapter> chs = parsePlayUrl(play, firstFlag);
         d.chapters = chs;
         d.total = chs.size();
         if (d.total > 0) {
@@ -253,31 +309,63 @@ public class PySourceAdapter implements BrowsableSource {
         return d;
     }
 
-    /** 解析 TVBox 的 vod_play_url 串 */
+    /** ★ v3.7.11：取按 sep 切分后的第一段（去空白） */
+    private static String firstSegment(String s, String sep) {
+        if (s == null) return "";
+        int i = s.indexOf(sep);
+        String v = (i >= 0 ? s.substring(0, i) : s);
+        return v == null ? "" : v.trim();
+    }
+
+    /**
+     * 解析 TVBox 的 vod_play_url 串。
+     *
+     * <p>★ v3.7.11 修复：原来只做 {@code play.split("#")}，一旦章节地址自身含
+     * {@code #}（前端路由 / 锚点，如 {@code /a/1.html#/p1}）就会被切碎，
+     * 切出来的碎片会被当成"新的章节"，于是章节数变多、标题与地址错位 ——
+     * 用户看到的就是"标题对不上内容"。
+     *
+     * <p>现在改为按 {@code 名称$地址} 成对解析：以 {@code #} 为分隔时，
+     * 若某段里**不含** {@code $}，说明它是上一段地址被切断的尾巴，
+     * 把它接回上一项，而不是当成新章节。
+     *
+     * @param play 播放串；多播放线用 {@code $$$} 分隔，这里只取第一条
+     * @param flag 该播放线的名字（vod_play_from），写入每章供 playerContent 用
+     */
     static List<Chapter> parsePlayUrl(String play) {
+        return parsePlayUrl(play, "");
+    }
+
+    static List<Chapter> parsePlayUrl(String play, String flag) {
         List<Chapter> out = new ArrayList<Chapter>();
         if (play == null || play.isEmpty()) return out;
         // 多播放源用 $$$ 分隔，取第一个
         int multi = play.indexOf("$$$");
         if (multi > 0) play = play.substring(0, multi);
+
         String[] items = play.split("#");
         int idx = 1;
         for (String it : items) {
             if (it == null || it.isEmpty()) continue;
-            String title;
-            String url;
+            // ★ 判断"成对"依据是这一段里有没有 $：
+            //   没有 $ 的段 = 上一段地址被 # 截断的续片 → 接回上一项
             int d = it.indexOf('$');
-            if (d >= 0) {
-                title = it.substring(0, d);
-                url = it.substring(d + 1);
-            } else {
-                title = "第" + idx + "集";
-                url = it;
+            if (d < 0) {
+                if (!out.isEmpty()) {
+                    Chapter prev = out.get(out.size() - 1);
+                    prev.url = prev.url + "#" + it;
+                }
+                continue;
             }
+            String title = it.substring(0, d);
+            String url = it.substring(d + 1);
             if (url == null || url.isEmpty()) continue;
-            Chapter c = new Chapter(idx, title == null || title.isEmpty()
-                    ? ("第" + idx + "集") : title, url);
-            if (url.startsWith("http")) {
+            String t = (title == null || title.isEmpty()) ? ("第" + idx + "集") : title;
+            Chapter c = new Chapter(idx, t, url);
+            c.flag = flag == null ? "" : flag;
+            // ★ v3.7.11：只有当它**确实是音频文件**时才填 directUrl，
+            //   章节页 URL 不再被误当成直链（见 audioUrl 里的说明）。
+            if (isLikelyAudio(url)) {
                 c.directUrl = url;
             }
             out.add(c);

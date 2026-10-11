@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.tingshu.app"
-    android:versionCode="37"
-    android:versionName="3.7.10">
+    android:versionCode="38"
+    android:versionName="3.7.11">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
 
@@ -62,5 +62,20 @@
                 <action android:name="android.media.browse.MediaBrowserService"/>
             </intent-filter>
         </service>
+
+        <!-- ★ v3.7.11：桌面播放控制小组件。
+             通过 PlayerService 已有的控制 action 驱动播放，与通知栏、
+             系统 MediaSession（原子随身听 / 音乐控制中心）共用同一条通路。 -->
+        <receiver
+            android:name=".widget.PlayerWidgetProvider"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_player_info"/>
+        </receiver>
     </application>
 </manifest>
