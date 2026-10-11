@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<title>枫兮听书</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ==================== 启动页 ==================== -->
+<div id="splash">
+  <div class="splash-logo">🎧</div>
+  <div class="splash-name">枫兮听书</div>
+  <div class="splash-sub">好声音，慢慢听</div>
+  <div class="splash-bar"><i></i></div>
+</div>
+
+<!-- ==================== 首页（发现好书） ==================== -->
+<div id="pageHome" class="page">
+  <div class="nav">
+    <!-- 左：源选择下拉；中：软件名；右：搜索 -->
+    <div class="srcdd" id="homeSrcDD">
+      <div class="srcdd-btn" id="homeSrcBtn" onclick="App.ui.homeSrcToggle(event)">
+        <span id="homeSrcName">发现好书</span>
+        <span class="srcdd-caret">&#9662;</span>
+      </div>
+      <!-- 悬浮下拉：绝对定位挂在按钮正下方 -->
+      <div class="srcdd-pop hide" id="homeSrcPop">
+        <div class="srcdd-list" id="homeSrcList"></div>
+      </div>
+    </div>
+    <h1 class="nav-center">枫兮听书</h1>
+    <div class="btn nav-right" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div class="content" id="homeContentWrap">
+    <!-- 下拉刷新指示器：默认藏在内容上方，下拉时出现 -->
+    <div class="pull-refresh" id="pullRefresh">
+      <div class="pr-inner">
+        <div class="pr-spinner"></div>
+        <span class="pr-text" id="pullText">下拉刷新</span>
+      </div>
+    </div>
+    <div class="catirow">
+      <div id="discoverCats" class="chips"></div>
+    </div>
+    <!-- 当前分类的书籍列表（分类本身在上方 chips 里横向滑动切换）
+         ★ v3.7.7：这里原来也挂了 class="content" —— 但 .content 自带
+         flex:1 + overflow-y:auto + padding-bottom，套在外层 homeContentWrap
+         里面就成了"双层滚动容器"：内层高度塌成内容高度、还多叠一份底部留白，
+         导致「加载更多」后新卡插到按钮上方、用户停在原地看不到新内容。
+         现在内层只做普通块级容器，滚动统一交给外层。 -->
+    <div id="homeContent" style="padding-top:4px">
+      <div class="loading"><div class="spinner"></div>加载中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 搜索页 ==================== -->
+<div id="pageSearch" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">搜索</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="searchbar">
+    <input id="kw" type="search" placeholder="搜书名、作者或播音" autocomplete="off" enterkeyhint="search">
+    <button onclick="App.ui.doSearch()">搜索</button>
+  </div>
+  <div id="searchChips" class="chips schips hide"></div>
+  <div id="searchContent" class="content">
+    <div id="searchHist" class="histwrap"></div>
+    <div class="empty" id="searchEmpty"><div class="big">&#128218;</div>输入关键词开始搜索
+      <div style="font-size:12.5px;margin-top:8px">多源同时搜索，自动去重合并</div></div>
+    <div id="searchResult"></div>
+  </div>
+</div>
+
+<!-- ==================== 收藏页 ==================== -->
+<div id="pageFav" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.goTab('mine')">&#9776;</div>
+    <h1 class="nav-left">我的收藏</h1>
+    <div class="btn" onclick="App.ui.manageGroups()">&#9783;</div>
+  </div>
+  <div id="favContent" class="content"><div class="loading"><div class="spinner"></div>加载中…</div></div>
+</div>
+
+<!-- ==================== 历史页 ==================== -->
+<div id="pageHistory" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.goTab('mine')">&#9776;</div>
+    <h1 class="nav-left">收听历史</h1>
+    <div class="btn" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div id="historyContent" class="content"><div class="loading"><div class="spinner"></div>加载中…</div></div>
+</div>
+
+<!-- ==================== 我的（源管理 + 设置） ==================== -->
+<div id="pageMine" class="page hide">
+  <div class="nav">
+    <div class="btn ghost"></div>
+    <h1 class="nav-left">我的</h1>
+    <div class="btn" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div class="content">
+    <div class="chapter-hd"><span>账号</span></div>
+    <!-- 账号入口：先做占位与接口预留，后续接注册/登录服务 -->
+    <div class="entry-card" id="accountCard" onclick="App.ui.openAccount()">
+      <div class="eicon" id="accIcon">&#128100;</div>
+      <div class="einfo">
+        <div class="et" id="accTitle">未登录</div>
+        <div class="es" id="accSub">登录后可同步书源、收藏与收听进度</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <div class="chapter-hd"><span>书源</span></div>
+    <div class="entry-card" onclick="App.ui.openSources()">
+      <div class="eicon">&#128218;</div>
+      <div class="einfo">
+        <div class="et">书源管理</div>
+        <div class="es" id="srcEntrySub">加载中…</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v2.5：播放 / 缓存 / 外观三组设置全部收进「设置」二级页 -->
+    <div class="chapter-hd"><span>偏好</span></div>
+    <div class="entry-card" onclick="App.ui.openSettings()">
+      <div class="eicon">&#9881;</div>
+      <div class="einfo">
+        <div class="et">设置</div>
+        <div class="es" id="setEntrySub">播放 / 缓存 / 外观</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openDlManage()">
+      <div class="setlabel">我的下载<span class="setdesc">查看 / 删除已下载的音频</span></div>
+      <div class="setval" id="dlEntryVal">&#8250;</div>
+    </div>
+
+    <div class="chapter-hd"><span>其它</span></div>
+    <!-- ★ v3.7.3：更新公告入口。只讲「修了什么 / 加了什么」，不写实现细节 -->
+    <div class="entry-card" onclick="App.ui.openChangelog()">
+      <div class="eicon">&#128226;</div>
+      <div class="einfo">
+        <div class="et">更新公告</div>
+        <div class="es" id="clEntrySub">查看本版修复与新增功能</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.shareApp()">
+      <div class="setlabel">推荐给朋友</div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <!-- 赞赏入口：完全自愿的赠与，不与任何功能解锁挂钩 -->
+    <div class="entry-card" onclick="App.ui.openReward()">
+      <div class="eicon">&#9749;</div>
+      <div class="einfo">
+        <div class="et">支持开发者</div>
+        <div class="es">纯自愿赞赏，不影响任何功能</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="entry-card" onclick="App.ui.openAbout()">
+      <div class="eicon">&#8505;</div>
+      <div class="einfo">
+        <div class="et">关于</div>
+        <div class="es" id="aboutEntrySub">版本 3.7.7 · 更新与交流</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="tabsafe"></div>
+  </div>
+</div>
+
+<!-- ==================== 设置（播放 / 缓存 / 外观，二级页） ==================== -->
+<div id="pageSettings" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">设置</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="chapter-hd"><span>播放设置</span></div>
+    <div class="setrow">
+      <div class="setlabel">默认倍速</div>
+      <div class="speed" id="speedList"></div>
+    </div>
+    <!-- ★ v3.1：音量增益（声音增幅/降幅）。50%~300%，100% 为原始音量 -->
+    <div class="setrow">
+      <div class="setlabel">音量增益<span class="setdesc">低于 100% 减弱、高于 100% 增强，用于前后集音量不匀</span></div>
+      <div class="speed" id="gainList"></div>
+    </div>
+    <!-- ★ v3.1：被微信语音等其他媒体打断时的处理策略 -->
+    <div class="setrow" onclick="App.ui.focusModeMenu()">
+      <div class="setlabel">其他声音打断<span class="setdesc">微信语音、其它播放器发声时的处理方式</span></div>
+      <div class="setval" id="focusModeVal">不处理</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">快进快退步长<span class="setdesc">单位：秒</span></div>
+      <select id="setFf" onchange="App.ui.setNumber('ff_seconds',this.value)">
+        <option>15</option><option>30</option><option>60</option>
+      </select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">仅 WiFi 下播放<span class="setdesc">移动网络不自动播放</span></div>
+      <label class="sw"><input id="setWifiPlay" type="checkbox"
+        onchange="App.ui.setBool('wifi_play_only',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">点开播放页自动播放<span class="setdesc">点悬浮球进全屏页时立刻开始播放</span></div>
+      <label class="sw"><input id="setPlayOnFull" type="checkbox"
+        onchange="App.ui.setBool('play_on_full',this.checked)"><i></i></label>
+    </div>
+    <!-- ★ v2.8 自绘悬浮球：可拖动、自动吸附屏幕边缘 -->
+    <div class="setrow">
+      <div class="setlabel">播放悬浮球<span class="setdesc">播放时可拖动的小圆球，点它回到播放页</span></div>
+      <label class="sw"><input id="setFloatBall" type="checkbox"
+        onchange="App.ui.toggleFloatBall(this.checked)"><i></i></label>
+    </div>
+
+    <!-- ★ v2.9：这一节只管「缓存」—— 播放时自动预读，只为播放顺畅。
+         用户主动保存文件请用「下载」（在章节列表里操作）。 -->
+    <div class="chapter-hd"><span>缓存（播放预读）</span></div>
+    <div class="setrow">
+      <div class="setlabel">播放时自动预读<span class="setdesc">听这集时顺手把后面几集取回来，切集不用等</span></div>
+      <label class="sw"><input id="setAutoCache" type="checkbox"
+        onchange="App.ui.setBool('auto_cache_enabled',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">预读集数</div>
+      <select id="setAutoCacheCount" onchange="App.ui.setNumber('auto_cache_count',this.value)">
+        <option>1</option><option>2</option><option>3</option><option>5</option><option>10</option>
+      </select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">仅 WiFi 下预读</div>
+      <label class="sw"><input id="setWifiCache" type="checkbox"
+        onchange="App.ui.setBool('wifi_cache_only',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">缓存上限<span class="setdesc">单位：MB，超出自动清理最旧的</span></div>
+      <select id="setCacheLimit" onchange="App.ui.setNumber('cache_limit_mb',this.value)">
+        <option>512</option><option>1024</option><option>2048</option>
+        <option>4096</option><option>8192</option>
+      </select>
+    </div>
+
+    <!-- ★ v2.9：下载节 —— 与缓存完全独立，不受缓存上限管理 -->
+    <div class="chapter-hd"><span>下载</span></div>
+    <div class="setrow">
+      <div class="setlabel">下载目录<span class="setdesc" id="dlDirDesc">仅 App 内（其它播放器看不到）</span></div>
+      <button class="btn-mini" onclick="App.ui.pickDlDir()">更改</button>
+    </div>
+    <div class="setrow" id="dlDirResetRow" style="display:none">
+      <div class="setlabel">恢复默认<span class="setdesc">清空自定义目录，之后下载只留在 App 内</span></div>
+      <button class="btn-mini" onclick="App.ui.clearDlDir()">恢复</button>
+    </div>
+    <div class="setrow" onclick="App.ui.openDlManage()">
+      <div class="setlabel">下载管理<span class="setdesc">查看已下载的内容 / 总占用</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v3.2：启动自动验证已移除（冷启动时跑十几个源会明显拖慢首屏）。
+         验证改为完全手动的「批量验证」，入口在书源管理页顶部。 -->
+
+    <div class="chapter-hd"><span>外观</span></div>
+    <div class="setrow">
+      <div class="setlabel">界面主题<span class="setdesc">夜间自动用深色配色</span></div>
+      <div class="seg" id="themeSeg">
+        <div class="seg-item" id="thSystem" onclick="App.ui.setTheme('system')">跟随系统</div>
+        <div class="seg-item" id="thLight" onclick="App.ui.setTheme('light')">白天</div>
+        <div class="seg-item" id="thDark" onclick="App.ui.setTheme('dark')">夜间</div>
+      </div>
+    </div>
+
+    <div class="tip">这些设置只保存在本机，换设备不会同步。</div>
+  </div>
+</div>
+
+<!-- ==================== 关于（二级页） ==================== -->
+<div id="pageAbout" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">关于</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="ab-hero">
+      <div class="ab-logo">&#127925;</div>
+      <div class="ab-name">枫兮听书</div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.7.8</span></div>
+    </div>
+
+    <div class="chapter-hd"><span>信息</span></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.8</div></div>
+    <div class="setrow" onclick="App.ui.openChangelog()">
+      <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow"><div class="setlabel">网络</div><div class="setval" id="netInfo">检测中…</div></div>
+    <div class="setrow"><div class="setlabel">数据存储</div><div class="setval">仅本机</div></div>
+
+    <!-- ★ v2.5：更新与反馈入口 —— 点一下复制群号并提示去 QQ 搜群 -->
+    <div class="chapter-hd"><span>更新与反馈</span></div>
+    <div class="upd-card">
+      <div class="upd-hd">
+        <span class="upd-ico">&#128227;</span>
+        <span class="upd-t">获取最新版本</span>
+      </div>
+      <div class="upd-bd">
+        新版本、书源、使用问题都在群里同步。加群后可在群文件里拿到最新包，
+        遇到问题也可以直接在群里问。
+      </div>
+      <div class="upd-qr">
+        <div class="upd-qr-l">
+          <div class="upd-qr-k">QQ 群号</div>
+          <div class="upd-qr-v" id="qqGroupNo">1129386208</div>
+        </div>
+        <button class="mini" onclick="App.ui.copyGroup()">复制群号</button>
+      </div>
+      <div class="upd-tip">复制后打开 QQ → 搜索 → 粘贴群号即可。</div>
+    </div>
+
+    <div class="tip">所有收藏、历史、缓存都只保存在本机，不联网上传、不需要账号。</div>
+  </div>
+</div>
+
+<!-- ==================== 更新公告（二级页） ★ v3.7.3 ==================== -->
+<div id="pageChangelog" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">更新公告</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <!-- 当前版本高亮卡：标题 + 日期 + 两栏（修复 / 新增） -->
+    <div class="cl-cur">
+      <div class="cl-cur-t">当前版本 <span id="clCurVer">3.7.3</span></div>
+      <div class="cl-cur-s">以下是本版修复的问题与新增的功能</div>
+    </div>
+    <div id="changelogBody" class="cl-body"></div>
+    <div class="tip" style="text-align:center">更早的更新记录可在文末展开查看。</div>
+  </div>
+</div>
+
+<!-- ==================== 支持开发者（赞赏，二级页） ==================== -->
+<div id="pageReward" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">支持开发者</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="rw-hero">
+      <div class="rw-ico">&#9749;</div>
+      <div class="rw-title">枫兮听书 · 纯自愿赞赏</div>
+      <div class="rw-sub">
+        这个 App 没有广告、没有会员、不收集任何数据。<br>
+        如果它帮你听完了想听的书，愿意的话可以请开发者喝杯咖啡。
+      </div>
+    </div>
+
+    <!-- 金额档位：点一下选中，仅作展示（扫码时用户自己输金额） -->
+    <div class="chapter-hd"><span>选择金额</span><span class="rt">仅作参考</span></div>
+    <div class="rw-amounts" id="rwAmounts"></div>
+
+    <!-- 收款码：长按识别 -->
+    <div class="chapter-hd"><span>扫码赞赏</span><span class="rt">长按图片识别</span></div>
+    <div class="rw-codes">
+      <div class="rw-code" id="rwWechat">
+        <div class="rw-code-img">
+          <img id="rwImgWx" src="" alt="微信赞赏码">
+        </div>
+        <div class="rw-code-name"><span class="rw-dot wx"></span>微信</div>
+      </div>
+      <div class="rw-code" id="rwAlipay">
+        <div class="rw-code-img">
+          <img id="rwImgAli" src="" alt="支付宝收款码">
+        </div>
+        <div class="rw-code-name"><span class="rw-dot ali"></span>支付宝</div>
+      </div>
+    </div>
+
+    <!-- 说明：这一段很重要 —— 明确"自愿赠与"，且不与功能挂钩 -->
+    <div class="rw-note">
+      <div class="rw-note-hd">说明</div>
+      <div class="rw-note-bd">
+        · 赞赏完全出于自愿，<b>不购买任何功能、不解除任何限制</b>；<br>
+        · 所有功能本来就全部可用，赞赏前后没有任何区别；<br>
+        · 赞赏属于对工具本身的赠与，与任何内容方无关；<br>
+        · 未成年人请在监护人同意下操作。
+      </div>
+    </div>
+
+    <div class="tip" style="text-align:center">感谢每一份支持 🙏</div>
+  </div>
+</div>
+
+<!-- ==================== 书源管理（二级页） ==================== -->
+<div id="pageSources" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">书源管理</h1>
+    <div class="btn nav-right" onclick="App.ui.importMenu()" title="导入书源">
+      <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    </div>
+  </div>
+  <div id="sourcesPageContent" class="content">
+    <div class="loading"><div class="spinner"></div>加载中…</div>
+  </div>
+</div>
+
+<!-- ==================== 源分组详情页（二级） ==================== -->
+<div id="pageSrcGroup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="srcGroupTitle" class="nav-left">源分组</h1>
+    <!-- ★ v3.7.6：「全部开启 / 全部关闭」从分组标题行移到橙色顶栏右侧 -->
+    <div class="btn ghost srcnav-acts" id="srcGroupNavActs"></div>
+  </div>
+  <div id="srcGroupContent" class="content"></div>
+</div>
+
+<!-- ==================== 详情页 ==================== -->
+<div id="pageDetail" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="detailTitle" class="nav-left">详情</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="detailContent" class="content"></div>
+</div>
+
+<!-- ==================== 分组管理页 ==================== -->
+<div id="pageGroup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">分组管理</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="groupContent" class="content"></div>
+</div>
+
+<!-- ==================== 发现页 ==================== -->
+<div id="pageDiscover" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">发现好书</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div id="discoverCats" class="chips"></div>
+    <div id="discoverList" class="content" style="padding-top:4px"></div>
+  </div>
+</div>
+
+<!-- ==================== 缓存管理页 ==================== -->
+<div id="pageCache" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">离线缓存</h1>
+    <div class="btn" onclick="App.ui.clearCache()">清空</div>
+  </div>
+  <div id="cacheContent" class="content"></div>
+</div>
+
+<!-- ==================== ★ v2.9 下载管理页 ==================== -->
+<div id="pageDlManage" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">我的下载</h1>
+  </div>
+  <div id="dlManageBody" class="content"></div>
+</div>
+
+<!-- ==================== 全屏播放页 ==================== -->
+<!-- 背景层：取封面同图放大 + 重高斯模糊垫底，再叠一层主题色渐变，
+     形成"背景自动吸取封面虚化填充"的效果。 -->
+<div id="pageFull" class="page full hide">
+  <div class="fbg" aria-hidden="true">
+    <img id="fbgImg" class="fbg-blur" src="" alt="">
+    <div class="fbg-tint" id="fbgTint"></div>
+  </div>
+
+  <div class="fnav">
+    <div class="btn" onclick="App.ui.back()">&#8964;</div>
+    <div class="ftitle" id="fullTitle">播放中</div>
+    <!-- 右上角：书源名称 + 收藏。★ v3.7.7：两者包进 .fnav-right 一簇，
+         整簇右对齐，中间留固定小间距（原来书源名浮动在标题和收藏之间，
+         间距忽大忽小、看着像三块散件）。 -->
+    <div class="fnav-right">
+      <div class="fsrc-tag" id="fullSourceTag"></div>
+      <div class="btn favbtn" onclick="App.ui.toggleFavCurrent()" id="fullFav">&#9734;</div>
+    </div>
+  </div>
+  <div class="fbody">
+    <div class="ftop">
+      <!-- 圆形唱片封面：播放时旋转，暂停时停住（见 style.css .fdisc.playing）。
+           注意：这里不能有任何门板/底色/内阴影，否则封面会被"蒙一层白"。 -->
+      <div class="fcover-wrap">
+        <div class="fdisc" id="fDisc">
+          <img id="fullCover" class="fcover" src="" alt=""
+               onerror="this.classList.add('fail')">
+        </div>
+      </div>
+
+      <!-- 书籍信息区：整体左对齐（.finfo）。
+           第一行 = 书名；第二行 = 集数「(N/M)」+ 主播名（★ v3.7.6 去汉字改纯数字括号）。 -->
+      <div class="finfo">
+        <div class="fbook" id="fullBook" data-mq></div>
+        <div class="fmeta">
+          <span class="fep" id="fullEp"></span>
+          <span class="fartist" id="fullArtist"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="fbottom">
+      <!-- 功能按钮：上调到进度条上方，按使用频率排序 -->
+      <div class="fops">
+        <div class="fop" onclick="App.ui.openChapterList()">&#9783; 选集</div>
+        <div class="fop" onclick="App.ui.sleepMenu()" id="sleepBtn">&#9201; 定时</div>
+        <div class="fop" id="moreToggle" onclick="App.ui.moreMenu()">&#8943; 更多</div>
+      </div>
+
+      <!-- 倍速面板：默认折叠，点「更多 → 倍速」展开 -->
+      <div class="speed-collapse hide" id="speedPanel">
+        <div class="speed" id="fullSpeed"></div>
+      </div>
+
+      <!-- ★ v3.1 音量增益面板：与倍速面板互斥展开 -->
+      <div class="speed-collapse hide" id="gainPanel">
+        <div class="speed" id="fullGain"></div>
+      </div>
+
+      <!-- 进度条 -->
+      <div class="fbar-wrap">
+        <div class="bar" id="fbar">
+          <div class="fill" id="fFill"></div>
+          <div class="knob"></div>
+        </div>
+        <div class="ftimes">
+          <span id="fCur" class="ftime-cur">00:00</span>
+          <span id="fDur">00:00</span>
+        </div>
+      </div>
+
+      <!-- 播放控制：尺寸与厚度见 style.css .fctrl .pbtn -->
+      <div class="fctrl">
+        <div class="pbtn" onclick="App.ui.prev()">
+          <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </div>
+        <div class="pbtn sm" onclick="App.ui.jump(-30)">
+          <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+        </div>
+        <!-- 主按钮：外圈那条会转的弧线 = 取链/缓冲中的加载动画 -->
+        <div class="pbtn main" id="fPlayBtn" onclick="App.ui.toggle()">
+          <svg class="spin" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="spin-track" cx="50" cy="50" r="47"></circle>
+            <circle class="spin-arc" cx="50" cy="50" r="47"></circle>
+          </svg>
+          <svg id="fPlayIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="pbtn sm" onclick="App.ui.jump(30)">
+          <svg viewBox="0 0 24 24"><path d="M13 6v12l8.5-6L13 6zM4 18l8.5-6L4 6v12z"/></svg>
+        </div>
+        <div class="pbtn" onclick="App.ui.next()">
+          <svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 播放悬浮球（右下角） ==================== -->
+<div id="player" class="player show empty" onclick="App.ui.tapBall()">
+  <svg class="pfab-ring" viewBox="0 0 100 100" aria-hidden="true">
+    <circle class="ring-bg" cx="50" cy="50" r="46"></circle>
+    <circle class="ring-fg" id="ballRing" cx="50" cy="50" r="46"></circle>
+  </svg>
+  <img id="pCover" class="pcover" src="" alt="">
+  <div class="pfab-icon" id="pFabIcon">
+    <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+  </div>
+  <!-- 供无障碍 / 长按提示用的隐藏信息，不参与视觉 -->
+  <span class="sr-only" id="pTitle">未播放</span>
+  <span class="sr-only" id="pSrc"></span>
+</div>
+
+<!-- ==================== 底部导航 ==================== -->
+<div id="tabbar" class="tabbar hide">
+  <div class="tabitem on" data-tab="home">
+    <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+    <span>发现</span>
+  </div>
+  <div class="tabitem" data-tab="fav">
+    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+    <span>收藏</span>
+  </div>
+  <div class="tabitem" data-tab="history">
+    <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 111.7 4.56l-1.42 1.42A9 9 0 1013 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+    <span>历史</span>
+  </div>
+  <div class="tabitem" data-tab="mine">
+    <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+    <span>我的</span>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

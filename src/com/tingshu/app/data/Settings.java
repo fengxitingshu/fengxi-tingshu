@@ -1,0 +1,369 @@
+package com.tingshu.app.data;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+/**
+ * 所有标量配置的集中入口。文件名 settings。
+ * 全部是简单键值，用 SharedPreferences 就够，不进 SQLite。
+ */
+public final class Settings {
+
+    private static SharedPreferences SP;
+    private static Context CTX;
+
+    private Settings() {}
+
+    public static void init(Context c) {
+        CTX = c.getApplicationContext();
+        SP = CTX.getSharedPreferences("settings", Context.MODE_PRIVATE);
+    }
+
+    public static SharedPreferences sp() {
+        return SP;
+    }
+
+    public static Context ctx() {
+        return CTX;
+    }
+
+    // ---------- 播放 ----------
+
+    /** 全局默认倍速 */
+    public static float speed() {
+        return SP.getFloat("speed_global", 1.0f);
+    }
+
+    public static void setSpeed(float v) {
+        SP.edit().putFloat("speed_global", v).apply();
+    }
+
+    /** 快进快退步长（秒） */
+    public static int ffSeconds() {
+        return SP.getInt("ff_seconds", 30);
+    }
+
+    public static void setFfSeconds(int v) {
+        SP.edit().putInt("ff_seconds", v).apply();
+    }
+
+    /** 播放时自动倒回毫秒（防走神），0 = 关 */
+    public static int rewindOnPlayMs() {
+        return SP.getInt("rewind_on_play_ms", 0);
+    }
+
+    public static void setRewindOnPlayMs(int v) {
+        SP.edit().putInt("rewind_on_play_ms", v).apply();
+    }
+
+    /** 播放模式 0顺序 1单集循环 2列表循环 3随机 */
+    public static int playMode() {
+        return SP.getInt("play_mode", 0);
+    }
+
+    public static void setPlayMode(int v) {
+        SP.edit().putInt("play_mode", v).apply();
+    }
+
+    // ---------- ★ v3.1 音量增益 ----------
+
+    /**
+     * 音量增益百分比：100 = 原始音量（默认），范围 50~300。
+     *
+     * <p>100 以下靠 MediaPlayer 音量衰减，100 以上靠 LoudnessEnhancer 响度增强。
+     * 见 {@code PlayerCore.applyGainInternal}。
+     */
+    public static int gain() {
+        int v = SP.getInt("gain_pct", 100);
+        if (v < 50) return 50;
+        if (v > 300) return 300;
+        return v;
+    }
+
+    public static void setGain(int v) {
+        if (v < 50) v = 50;
+        if (v > 300) v = 300;
+        SP.edit().putInt("gain_pct", v).apply();
+    }
+
+    // ---------- ★ v3.1 音频焦点（其他媒体声音打断） ----------
+
+    /**
+     * 被其他应用（微信语音等）抢占音频时的策略：
+     * <ul>
+     *   <li>0 = 不处理（默认）。**也不申请音频焦点**，听书不会被任何东西打断</li>
+     *   <li>1 = 降低音量（Duck）：对方发声时把音量压到 20%，结束后恢复</li>
+     *   <li>2 = 暂停播放：对方发声时暂停，结束后自动续播</li>
+     * </ul>
+     */
+    public static int audioFocusMode() {
+        int v = SP.getInt("audio_focus_mode", 0);
+        if (v < 0) return 0;
+        if (v > 2) return 2;
+        return v;
+    }
+
+    public static void setAudioFocusMode(int v) {
+        if (v < 0) v = 0;
+        if (v > 2) v = 2;
+        SP.edit().putInt("audio_focus_mode", v).apply();
+    }
+
+    // ---------- ★ v3.1 书源验证 ----------
+    //
+    // ★ v3.2：「启动后自动验证」开关已移除 —— 冷启动时跑十几个源的真实网络请求
+    //   会把首屏拖到十几秒，用户观感就是「一打开就卡」。
+    //   验证改为完全手动（书源管理页的「批量验证」），这里只保留结果摘要。
+
+    /** 上次验证的结果摘要（一行字），源管理页顶部展示；空串表示还没跑过 */
+    public static String lastVerifySummary() {
+        return SP.getString("last_verify_summary", "");
+    }
+
+    public static void setLastVerifySummary(String v) {
+        SP.edit().putString("last_verify_summary", v == null ? "" : v).apply();
+    }
+
+    /** 仅 WiFi 播放 */
+    public static boolean wifiPlayOnly() {
+        return SP.getBoolean("wifi_play_only", false);
+    }
+
+    public static void setWifiPlayOnly(boolean v) {
+        SP.edit().putBoolean("wifi_play_only", v).apply();
+    }
+
+    /** 点悬浮球进全屏播放页时，是否立刻开始播放（默认开） */
+    public static boolean playOnFull() {
+        return SP.getBoolean("play_on_full", true);
+    }
+
+    public static void setPlayOnFull(boolean v) {
+        SP.edit().putBoolean("play_on_full", v).apply();
+    }
+
+    // ==================== ★ v2.8 悬浮球 ====================
+
+    /** 悬浮球开关（默认关，需用户主动开启并授予悬浮窗权限） */
+    public static boolean floatBallEnabled() {
+        return SP.getBoolean("float_ball", false);
+    }
+
+    public static void setFloatBallEnabled(boolean v) {
+        SP.edit().putBoolean("float_ball", v).apply();
+    }
+
+    /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
+    public static int floatBallX() {
+        return SP.getInt("float_ball_x", -1);
+    }
+
+    public static void setFloatBallX(int v) {
+        SP.edit().putInt("float_ball_x", v).apply();
+    }
+
+    /** 悬浮球 Y 坐标（px） */
+    public static int floatBallY() {
+        return SP.getInt("float_ball_y", -1);
+    }
+
+    public static void setFloatBallY(int v) {
+        SP.edit().putInt("float_ball_y", v).apply();
+    }
+
+    // ==================== ★ v2.9 下载目录（SAF） ====================
+
+    /**
+     * 下载要「移动」到的外部文件夹（SAF 目录树 URI）。
+     * 空字符串 = 只保留在 App 私有目录（其它播放器看不到）。
+     */
+    public static String downloadTreeUri() {
+        return SP.getString("download_tree_uri", "");
+    }
+
+    public static void setDownloadTreeUri(String v) {
+        SP.edit().putString("download_tree_uri", v == null ? "" : v).apply();
+    }
+
+    /** 该目录的展示名（如「Music」），仅用于设置页显示 */
+    public static String downloadTreeName() {
+        return SP.getString("download_tree_name", "");
+    }
+
+    public static void setDownloadTreeName(String v) {
+        SP.edit().putString("download_tree_name", v == null ? "" : v).apply();
+    }
+
+    /** 是否配了外部下载目录 */
+    public static boolean hasDownloadTree() {
+        String s = downloadTreeUri();
+        return s != null && s.length() > 0;
+    }
+
+    /** 定时关闭：分钟数，0 = 关 */
+    public static int sleepMinutes() {
+        return SP.getInt("sleep_minutes", 0);
+    }
+
+    public static void setSleepMinutes(int v) {
+        SP.edit().putInt("sleep_minutes", v).apply();
+    }
+
+    /** 定时到点后完全退出 App */
+    public static boolean exitOnTimer() {
+        return SP.getBoolean("exit_on_timer", false);
+    }
+
+    public static void setExitOnTimer(boolean v) {
+        SP.edit().putBoolean("exit_on_timer", v).apply();
+    }
+
+    /** 听 N 集后暂停，0 = 关 */
+    public static int pauseAfterChapters() {
+        return SP.getInt("pause_after_chapters", 0);
+    }
+
+    public static void setPauseAfterChapters(int v) {
+        SP.edit().putInt("pause_after_chapters", v).apply();
+    }
+
+    // ---------- 缓存 ----------
+
+    public static boolean autoCacheEnabled() {
+        return SP.getBoolean("auto_cache_enabled", true);
+    }
+
+    public static void setAutoCacheEnabled(boolean v) {
+        SP.edit().putBoolean("auto_cache_enabled", v).apply();
+    }
+
+    /** 自动缓存后 N 集 */
+    public static int autoCacheCount() {
+        return SP.getInt("auto_cache_count", 3);
+    }
+
+    public static void setAutoCacheCount(int v) {
+        SP.edit().putInt("auto_cache_count", v).apply();
+    }
+
+    public static boolean wifiCacheOnly() {
+        return SP.getBoolean("wifi_cache_only", false);
+    }
+
+    public static void setWifiCacheOnly(boolean v) {
+        SP.edit().putBoolean("wifi_cache_only", v).apply();
+    }
+
+    /** 缓存上限 MB */
+    public static int cacheLimitMb() {
+        return SP.getInt("cache_limit_mb", 2048);
+    }
+
+    public static void setCacheLimitMb(int v) {
+        SP.edit().putInt("cache_limit_mb", v).apply();
+    }
+
+    // ---------- 界面 ----------
+
+    /** system / light / dark */
+    public static String theme() {
+        return SP.getString("theme", "system");
+    }
+
+    public static void setTheme(String v) {
+        SP.edit().putString("theme", v).apply();
+    }
+
+    public static String themeColor() {
+        return SP.getString("theme_color", "#E8503A");
+    }
+
+    public static void setThemeColor(String v) {
+        SP.edit().putString("theme_color", v).apply();
+    }
+
+    // ---------- 源 ----------
+
+    public static String lastSource() {
+        return SP.getString("last_source", "");
+    }
+
+    public static void setLastSource(String v) {
+        SP.edit().putString("last_source", v).apply();
+    }
+
+    /** 精确搜索时选中的源 id，逗号分隔；空 = 全部 */
+    public static String searchSources() {
+        return SP.getString("search_sources", "");
+    }
+
+    public static void setSearchSources(String v) {
+        SP.edit().putString("search_sources", v).apply();
+    }
+
+    /** 忽略的版本号（自更新用） */
+    public static String ignoreVersion() {
+        return SP.getString("ignore_version", "");
+    }
+
+    public static void setIgnoreVersion(String v) {
+        SP.edit().putString("ignore_version", v).apply();
+    }
+
+    // ---------- 前端统一写入入口（白名单） ----------
+
+    /**
+     * 按 key 写设置。白名单制：未知 key 直接忽略，避免前端乱写。
+     * 值统一是字符串（JS 只有 number/boolean，都转成字符串传）。
+     */
+    public static void apply(String key, String value) {
+        if (key == null) return;
+        // boolean 类
+        if ("wifi_play_only".equals(key)) { setWifiPlayOnly(b(value)); return; }
+        if ("play_on_full".equals(key)) { setPlayOnFull(b(value)); return; }
+        if ("wifi_cache_only".equals(key)) { setWifiCacheOnly(b(value)); return; }
+        if ("auto_cache_enabled".equals(key)) { setAutoCacheEnabled(b(value)); return; }
+        if ("exit_on_timer".equals(key)) { setExitOnTimer(b(value)); return; }
+        if ("float_ball".equals(key)) { setFloatBallEnabled(b(value)); return; }
+        if ("download_tree".equals(key)) { setDownloadTreeUri(value); return; }
+        // int 类
+        if ("ff_seconds".equals(key)) { setFfSeconds(i(value, 30)); return; }
+        if ("auto_cache_count".equals(key)) { setAutoCacheCount(i(value, 3)); return; }
+        if ("cache_limit_mb".equals(key)) { setCacheLimitMb(i(value, 2048)); return; }
+        if ("play_mode".equals(key)) { setPlayMode(i(value, 0)); return; }
+        if ("pause_after_chapters".equals(key)) { setPauseAfterChapters(i(value, 0)); return; }
+        if ("sleep_minutes".equals(key)) { setSleepMinutes(i(value, 0)); return; }
+        if ("rewind_on_play_ms".equals(key)) { setRewindOnPlayMs(i(value, 0)); return; }
+        // ★ v3.1：音量增益（50~300）与其他声音打断策略（0/1/2）
+        if ("gain_pct".equals(key)) { setGain(i(value, 100)); return; }
+        if ("audio_focus_mode".equals(key)) { setAudioFocusMode(i(value, 0)); return; }
+        // float 类
+        if ("speed_global".equals(key)) { setSpeed(f(value, 1.0f)); return; }
+        // string 类
+        if ("theme".equals(key)) { setTheme(value); return; }
+        if ("theme_color".equals(key)) { setThemeColor(value); return; }
+        if ("last_source".equals(key)) { setLastSource(value); return; }
+        if ("search_sources".equals(key)) { setSearchSources(value); return; }
+        // 未知 key：忽略
+    }
+
+    private static boolean b(String v) {
+        return v != null && ("true".equalsIgnoreCase(v) || "1".equals(v));
+    }
+
+    private static int i(String v, int def) {
+        try {
+            return Integer.parseInt(v);
+        } catch (Throwable t) {
+            return def;
+        }
+    }
+
+    private static float f(String v, float def) {
+        try {
+            return Float.parseFloat(v);
+        } catch (Throwable t) {
+            return def;
+        }
+    }
+}

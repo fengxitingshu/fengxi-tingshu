@@ -1,0 +1,19 @@
+# ★ 签名密钥 —— 绝对不能入库（泄露 = 别人能签出同源应用）
+*.keystore
+*.jks
+*.idsig
+
+# 构建中间产物
+out/
+*.apk
+!apk/*.apk
+.mapping
+mapping.txt
+
+# 验证/预览工作区
+uiprev/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
