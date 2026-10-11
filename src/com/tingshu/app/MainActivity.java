@@ -515,6 +515,11 @@ public class MainActivity extends Activity
             }
             com.tingshu.app.source.Aggregator.preloadNext(book, nextHuman, null);
         } catch (Throwable ignored) {}
+        // ★ v3.7.14：切书 / 切集时立刻把新书名、集号、封面推给桌面小组件。
+        //   原来只在 onStateChanged（播放/暂停）里同步 —— 上一集自然播完
+        //   自动跳下一集时 playing 没变（一直是 true），onStateChanged 不触发，
+        //   小组件就一直停在上集的信息上。
+        syncWidget();
     }
 
     @Override
@@ -526,6 +531,31 @@ public class MainActivity extends Activity
         syncFloatBall(playing);
         // ★ v3.7.11：桌面小组件跟随播放状态
         syncWidget();
+    }
+
+    /**
+     * ★ v3.7.14：注册「封面已下载好」的回调。
+     *
+     * <p>封面是异步下载的（PlayerService.loadCover 起线程），而第一次
+     * syncWidget() 发生在 onStateChanged，那时封面通常还没回来 →
+     * 小组件快照里的 cover 是 null，于是一直显示占位音符。
+     * 这里挂上回调：封面到位后立刻补一次同步，小组件马上就有图了。
+     */
+    private void bindCoverListener() {
+        try {
+            com.tingshu.app.player.PlayerService svc = PlayerService.get();
+            if (svc == null) return;
+            svc.setCoverListener(new com.tingshu.app.player.PlayerService.CoverListener() {
+                @Override
+                public void onCoverReady(android.graphics.Bitmap bmp) {
+                    if (bmp == null) return;
+                    try {
+                        com.tingshu.app.player.WidgetState.cover = bmp;
+                        com.tingshu.app.player.WidgetState.requestUpdate(MainActivity.this);
+                    } catch (Throwable ignored) {}
+                }
+            });
+        } catch (Throwable ignored) {}
     }
 
     /**
@@ -1151,6 +1181,10 @@ public class MainActivity extends Activity
         super.onStart();
         // 回到前台时补挂一次服务回调（服务可能被系统重启过）
         PlayerService.bindCtl(this);
+        // ★ v3.7.14：封面到位回调也要跟着补挂（服务重启后 listener 会丢）
+        bindCoverListener();
+        // 顺带把当前状态再推一次，避免小组件停在旧信息
+        syncWidget();
     }
 
     @Override

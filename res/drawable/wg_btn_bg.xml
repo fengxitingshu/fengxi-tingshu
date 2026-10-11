@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.7.14 小组件控制按钮的玻璃底。
+
+  三个按钮（上一集 / 播放暂停 / 下一集）原来没有背景，白色图标直接浮在
+  橙色面板上；换成半透明玻璃面板后，图标需要一个"小玻璃片"垫着才看得清，
+  也更接近 OriginOS 的控件观感。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#26FFFFFF"/>
+    <stroke android:width="1dp" android:color="#33FFFFFF"/>
+    <corners android:radius="14dp"/>
+</shape>

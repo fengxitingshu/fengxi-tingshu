@@ -1,14 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ★ v3.7.11 桌面播放控制小组件布局。
+  ★ v3.7.14 桌面播放控制小组件布局。
 
-  约束：RemoteViews 只支持有限的控件集合 —— LinearLayout / FrameLayout /
+  RemoteViews 只支持有限的控件集合 —— LinearLayout / FrameLayout /
   RelativeLayout / ImageView / TextView / ProgressBar / Button 等，
   不能用 ConstraintLayout、不能用自定义 View、不能用 <include>。
   所以这里全部用 LinearLayout + FrameLayout 拼出来。
 
   另一条硬约束：ProgressBar 的 progressTint 在 API 21 上不支持，
   所以进度条用系统默认样式 + 自定义 drawable 背景来代替换色。
+
+  ★ v3.7.14 三处关键改动：
+   1) 整块面板不再拦截点击 —— wgRoot 上不再挂"打开 App"的 PendingIntent，
+      否则它会把三个按钮的点击全吞掉（用户反馈的"点击直接回软件、不能控制"）。
+      现在只有 wgCoverTap / wgInfoTap 这两块可点开 App。
+   2) 封面从 48x64dp 放大到 56x76dp，配合半透明底，在浅色壁纸上也不糊。
+   3) 书名/副标题加 marquee 跑马灯：RemoteViews 里要让 TextView 真的滚动，
+      必须同时在 XML 里设 ellipsize="marquee" + singleLine，并在代码里
+      调 setSelected(true)。所以这里 id 保持 wgTitle / wgSub 不变，
+      由 Provider 负责 setSelected。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/wgRoot"
@@ -26,11 +36,12 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <!-- 封面 -->
+        <!-- 封面（点这里打开 App） -->
         <FrameLayout
-            android:layout_width="48dp"
-            android:layout_height="64dp"
-            android:layout_marginRight="10dp">
+            android:id="@+id/wgCoverTap"
+            android:layout_width="56dp"
+            android:layout_height="76dp"
+            android:layout_marginRight="11dp">
 
             <ImageView
                 android:id="@+id/wgCover"
@@ -49,26 +60,36 @@
                 android:gravity="center"
                 android:text="♪"
                 android:textColor="#FFFFFF"
-                android:textSize="24sp"
+                android:textSize="26sp"
                 android:visibility="gone"/>
         </FrameLayout>
 
-        <!-- 书名 + 副标题 -->
+        <!-- 书名 + 副标题（点这里打开 App） -->
         <LinearLayout
+            android:id="@+id/wgInfoTap"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical">
 
+            <!-- ★ 跑马灯：singleLine + ellipsize=marquee，代码里 setSelected(true) -->
             <TextView
                 android:id="@+id/wgTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:singleLine="true"
-                android:ellipsize="end"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:scrollHorizontally="true"
                 android:textColor="#FFFFFF"
-                android:textSize="14sp"
+                android:textSize="14.5sp"
                 android:textStyle="bold"
+                android:shadowColor="#80000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
                 android:text="@string/app_name"/>
 
             <TextView
@@ -77,9 +98,17 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
                 android:singleLine="true"
-                android:ellipsize="end"
-                android:textColor="#E8E8E8"
-                android:textSize="11.5sp"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:scrollHorizontally="true"
+                android:textColor="#F2F2F2"
+                android:textSize="12sp"
+                android:shadowColor="#80000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
                 android:text="@string/wg_idle"/>
 
             <TextView
@@ -88,8 +117,12 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:singleLine="true"
-                android:textColor="#CFCFCF"
-                android:textSize="10.5sp"/>
+                android:textColor="#DCDCDC"
+                android:textSize="10.5sp"
+                android:shadowColor="#80000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"/>
         </LinearLayout>
     </LinearLayout>
 
@@ -104,7 +137,7 @@
         android:progress="0"
         android:progressDrawable="@drawable/wg_progress"/>
 
-    <!-- 下半：三键控制 -->
+    <!-- 下半：三键控制（各自持有独立的 PendingIntent） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="40dp"
@@ -120,6 +153,7 @@
             android:padding="7dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_media_previous"
+            android:background="@drawable/wg_btn_bg"
             android:contentDescription="@string/wg_prev"/>
 
         <ImageView
@@ -127,9 +161,12 @@
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_weight="1"
+            android:layout_marginLeft="6dp"
+            android:layout_marginRight="6dp"
             android:padding="6dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_media_play"
+            android:background="@drawable/wg_btn_bg"
             android:contentDescription="@string/wg_toggle"/>
 
         <ImageView
@@ -140,6 +177,7 @@
             android:padding="7dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_media_next"
+            android:background="@drawable/wg_btn_bg"
             android:contentDescription="@string/wg_next"/>
     </LinearLayout>
 </LinearLayout>

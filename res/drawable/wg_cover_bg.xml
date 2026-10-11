@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 封面底色（无封面时的占位块） -->
+<!--
+  ★ v3.7.14 封面底色。
+
+  封面尺寸从 48x64 放大到 56x76，圆角也跟着放大到 9dp，
+  并加一圈细白边 —— 让封面在玻璃面板上"有厚度"，像一张小卡片。
+  无封面时这个形状同时充当占位块（中间叠一个 ♪）。
+-->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#33FFFFFF"/>
-    <corners android:radius="6dp"/>
+    <solid android:color="#40FFFFFF"/>
+    <stroke android:width="1dp" android:color="#40FFFFFF"/>
+    <corners android:radius="9dp"/>
 </shape>

@@ -1126,24 +1126,53 @@ public final class BridgeSource {
             Source s = SourceRegistry.byId(id);
             if (s == null) {
                 msg = "源不存在，请重新导入";
+            } else if (SourceRegistry.isBuiltin(id)) {
+                // ★ v3.7.14：内置源判断必须放在 JsonSource 之前 —— 内置源里也有
+                //   JsonSource 实现，原来那个顺序会把内置源当成"自定义 JSON 源"去跑
+                //   selfTest()，给出驴唇不对马嘴的结论。
+                msg = "请用内置源的测试按钮";
             } else if (s instanceof JsonSource) {
                 String r = ((JsonSource) s).selfTest();
                 ok = r != null && r.startsWith("搜索正常");
                 msg = r;
-            } else if (SourceRegistry.isBuiltin(id)) {
-                msg = "请用内置源的测试按钮";
+            } else if (s instanceof com.tingshu.app.python.PySourceAdapter) {
+                // ★ v3.7.14：Python 源单开一路。
+                //
+                //   原来它掉进下面"jar 插件源"的兜底分支里：先试 search("三国")，
+                //   失败后再用反射去取一个叫 BASE 的静态字段当网址 —— 而
+                //   PySourceAdapter 根本没有 BASE 字段，于是回落到
+                //   https://example.com，必然"无响应"。
+                //   用户看到的"测试连通无效"就是这么来的：结论永远是错的。
+                //
+                //   现在直接问 Python 侧：拿这个源跑一次真实搜索，
+                //   以"能不能搜出东西"作为连通结论。
+                com.tingshu.app.python.PySourceAdapter pa =
+                        (com.tingshu.app.python.PySourceAdapter) s;
+                if (!com.tingshu.app.python.PythonHost.available()) {
+                    msg = "Python 运行时未就绪，请稍后重试";
+                } else if (!pa.canSearch()) {
+                    msg = testByBrowse(s);
+                } else {
+                    List<com.tingshu.app.data.Models.Book> r = pa.search("评书", 1);
+                    int n = r == null ? 0 : r.size();
+                    if (n > 0) {
+                        ok = true;
+                        msg = "连通正常，搜索命中 " + n + " 条";
+                    } else {
+                        // 收紧措辞：拿不到结果要么是站点变了，要么是这个关键词没货，
+                        // 都给用户一个"能自己判断"的提示，而不是含糊的"接口可访问"。
+                        msg = "站点已响应，但没搜出结果（可能被限流或关键词无货）";
+                    }
+                }
             } else {
-                // jar 插件源：通用测试
+                // jar / JS 插件源：通用测试
                 if (s.canSearch()) {
                     List<com.tingshu.app.data.Models.Book> r = s.search("三国", 1);
                     int n = r == null ? 0 : r.size();
                     ok = n > 0;
                     msg = ok ? ("搜索正常，命中 " + n + " 条") : "接口可访问但未解析出结果";
                 } else {
-                    String html = com.tingshu.app.core.Net.get(s.desc() == null
-                            ? "https://example.com" : cfgBaseOf(s), null);
-                    ok = html != null && html.length() > 500;
-                    msg = ok ? "站点可达（该源仅支持浏览）" : "无响应";
+                    msg = testByBrowse(s);
                 }
             }
         } catch (Throwable t) {
@@ -1157,13 +1186,21 @@ public final class BridgeSource {
         return o;
     }
 
-    /** 插件源的 base 探测：多数源 desc 不适合当 URL，直接试搜索接口失败就报无响应 */
-    private static String cfgBaseOf(Source s) {
+    /**
+     * ★ v3.7.14：不能搜索的源（只能浏览分类）改测「分类页能否拿到内容」。
+     *
+     * <p>旧实现是拿反射去抠一个叫 BASE 的静态字段拼 URL 请求 example.com，
+     * 对绝大多数源都不成立，只会稳定地报"无响应"。
+     */
+    private static String testByBrowse(Source s) {
+        if (!(s instanceof BrowsableSource)) return "该源不支持测试";
         try {
-            java.lang.reflect.Field f = s.getClass().getField("BASE");
-            return String.valueOf(f.get(null));
+            List<Category> cs = ((BrowsableSource) s).categories();
+            if (cs == null || cs.isEmpty()) return "站点可达，但没解析出分类";
+            return "站点可达，发现 " + cs.size() + " 个分类";
         } catch (Throwable t) {
-            return "https://example.com";
+            return "站点不可达：" + (t.getMessage() == null
+                    ? t.getClass().getSimpleName() : t.getMessage());
         }
     }
 

@@ -2229,33 +2229,19 @@ body.multi-on .chk { display: block; }
 }
 .chapter.sel .no, .chapter.sel .tt { color: var(--primary); }
 
-/* ==================== ★ v3.7.4 源批量管理（复用 .multi-bar / .chk） ==================== */
-
-/* 源行的勾选框：复用章节那套 .chk，只是多选类名不同（body.multi-src-on） */
-.chk-src { display: none; margin-right: -4px; }
-body.multi-src-on .chk-src { display: block; }
-.srcrow.sel .chk-src {
-    background: var(--primary); border-color: var(--primary);
-}
-.srcrow.sel .chk-src::after {
-    content: '\2713'; position: absolute; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; font-size: 12px; font-weight: 700;
-}
-/* 勾选后源名跟着变主题色，一眼看出选中了哪些 */
-.srcrow.sel .srcname { color: var(--primary); }
-/* 内置源在多选态下不可选：整行降低不透明度并禁止点击反馈 */
-.srcrow.locked { opacity: .45; }
-.srcrow.locked:active { background: transparent; }
-
-/* 删除按钮：红色，与「确认删除」语义一致 */
-.mb-btn.danger {
-    background: var(--primary); color: #fff; border-color: var(--primary);
-    font-weight: 600;
-}
-
-/* 吸顶条出现在分组页顶部：抵消 content 的左右内边距，贴满一行 */
-#srcGroupContent .multi-bar { margin: 0 -14px 8px; }
+/* ==================== 源批量管理样式（★ v3.7.14 已随多选一起移除） ====================
+ *
+ * v3.7.4 加过一套「源行勾选框 + 多选吸顶条 + 删除按钮」的样式，
+ * 复用章节多选的 .multi-bar / .chk。v3.7.14 因为「长按和选择打架」，
+ * 用户要求把多选取掉、长按只弹菜单，于是下面这些类名在 JS 里已不再产生，
+ * 对应的 CSS 也一并删掉，避免死样式堆积（.multi-bar / .chk 本身仍被章节多选使用，
+ * 那两个通用类保留在上面的章节多选区块里，不受影响）。
+ *
+ * 被删掉的：
+ *   .chk-src / body.multi-src-on .chk-src / .srcrow.sel .chk-src(::after)
+ *   .srcrow.sel .srcname / .srcrow.locked / .srcrow.locked:active
+ *   .mb-btn.danger / #srcGroupContent .multi-bar
+ */
 
 /* ==================== ★ v2.9 下载管理页 + 迷你按钮 ==================== */
 

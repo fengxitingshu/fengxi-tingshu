@@ -157,32 +157,64 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                 : android.R.drawable.ic_media_play);
 
         // ---- 点击 ----
+        //
+        // ★ v3.7.14 关键修复：三个按钮各自挂**独立**的 PendingIntent，
+        //   并且**不**在 wgRoot（整块面板）上挂任何 PendingIntent。
+        //
+        //   原来的写法是 v.setOnClickPendingIntent(R.id.wgRoot, openApp(...))，
+        //   而 wgRoot 是整块面板的根布局 → 它的点击区域覆盖了所有子 View，
+        //   于是无论点哪里（包括三个按钮）都被"打开 App"吃掉，
+        //   表现为"点击直接回软件、不能控制"。这就是用户报的两个毛病同一个根因。
+        //
+        //   现在改成语义化分区：封面区 / 信息区 可点开 App，控制键只管控制。
         v.setOnClickPendingIntent(R.id.wgToggle, pi(ctx, WIDGET_TOGGLE, 11));
         v.setOnClickPendingIntent(R.id.wgPrev, pi(ctx, WIDGET_PREV, 12));
         v.setOnClickPendingIntent(R.id.wgNext, pi(ctx, WIDGET_NEXT, 13));
-        // 点封面/标题 → 打开 App 播放页
-        v.setOnClickPendingIntent(R.id.wgRoot, openApp(ctx, 14));
+        // 点封面 / 书名 → 打开 App 播放页（只有这两块）
+        v.setOnClickPendingIntent(R.id.wgCoverTap, openApp(ctx, 14));
+        v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 15));
 
-        // 三键在"没有内容"时置灰（用 alpha 表示），避免点了没反应
-        float al = has ? 1f : 0.4f;
+        // ★ v3.7.14：触发跑马灯。
+        //   RemoteViews 里的 TextView 要真的滚动，除了 XML 里设
+        //   ellipsize="marquee" + singleLine，还必须在渲染后把它设为 selected ——
+        //   marquee 只对"被选中且获得焦点"的 TextView 生效。
+        //   书名/副标题过长时就会横向滚动，而不是被截断成"三国演…"。
         try {
-            v.setFloat(R.id.wgPrev, "setAlpha", al);
-            v.setFloat(R.id.wgToggle, "setAlpha", has ? 1f : 0.6f);
-            v.setFloat(R.id.wgNext, "setAlpha", al);
+            v.setBoolean(R.id.wgTitle, "setSelected", true);
+            v.setBoolean(R.id.wgSub, "setSelected", true);
         } catch (Throwable ignored) {}
+
+        // 三键在"没有内容"时置灰（用 alpha 表示），避免点了没反应。
+        // ★ v3.7.14：RemoteViews.setFloat 是 API 31 才有的，低版本调用会抛异常，
+        //   所以这里只在支持的系统上做淡化，否则保持原样（宁可不淡也别崩）。
+        if (Build.VERSION.SDK_INT >= 31) {
+            float al = has ? 1f : 0.4f;
+            try {
+                v.setFloat(R.id.wgPrev, "setAlpha", al);
+                v.setFloat(R.id.wgToggle, "setAlpha", has ? 1f : 0.6f);
+                v.setFloat(R.id.wgNext, "setAlpha", al);
+            } catch (Throwable ignored) {}
+        }
 
         // 快照里的封面用完即释放，不常驻内存
         WidgetState.cover = null;
         return v;
     }
 
-    /** 控制类 PendingIntent → 本 Provider（再由 onReceive 转给 Service） */
+    /**
+     * 控制类 PendingIntent。
+     *
+     * <p>★ v3.7.14 改成 {@code getService} 直投 PlayerService —— 原来走的是
+     * {@code getBroadcast} + onReceive 里 startForegroundService 转一手。
+     * 那条路在 Android 8+ 上有个坑：从**后台广播**里启动前台服务会被限制，
+     * 点一下没反应是常态。直接投给服务就没有这个问题，也与通知栏按钮一致。
+     */
     private PendingIntent pi(Context ctx, String action, int req) {
-        Intent i = new Intent(ctx, PlayerWidgetProvider.class);
+        Intent i = new Intent(ctx, PlayerService.class);
         i.setAction(action);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getBroadcast(ctx, req, i, flags);
+        return PendingIntent.getService(ctx, req, i, flags);
     }
 
     /** 打开 App（点面板主体） */

@@ -185,8 +185,7 @@
         // ★ v3.2：离开当前页面前先收起播放页的「更多」下拉，
         //   否则它会悬空留在新页面上
         ui.closeMore();
-        // ★ v3.7.4：源分组页处于多选态时，返回键先退出多选（与章节多选一致）
-        if (App.multiSrc) { exitSrcMulti(false); return true; }
+        // ★ v3.7.14：源分组页多选态已移除，返回键不再需要先退多选
         if (App.fullShow) { ui.closeFull(); return true; }
         if (App.stack.length > 0) {
             backToSub(App.stack.pop());
@@ -4389,67 +4388,38 @@
         var b = bucketsOf();
         var list = b[def.k] || [];
         if (!list.length) {
-            // 组空了就退出多选态，否则吸顶条会孤零零留在空页上
-            if (App.multiSrc) exitSrcMulti(true);
             paintSrcGroupNav(false);            // ★ v3.7.6：空组顶栏不留按钮
             c.innerHTML = errBlock('这个分组下还没有书源');
             return;
         }
 
-        var multi = !!App.multiSrc;
-        // 内置源不可删 → 这个分组根本不提供多选删除
+        // ★ v3.7.14：多选逻辑整个下掉 —— 用户反馈"长按和选择有冲突"。
+        //   现在长按只干一件事：在按点弹菜单（启用/停用、测试、改名、删除）。
+        //   不再有勾选框、不再有多选吸顶条、也不再需要批量开关。
         var canBatch = def.k !== 'builtin';
 
-        // ★ v3.7.6：多选态下顶栏不需要批量开关，先清掉再按需画
-        if (multi) paintSrcGroupNav(false);
+        // 顶栏「全部开启 / 全部关闭」图标（内置源组不给）
+        paintSrcGroupNav(canBatch);
 
         var h = '';
-
-        // ★ v3.7.4：多选吸顶条。只在多选态出现，与章节多选共用 .multi-bar 样式。
-        if (multi) {
-            h += '<div class="multi-bar" id="srcMultiBar">';
-            h += '<span class="mb-cnt" id="srcMultiCount"></span>';
-            h += '<span class="mb-acts">';
-            h += '<button class="mb-btn" onclick="App.ui.srcSelAll()">全选</button>';
-            h += '<button class="mb-btn" onclick="App.ui.srcSelInvert()">反选</button>';
-            h += '<button class="mb-btn danger" id="srcMultiDel" ' +
-                 'onclick="App.ui.srcSelDelete()">删除</button>';
-            h += '<button class="mb-btn" onclick="App.ui.exitSrcMulti()">取消</button>';
-            h += '</span></div>';
-        } else {
-            // ★ v3.7.6：「全部开启 / 全部关闭」图标从分组标题行**移到橙色顶栏右侧**。
-            //   一实一虚：实心圆=开启、空心圆=关闭（纯图标 + title 提示）。
-            //   内置源组不给（内置源只能停用，批量开关意义不大，且容易误操作）。
-            paintSrcGroupNav(canBatch);
-            h += '<div class="grphd">' + TS.esc(def.sub) +
-                 '<span class="srcbulk">' +
-                   '<span class="srccount">' + countEnabled(list) + ' / ' + list.length + ' 启用</span>' +
-                 '</span>' +
-                 '</div>';
-            if (canBatch && list.length >= 2) {
-                h += '<div class="srcops" style="padding:0 0 8px">' +
-                     '<span class="srchint">长按任意一行可多选删除</span></div>';
-            }
-        }
+        h += '<div class="grphd">' + TS.esc(def.sub) +
+             '<span class="srcbulk">' +
+               '<span class="srccount">' + countEnabled(list) + ' / ' + list.length + ' 启用</span>' +
+             '</span>' +
+             '</div>';
+        h += '<div class="srcops" style="padding:0 0 8px">' +
+             '<span class="srchint">长按任意一行打开菜单</span></div>';
 
         for (var i = 0; i < list.length; i++) {
             var s = list[i];
             var nm = s.alias || s.name;
-            var sel = multi && App.multiSrc.sel[s.id];
-            // 内置源即便在多选态也不可勾选（灰掉）
-            var locked = !!s.builtin;
             var cls = 'srcrow srcrow-tap';
-            if (sel) cls += ' sel';
-            if (multi && locked) cls += ' locked';
 
             // ★ v3.7.13：所有点击/长按统一走 bindSrcPress 委托，
             //   不再在 HTML 上写一堆 onmousedown/ontouchstart（那种写法
             //   每行 4 个内联事件，既臃肿又会和委托打架）。
             h += '<div class="' + cls + '" data-sid="' + escAttr(s.id) + '"' +
                  ' data-nm="' + escAttr(nm) + '">';
-
-            // 多选态：左侧圆形勾选框
-            h += '<span class="chk chk-src"></span>';
 
             h += '<div class="srcinfo">';
             h += '<div class="srcname">' + TS.esc(nm) + '</div>';
@@ -4465,13 +4435,11 @@
                  '</div>';
             h += '</div>';
 
-            // 行内开关：多选态下隐藏，避免和勾选混淆
-            if (!multi) {
-                h += '<label class="sw" onclick="event.stopPropagation()">' +
-                     '<input type="checkbox" ' + (s.enabled ? 'checked' : '') +
-                     ' data-toggle="' + escAttr(s.id) + '">' +
-                     '<i></i></label>';
-            }
+            // 行内开关
+            h += '<label class="sw" onclick="event.stopPropagation()">' +
+                 '<input type="checkbox" ' + (s.enabled ? 'checked' : '') +
+                 ' data-toggle="' + escAttr(s.id) + '">' +
+                 '<i></i></label>';
             h += '</div>';
         }
 
@@ -4480,17 +4448,15 @@
         } else if (def.k === 'js') {
             h += '<div class="tip">JS 插件源由脚本提供，随插件包整包更新；' +
                  '标「需验证」的源首次搜索可能需要先在站点上过验证码。' +
-                 '长按任意一行可删除 / 测试 / 改名。</div>';
+                 '长按任意一行打开菜单：启用/停用、测试连通、改名、删除。</div>';
         } else if (def.k === 'py') {
             h += '<div class="tip">Python 源由 .py 脚本提供，可以单独删除。' +
-                 '长按任意一行可删除 / 测试 / 改名；按住不动即可多选。</div>';
+                 '长按任意一行打开菜单：启用/停用、测试连通、改名、删除。</div>';
         } else {
-            h += '<div class="tip">长按任意一行：弹出删除 / 测试连通 / 改名菜单，' +
-                 '同时进入多选（继续按住可勾选多个）。</div>';
+            h += '<div class="tip">长按任意一行打开菜单：启用/停用、测试连通、改名、删除。</div>';
         }
         c.innerHTML = h;
         bindSrcPress(c);
-        if (multi) paintSrcMultiUI();
     }
 
     /**
@@ -4529,10 +4495,10 @@
         };
 
         var start = function (e) {
-            // 多选态里不弹菜单，只做勾选
-            if (App.multiSrc) return;
             var row = rowOf(e.target);
             if (!row) return;
+            // 开关上的按压不算长按（开关自己走 change）
+            if (e.target && e.target.closest && e.target.closest('.sw')) return;
             pressed = row;
             moved = false;
             fired = false;
@@ -4544,10 +4510,7 @@
                 if (!id) return;
                 fired = true;
                 try { if (navigator.vibrate) navigator.vibrate(12); } catch (ignored) {}
-                // 长按 = 选上这一行 + 进入多选，再在按点弹菜单
-                App.multiSrc = { sel: {}, group: App.srcGroupKey };
-                App.multiSrc.sel[id] = true;
-                paintSrcGroup();
+                // ★ v3.7.14：长按只弹菜单，不再顺带进多选
                 srcRowMenu(id, startPt.x, startPt.y);
             }, LONG);
         };
@@ -4565,9 +4528,8 @@
             if (!pressed || moved) { pressed = null; return; }
             var row = pressed;
             pressed = null;
-            // 开关、勾选框上的操作不当作行点击
-            if (e && e.target && e.target.closest &&
-                e.target.closest('.sw, .chk')) return;
+            // 开关上的操作不当作行点击
+            if (e && e.target && e.target.closest && e.target.closest('.sw')) return;
             var id = row.getAttribute('data-sid');
             if (id) ui.srcRowClick(id);
         };
@@ -4583,7 +4545,7 @@
         // 桌面右键 = 直接弹菜单
         c.addEventListener('contextmenu', function (e) {
             var row = rowOf(e.target);
-            if (!row || App.multiSrc) return;
+            if (!row) return;
             e.preventDefault();
             srcRowMenu(row.getAttribute('data-sid'), e.clientX, e.clientY);
         });
@@ -4679,96 +4641,21 @@
 
     // ==================== ★ v3.7.4 源批量管理 ====================
 
-    /** 进入多选态（分组页内） */
-    ui.enterSrcMulti = function () {
-        App.multiSrc = { sel: {}, group: App.srcGroupKey };
-        paintSrcGroup();
-    };
-
-    /** 退出多选态。silent=true 时不重绘（调用方自己会画） */
-    function exitSrcMulti(silent) {
-        App.multiSrc = null;
-        if (!silent) paintSrcGroup();
-    }
-    ui.exitSrcMulti = function () { exitSrcMulti(false); };
-
-    /** 内置源不可选：给个明确反馈，别让用户以为点坏了 */
-    ui.srcLockedTip = function () {
-        TS.toast('内置源只能停用，不能删除');
-    };
-
-    ui.toggleSrcSel = function (id) {
-        if (!App.multiSrc) return;
-        var sel = App.multiSrc.sel;
-        if (sel[id]) delete sel[id];
-        else sel[id] = true;
-        paintSrcMultiUI();
-    };
-
-    ui.srcSelAll = function () {
-        if (!App.multiSrc) return;
-        var list = (bucketsOf()[App.srcGroupKey] || []);
-        for (var i = 0; i < list.length; i++) {
-            if (list[i].builtin) continue;   // 内置源不参与
-            App.multiSrc.sel[list[i].id] = true;
-        }
-        paintSrcMultiUI();
-    };
-
-    ui.srcSelInvert = function () {
-        if (!App.multiSrc) return;
-        var list = (bucketsOf()[App.srcGroupKey] || []);
-        var next = {};
-        for (var i = 0; i < list.length; i++) {
-            var s = list[i];
-            if (s.builtin) continue;
-            if (!App.multiSrc.sel[s.id]) next[s.id] = true;
-        }
-        App.multiSrc.sel = next;
-        paintSrcMultiUI();
-    };
-
-    function srcSelList() {
-        if (!App.multiSrc) return [];
-        var out = [], k;
-        for (k in App.multiSrc.sel) if (App.multiSrc.sel[k]) out.push(k);
-        return out;
-    }
-
-    /** 只刷勾选态与计数，不重绘整表（避免闪烁） */
-    function paintSrcMultiUI() {
-        var bar = $('srcMultiBar');
-        var on = !!App.multiSrc;
-        if (bar) bar.style.display = on ? '' : 'none';
-        try {
-            if (on) {
-                if (document.body.className.indexOf('multi-src-on') < 0) {
-                    document.body.className += ' multi-src-on';
-                }
-            } else {
-                document.body.className = document.body.className
-                    .replace(/\s*\bmulti-src-on\b/g, '');
-            }
-        } catch (e) {}
-
-        var rows = document.querySelectorAll('#srcGroupContent .srcrow');
-        for (var i = 0; i < rows.length; i++) {
-            var el = rows[i];
-            var id = el.getAttribute('data-sid');
-            var sel = on && App.multiSrc.sel[id];
-            if (sel) {
-                if (el.className.indexOf('sel') < 0) el.className += ' sel';
-            } else {
-                el.className = el.className.replace(/\s*\bsel\b/g, '');
-            }
-        }
-
-        var n = srcSelList().length;
-        var cnt = $('srcMultiCount');
-        if (cnt) cnt.textContent = '已选 ' + n + ' 个';
-        var del = $('srcMultiDel');
-        if (del) del.textContent = '删除(' + n + ')';
-    }
+    /**
+     * ★ v3.7.14：多选态已整体移除（用户反馈「长按和选择有冲突」）。
+     *
+     * <p>下面这些接口保留为空实现，只为兼容可能残留的旧调用点
+     * （比如设置页深链、老版本缓存里的内联事件）。真正的交互只有一条：
+     * 长按/短按一行 → {@link srcRowMenu} 弹菜单。
+     */
+    ui.enterSrcMulti = function () {};
+    ui.exitSrcMulti = function () {};
+    ui.srcLockedTip = function () { TS.toast('内置源只能停用，不能删除'); };
+    ui.toggleSrcSel = function () {};
+    ui.srcSelAll = function () {};
+    ui.srcSelInvert = function () {};
+    ui.srcSelDelete = function () {};
+    ui.doBatchDeleteSrc = function () {};
 
     /**
      * ★ v3.7.13：手势已统一由 {@link bindSrcPress} 委托处理。
@@ -4778,17 +4665,13 @@
     ui.srcPressEnd = function () {};
 
     /**
-     * ★ v3.7.13：短按一行的处理。
-     * 多选态 → 切换勾选（内置源拒绝）；普通态 → 在行的位置弹同一套菜单。
+     * ★ v3.7.13 / v3.7.14：短按一行的处理。
+     *
+     * <p>短按与长按**弹同一套菜单**，只是触发时机不同：
+     * 长按在按点弹出（长按位置更符合直觉），短按在行的右上角弹出。
+     * 多选态已经取消，这里不再做勾选切换。
      */
     ui.srcRowClick = function (id) {
-        if (App.multiSrc) {
-            var s = findSource(id);
-            if (s && s.builtin) { ui.srcLockedTip(); return; }
-            ui.toggleSrcSel(id);
-            return;
-        }
-        // 普通态：用行自身的坐标当"按点"，从右上角弹菜单（与长按同一套）
         var row = document.querySelector('#srcGroupContent .srcrow[data-sid="' +
             String(id).replace(/"/g, '\\"') + '"]');
         if (row) {
@@ -4798,42 +4681,6 @@
             srcRowMenu(id, Math.round(window.innerWidth * 0.16),
                 Math.round(window.innerHeight * 0.22));
         }
-    };
-
-    /** 批量删除：确认 → 逐个删除 → 汇总提示 */
-    ui.srcSelDelete = function () {
-        if (!App.multiSrc) return;
-        var ids = srcSelList();
-        if (!ids.length) { TS.toast('还没有勾选任何源'); return; }
-
-        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
-        h += '<div class="sheet" onclick="event.stopPropagation()">';
-        h += '<div class="sheet-hd">批量删除</div>';
-        h += '<div class="srcmeta">将删除已勾选的 ' + ids.length +
-             ' 个书源。收藏和历史不受影响，但源删掉后相关书籍可能搜不到了。</div>';
-        h += '<div class="sheet-item danger" onclick="App.ui.doBatchDeleteSrc()">确认删除</div>';
-        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
-        h += '</div></div>';
-        sheet(h);
-    };
-
-    ui.doBatchDeleteSrc = function () {
-        ui.closeSheet();
-        if (!App.multiSrc) return;
-        var ids = srcSelList();
-        if (!ids.length) return;
-
-        // ★ 不逐个弹 toast：native 每删一个都会回 onCustomChanged + onSourceList，
-        //   这里只在全部发完后统一提示一次，避免刷屏。
-        App._batchDel = { left: ids.length, done: 0, total: ids.length };
-        // 先退出多选态，等列表回来时是干净的单选视图
-        exitSrcMulti(true);
-        App.multiSrc = null;
-
-        for (var i = 0; i < ids.length; i++) {
-            TS.call('removeSourceById', ids[i]);
-        }
-        TS.toast('正在删除 ' + ids.length + ' 个源…');
     };
 
     function shortPath(p) {
@@ -4949,7 +4796,8 @@
      * onSourceList（整表），所以这里只做本地移除 + 提示，避免多一次无效的 listSources 往返。
      */
     window.onCustomChanged = function (o) {
-        // ★ v3.7.4：批量删除期间不逐个提示，等全部回完统一报一次
+        // ★ v3.7.14：批量删除（_batchDel）随多选一起下掉了，这里只处理单个删除。
+        //   保留 batch 分支的空壳判断，防止老缓存里还留着 _batchDel 的残留状态。
         var batch = App._batchDel;
         if (batch && batch.left > 0) {
             batch.left--;
@@ -6463,6 +6311,25 @@
 
     var CHANGELOG = [
         {
+            ver: '3.7.14',
+            date: '2025-10-11',
+            fixes: [
+                '修复书源管理里「长按」和「选择」互相打架的问题 —— 现在长按只干一件事：在按住的位置弹出菜单。行内勾选框、多选吸顶条、批量删除按钮全部去掉，短按也是弹同一套菜单，误触不再切到多选态',
+                '修复「测试连通性」结果不可信的问题：Python 源以前走的是给 jar 插件兜底的分支，会拿一个根本不存在的 BASE 字段拼出 example.com 去请求，结论永远是「无响应」。现在 Python 源单独处理，直接跑一次真实搜索来判定连通；只支持浏览的源改为检测分类页能否拿到内容',
+                '修复桌面小组件「点按钮不能控制、点哪都直接跳回 App」：整块面板的根布局上挂了「打开 App」的点击区，把三个控制按钮全吞了。现在只有封面和信息区可点开 App，三个按钮各自独立投递给播放服务',
+                '修复小组件按钮在 App 进程被回收后点了没反应：此时播放器还没初始化，命令会被静默丢弃。现在会退化成把 App 拉起来（直接进播放页），至少不是「点了毫无动静」',
+                '修复小组件不显示封面：封面是异步下载的，而小组件状态在开播那一刻就同步了，那时图还没下回来，于是永远显示占位音符。现在封面下载完成后会主动补推一次',
+                '修复小组件在自动连播时停在上集信息：切书 / 切集只在「播放状态变化」时同步，而自动播下一集时播放状态一直是「播放中」，不触发同步',
+                '小组件控制按钮改用直接投递播放服务的方式，避开「从后台广播启动前台服务」被系统限制的问题'
+            ],
+            adds: [
+                '桌面小组件换成半透明「液态玻璃」外观：深色半透明底 + 顶部高光渐变 + 1dp 细白描边 + 24dp 大圆角，壁纸会从面板下透出来，观感贴近 iQOO / OriginOS 的液态玻璃',
+                '小组件封面放大到 56×76，带细边和圆角，在玻璃面板上像一张小卡片',
+                '小组件书名和播放信息过长时改为跑马灯横向滚动，不再被截断成「三国演…」',
+                '小组件文字加投影，在浅色壁纸上也读得清'
+            ]
+        },
+        {
             ver: '3.7.13',
             date: '2025-10-11',
             fixes: [
@@ -6472,7 +6339,7 @@
                 '统一下拉菜单视觉：选集页的「列数 / 区间」和播放页的「更多」以前各有一套自己的气泡样式，现在全部统一成与历史/收藏长按菜单同一套（同一份样式、同一个弹出动画、同一套贴边收敛）'
             ],
             adds: [
-                '书源管理改为长按交互：长按任意一行即在按住的位置弹出菜单（启停 / 测试连通性 / 重命名 / 删除），与历史和收藏页的手感完全一致；按住不动会自动进入多选，可批量删除',
+                '书源管理改为长按交互：长按任意一行即在按住的位置弹出菜单（启停 / 测试连通性 / 重命名 / 删除），与历史和收藏页的手感完全一致（v3.7.14 起不再顺带进入多选）',
                 '测试连通性结束后弹出结果面板，显示源名、结论与失败原因，带「关闭」按钮，不再是一闪而过的提示',
                 '播放失败时弹出面板，说明是哪一集、哪个源、播放器报了什么，并直接提供「换下一集试试」「换一个书源」两个下一步动作，不用自己摸索'
             ]

@@ -87,6 +87,22 @@ public class PlayerService extends Service {
     public static PlayerService get() { return INSTANCE; }
     public static boolean alive() { return INSTANCE != null; }
 
+    /**
+     * ★ v3.7.14：封面位图下载完成通知。
+     *
+     * <p>根因：封面是**异步**下载的（{@link #loadCover} 起独立线程），而小组件的
+     * 同步是在 {@code onStateChanged} 里同步做的 —— 那一刻封面往往还没下完，
+     * {@code lastCoverBmp()} 拿到 null，于是 {@code WidgetState.cover} 永远为空，
+     * 小组件就一直显示占位音符。用户反馈的"不显示封面"就是这么来的。
+     *
+     * <p>所以这里加一个回调：封面到位后主动喊一声，让 MainActivity 再推一次快照。
+     */
+    public interface CoverListener { void onCoverReady(Bitmap bmp); }
+
+    private volatile CoverListener coverListener;
+
+    public void setCoverListener(CoverListener l) { coverListener = l; }
+
     // ==================== 供 PlayerBrowserService 读取当前状态 ====================
     // ★ v2.2：系统「音源选择器」通过 MediaBrowserService 才知道本 App 在放什么，
     // 这几个 getter 就是给它取数据的。全部做了 null 兜底，取不到就返回 null。
@@ -474,6 +490,12 @@ public class PlayerService extends Service {
                     }
                     if (bmp != null && session != null) {
                         coverBmp = bmp;   // 缓存，后续 update 直接复用
+                        // ★ v3.7.14：封面到位 → 通知 MainActivity 重推小组件快照，
+                        //   否则小组件永远停在"无封面"的占位状态。
+                        try {
+                            CoverListener cl = coverListener;
+                            if (cl != null) cl.onCoverReady(bmp);
+                        } catch (Throwable ignored) {}
                         // ★ 在基础 metadata 上补专辑图，不能新建空 Builder，
                         //   否则 title/duration 被冲掉 → 通知标题消失、锁屏进度条失效。
                         //   v2.0：直接以 baseMeta 为蓝本重建，避免逐字段搬运遗漏
@@ -598,13 +620,31 @@ public class PlayerService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String a = (intent == null) ? null : intent.getAction();
-        if (a != null && CTL != null) {
-            if (ACT_TOGGLE.equals(a)) CTL.svcToggle();
-            else if (ACT_NEXT.equals(a)) CTL.svcNext();
-            else if (ACT_PREV.equals(a)) CTL.svcPrev();
-            else if (ACT_STOP.equals(a)) {
-                CTL.svcStop();
-                stopFg(true);
+        if (a != null) {
+            Ctl c = CTL;
+            if (c != null) {
+                if (ACT_TOGGLE.equals(a)) c.svcToggle();
+                else if (ACT_NEXT.equals(a)) c.svcNext();
+                else if (ACT_PREV.equals(a)) c.svcPrev();
+                else if (ACT_STOP.equals(a)) {
+                    c.svcStop();
+                    stopFg(true);
+                }
+            } else if (ACT_TOGGLE.equals(a) || ACT_NEXT.equals(a) || ACT_PREV.equals(a)) {
+                // ★ v3.7.14：进程被系统回收后，桌面小组件的点击会冷启动本服务，
+                //   此时 CTL 还是 null（PlayerCore 在 App 进程里，没有播放器可控制）。
+                //   原来这种命令被静默丢掉 —— 用户表现就是"点了没反应"。
+                //   这里退化成"把 App 拉起来"：用户看到界面就知道需要重新播放，
+                //   比什么都不发生要好。带 openFull 让前端直接进播放页。
+                try {
+                    Intent ui = new Intent(this, com.tingshu.app.MainActivity.class);
+                    ui.setAction(Intent.ACTION_MAIN);
+                    ui.addCategory(Intent.CATEGORY_LAUNCHER);
+                    ui.putExtra("openFull", true);
+                    ui.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(ui);
+                } catch (Throwable ignored) {}
             }
         }
         return START_STICKY;
