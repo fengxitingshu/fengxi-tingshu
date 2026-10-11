@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 43', /android:versionCode="43"/.test(man));
-  check('versionName = 3.7.16（三段式）', /android:versionName="3\.7\.16"/.test(man));
+  check('versionCode = 44', /android:versionCode="44"/.test(man));
+  check('versionName = 3.7.17（三段式）', /android:versionName="3\.7\.17"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.7.16', /id="appVer">3\.7\.16</.test(idx));
-  check('关于页版本显示 3.7.16', /id="aboutVer">3\.7\.16</.test(idx));
+  check('设置页版本显示 3.7.17', /id="appVer">3\.7\.17</.test(idx));
+  check('关于页版本显示 3.7.17', /id="aboutVer">3\.7\.17</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1176,8 +1176,8 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=43 / versionName=3.7.16',
-    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=44 / versionName=3.7.17',
+    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1256,8 +1256,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=43 / versionName=3.7.16',
-    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=44 / versionName=3.7.17',
+    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1281,11 +1281,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=43 / versionName=3.7.16',
-    /android:versionCode="43"/.test(mf) && /android:versionName="3\.7\.16"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=44 / versionName=3.7.17',
+    /android:versionCode="44"/.test(mf) && /android:versionName="3\.7\.17"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.7.16',
-    /id="appVer">3\.7\.16</.test(idxHtml) && /id="aboutVer">3\.7\.16</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.7.17',
+    /id="appVer">3\.7\.17</.test(idxHtml) && /id="aboutVer">3\.7\.17</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1543,13 +1543,20 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('v3.7.16/V：前端关于页版本号已到 3.7.16',
-    /id="aboutVer">3\.7\.16/.test(idx16s) && /id="appVer">3\.7\.16/.test(idx16s));
-  check('v3.7.16/V：AndroidManifest 版本号同步到 3.7.16 / code 43',
-    /android:versionCode="43"/.test(manifest16)
-    && /android:versionName="3\.7\.16"/.test(manifest16));
-  check('v3.7.16/LOG：CHANGELOG 首条即 3.7.16（更新公告能弹出）',
-    /ver: '3\.7\.16'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
+  check('v3.7.17/V：前端关于页版本号已到 3.7.17',
+    /id="aboutVer">3\.7\.17/.test(idx16s) && /id="appVer">3\.7\.17/.test(idx16s));
+  check('v3.7.17/V：AndroidManifest 版本号同步到 3.7.17 / code 44',
+    /android:versionCode="44"/.test(manifest16)
+    && /android:versionName="3\.7\.17"/.test(manifest16));
+  check('v3.7.17/LOG：CHANGELOG 首条即 3.7.17（更新公告能弹出）',
+    /ver: '3\.7\.17'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
+  // ★ v3.7.17：Rhino 反射类保名（NoClassDefFoundError: org.mozilla.javascript.W2 的根因）
+  const pg17 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
+  const bld17 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
+  check('v3.7.17/PG：proguard 保留 Rhino 引擎全部类（VMBridge 是反射加载的）',
+    /-keep class org\.mozilla\.javascript\.\*\* \{ \*; \}/.test(pg17));
+  check('v3.7.17/BLD：build.sh 新增「反射类保名闸门」',
+    /反射类保名闸门/.test(bld17) && /VMBridge/.test(bld17));
 
   // ==================== v3.7.16 ====================
   // 本轮修的全是「点了像没点」类问题，根因集中在三处：

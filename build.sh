@@ -408,5 +408,27 @@ PYCHK
 if [ $? -ne 0 ]; then exit 1; fi
 echo "    + Manifest 组件保名闸门通过（无组件被混淆）"
 
+# ★ v3.7.17：反射类保名闸门。
+#   Rhino 的 VMBridge 等类是按硬编码字符串 Class.forName() 反射加载的，
+#   被混淆改名后运行时 NoClassDefFoundError，JS 引擎整体失效。
+python3 - "$PROJ" <<'PYCHK2'
+import re, sys, os
+mp = open(os.path.join(sys.argv[1], "out", "mapping.txt"), encoding="utf-8").read()
+need = ["org.mozilla.javascript.VMBridge", "org.mozilla.javascript.Context",
+        "org.mozilla.javascript.ScriptableObject"]
+bad = []
+for c in need:
+    m = re.search(r'^' + re.escape(c) + r' -> ([^:]+):', mp, re.M)
+    if not m or m.group(1) != c:
+        bad.append((c, m.group(1) if m else "missing"))
+if bad:
+    print("    !! 反射加载的类被 R8 改名（运行时将 NoClassDefFoundError）：", file=sys.stderr)
+    for c, t in bad:
+        print("       %s  ->  %s" % (c, t), file=sys.stderr)
+    sys.exit(1)
+PYCHK2
+if [ $? -ne 0 ]; then exit 1; fi
+echo "    + 反射类保名闸门通过（Rhino 关键类未改名）"
+
 ls -la "$PROJ/TingShu.apk"
 echo "==> BUILD OK"

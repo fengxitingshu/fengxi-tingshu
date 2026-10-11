@@ -44,6 +44,17 @@
 -keep class com.tingshu.app.source.** { *; }
 -keep class com.github.eprendre.tingshu.** { *; }
 
+# ★ v3.7.17 关键修复：Rhino 引擎本身必须保名。
+#   Rhino 内部有多处按硬编码字符串反射加载自己的类，最典型的是 VMBridge：
+#       Class.forName("org.mozilla.javascript.VMBridge")
+#   R8 把 VMBridge 改名成 W2 后，运行时反射找不到原始类 →
+#   NoClassDefFoundError: org.mozilla.javascript.W2 → 整个 JS 引擎初始化失败
+#   → 所有 JS 插件源加载不出来。
+#   这正是 v3.7.15 用户报「JS 源消失」的最底层根因（当时只是加了日志让失败可见）。
+#   Rhino 混淆后 dex 只小几百 KB，收益远抵不上风险，整体 keep。
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
+
 # ---------- 6. Gson 数据模型（字段名即 JSON key）----------
 -keep class com.tingshu.app.data.** { *; }
 
