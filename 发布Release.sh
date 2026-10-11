@@ -25,6 +25,23 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
 fi
 [[ -f "$APK" ]] || { echo "✗ 找不到 APK：$APK" >&2; exit 1; }
 
+# ★ v3.7.15：发布前强制校验签名。
+#
+#   v3.7.14 曾把未签名的 aligned.apk 副本当成成品发出去，用户装机报
+#   「解析包错误」。发布脚本是最后一道关，这里必须拦住：
+#   没签名 / 缺 MANIFEST.MF 的包一律不准上传。
+BT="${BT:-/root/android/android-14}"
+if [[ ! -x "$BT/apksigner" ]]; then
+  echo "✗ 找不到 apksigner（$BT/apksigner），无法校验签名" >&2
+  exit 1
+fi
+if ! "$BT/apksigner" verify "$APK" >/dev/null 2>&1; then
+  echo "✗ $APK 签名校验不通过 —— 拒绝发布" >&2
+  echo "  常见原因：误把 out/aligned.apk（签名前的中间产物）当成成品拷贝过来。" >&2
+  exit 1
+fi
+echo "✔ 签名校验通过：$(basename "$APK")"
+
 AUTH=(-H "Authorization: Bearer $GH_TOKEN"
       -H "Accept: application/vnd.github+json"
       -H "X-GitHub-Api-Version: 2022-11-28"

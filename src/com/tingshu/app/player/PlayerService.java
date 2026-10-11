@@ -43,6 +43,8 @@ public class PlayerService extends Service {
     public static final String ACT_NEXT = "com.tingshu.app.NEXT";
     public static final String ACT_PREV = "com.tingshu.app.PREV";
     public static final String ACT_STOP = "com.tingshu.app.STOP";
+    /** ★ v3.7.15：桌面小组件进度条点击 → 精确跳转（extra "sec" = 目标秒） */
+    public static final String ACT_SEEK = "com.tingshu.app.SEEK";
 
     /** 由 MainActivity 注入/撤销 */
     public interface Ctl {
@@ -626,11 +628,17 @@ public class PlayerService extends Service {
                 if (ACT_TOGGLE.equals(a)) c.svcToggle();
                 else if (ACT_NEXT.equals(a)) c.svcNext();
                 else if (ACT_PREV.equals(a)) c.svcPrev();
+                else if (ACT_SEEK.equals(a)) {
+                    // ★ v3.7.15：小组件进度条跳转。sec 由 Provider 按 5% 粒度算好。
+                    int sec = intent.getIntExtra("sec", -1);
+                    if (sec >= 0) c.svcSeek(sec);
+                }
                 else if (ACT_STOP.equals(a)) {
                     c.svcStop();
                     stopFg(true);
                 }
-            } else if (ACT_TOGGLE.equals(a) || ACT_NEXT.equals(a) || ACT_PREV.equals(a)) {
+            } else if (ACT_TOGGLE.equals(a) || ACT_NEXT.equals(a)
+                    || ACT_PREV.equals(a) || ACT_SEEK.equals(a)) {
                 // ★ v3.7.14：进程被系统回收后，桌面小组件的点击会冷启动本服务，
                 //   此时 CTL 还是 null（PlayerCore 在 App 进程里，没有播放器可控制）。
                 //   原来这种命令被静默丢掉 —— 用户表现就是"点了没反应"。

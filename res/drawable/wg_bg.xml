@@ -1,48 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ★ v3.7.14 小组件背景：半透明「液态玻璃」。
+  ★ v3.7.15 小组件背景：对齐 iQOO 通知播放器截图里的「毛玻璃圆角卡」。
 
-  设计意图（对齐 iQOO / OriginOS 的液态玻璃观感）：
-   · 底色用**半透明深色**（约 62% 不透明），而不是原来的实心暖橙。
-     这样桌面壁纸会透上来，形成"毛玻璃下面是壁纸"的层次；
-     同时保证白字在浅色壁纸上依然读得清（这是选深色而非浅色的原因）。
-   · 圆角加大到 24dp，接近 OriginOS 大圆角的观感。
-   · 叠一层从上到下的**白色高光渐变**：顶部稍亮、底部渐隐，
-     模拟玻璃边缘的折光，这是"液态感"的关键一笔。
+  与 v3.7.14 的差别：
+   · 深浅调淡：截图的卡面是**浅色半透明的灰白**，不是 v3.7.14 的深色。
+     但纯浅色会让白字看不见 → 所以取"中性偏冷的半透明灰"（#CC2A2E3A），
+     在白墙壁纸上呈现浅灰玻璃，在深色壁纸上呈现深灰玻璃，白字都读得清。
+   · 圆角收敛到 26dp（截图卡片圆角约等于卡片高度的 1/8）。
+   · 高光从"顶亮"改为"顶部一条窄高光带"——截图里的折光只占顶边一小条，
+     整块渐变会让卡片显得"发灰"。这里高光层高度用 gradient 的 endColor 快速收掉。
+   · 描边保留但减淡到 30% 白，避免边界过硬。
 
-  注意：RemoteViews 背景只能是 drawable 资源，不能做真实的背景模糊
-  （那是 WindowManager 的 BLUR_BEHIND，AppWidget 用不了），
-  所以用「半透明 + 高光 + 细描边」来近似玻璃效果。
+  说明：AppWidget 用不了真实的背景模糊（WindowManager 的 BLUR_BEHIND 不可及），
+  只能用「半透明 + 高光 + 细描边」近似玻璃质感。
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 底层：半透明深色底 + 大圆角 -->
+    <!-- 底层：半透明中性灰底 + 大圆角 -->
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#9E1A1A22"/>
-            <corners android:radius="24dp"/>
+            <solid android:color="#CC2A2E3A"/>
+            <corners android:radius="26dp"/>
         </shape>
     </item>
 
-    <!-- 高光层：顶亮底透的白色渐变，营造玻璃折光 -->
+    <!-- 高光层：顶部窄带折光 -->
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:startColor="#3DFFFFFF"
-                android:centerColor="#14FFFFFF"
-                android:endColor="#08FFFFFF"
+                android:startColor="#30FFFFFF"
+                android:centerColor="#0AFFFFFF"
+                android:endColor="#00FFFFFF"
                 android:type="linear"/>
-            <corners android:radius="24dp"/>
+            <corners android:radius="26dp"/>
         </shape>
     </item>
 
-    <!-- 描边：一圈若隐若现的白边，液态玻璃的"边缘" -->
+    <!-- 描边：一圈淡白边，勾出玻璃边缘 -->
     <item>
         <shape android:shape="rectangle">
             <solid android:color="#00000000"/>
-            <stroke android:width="1dp" android:color="#4DFFFFFF"/>
-            <corners android:radius="24dp"/>
+            <stroke android:width="1dp" android:color="#30FFFFFF"/>
+            <corners android:radius="26dp"/>
         </shape>
     </item>
 </layer-list>

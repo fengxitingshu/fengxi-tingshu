@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ★ v3.7.14 封面底色。
+  ★ v3.7.15 封面底色：方形圆角（仿通知播放器的封面位）。
 
-  封面尺寸从 48x64 放大到 56x76，圆角也跟着放大到 9dp，
-  并加一圈细白边 —— 让封面在玻璃面板上"有厚度"，像一张小卡片。
+  尺寸从 v3.7.14 的 56x76dp 竖版改为 62x62dp 方形 —— 截图的封面位是正方形，
+  且方形在 centerCrop 下不会把竖版封面裁得只剩中间一条。
+  圆角 10dp，配一圈细白边让封面"浮"在玻璃卡上。
   无封面时这个形状同时充当占位块（中间叠一个 ♪）。
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#40FFFFFF"/>
-    <stroke android:width="1dp" android:color="#40FFFFFF"/>
-    <corners android:radius="9dp"/>
+    <solid android:color="#38FFFFFF"/>
+    <stroke android:width="1dp" android:color="#33FFFFFF"/>
+    <corners android:radius="10dp"/>
 </shape>

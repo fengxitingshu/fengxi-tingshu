@@ -323,5 +323,31 @@ echo "==> [8/9] sign"
 
 echo "==> [9/9] verify"
 "$BT/apksigner" verify --print-certs "$PROJ/TingShu.apk" | head -4
+
+# ★ v3.7.15：签名硬闸门。
+#
+#   教训：v3.7.14 交付出去的 APK 是 $OUT/aligned.apk 的副本（签名**之前**的
+#   中间产物），手机上一律「解析包错误 / 无法安装」。
+#   原因是人工拷贝成品时贴错了源 —— 而 apksigner 只在它自己那行报了错，
+#   构建照旧打印 BUILD OK，问题要到用户装机才暴露。
+#
+#   这里把"必须签过名"变成构建的一部分：verify 不通过就直接判构建失败，
+#   并且顺手比对"成品 ≠ 未签名中间产物"，从机制上堵死贴错源的可能。
+if ! "$BT/apksigner" verify "$PROJ/TingShu.apk" >/dev/null 2>&1; then
+  echo "    !! 签名校验失败：$PROJ/TingShu.apk 没有有效签名" >&2
+  echo "       （若你拿到的是 aligned.apk 的副本，就是这个原因）" >&2
+  exit 1
+fi
+if cmp -s "$PROJ/TingShu.apk" "$OUT/aligned.apk"; then
+  echo "    !! 成品与未签名的 aligned.apk 完全相同 —— 说明签这一步被跳过了" >&2
+  exit 1
+fi
+# 顺带确认 MANIFEST.MF 存在（未签名包缺的就是它）
+if ! unzip -l "$PROJ/TingShu.apk" "META-INF/MANIFEST.MF" >/dev/null 2>&1; then
+  echo "    !! 成品缺少 META-INF/MANIFEST.MF，不是有效签名包" >&2
+  exit 1
+fi
+echo "    + 签名闸门通过（已签名且与 aligned.apk 不同）"
+
 ls -la "$PROJ/TingShu.apk"
 echo "==> BUILD OK"

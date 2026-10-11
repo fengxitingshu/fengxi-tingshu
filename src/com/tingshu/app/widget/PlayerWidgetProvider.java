@@ -52,6 +52,10 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String WIDGET_PREV = "com.tingshu.app.widget.PREV";
     /** 点「下一集」 */
     public static final String WIDGET_NEXT = "com.tingshu.app.widget.NEXT";
+    /** 点进度条某格 → seek（extra "sec" = 目标秒），v3.7.15 */
+    public static final String WIDGET_SEEK = "com.tingshu.app.widget.SEEK";
+    /** 进度条点击分区数（每格 5%），与布局里 wgSeek0..19 一一对应 */
+    static final int SEEK_SEGMENTS = 20;
 
     @Override
     public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
@@ -68,6 +72,23 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         super.onReceive(ctx, intent);
         String a = intent == null ? null : intent.getAction();
         if (a == null) return;
+        // ★ v3.7.15：进度条点击 → 精确 seek（extra 带秒数，不能靠 PendingIntent 复用）
+        if (WIDGET_SEEK.equals(a)) {
+            int sec = intent.getIntExtra("sec", -1);
+            if (sec >= 0) {
+                try {
+                    Intent i = new Intent(ctx, PlayerService.class);
+                    i.setAction(PlayerService.ACT_SEEK);
+                    i.putExtra("sec", sec);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        ctx.startForegroundService(i);
+                    } else {
+                        ctx.startService(i);
+                    }
+                } catch (Throwable ignored) {}
+            }
+            return;
+        }
         // ★ 按钮点击 → 转发给 PlayerService（走服务 action，与通知栏同一通路）
         String svc = null;
         if (WIDGET_TOGGLE.equals(a)) svc = PlayerService.ACT_TOGGLE;
@@ -145,10 +166,37 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         if (has && dur > 0) {
             v.setProgressBar(R.id.wgBar, 1000,
                     Math.max(0, Math.min(1000, (int) ((long) cur * 1000 / dur))), false);
-            v.setTextViewText(R.id.wgTime, fmt(cur) + " / " + fmt(dur));
+            v.setTextViewText(R.id.wgTimeCur, fmt(cur));
+            v.setTextViewText(R.id.wgTimeDur, fmt(dur));
         } else {
             v.setProgressBar(R.id.wgBar, 1000, 0, false);
-            v.setTextViewText(R.id.wgTime, "");
+            v.setTextViewText(R.id.wgTimeCur, "");
+            v.setTextViewText(R.id.wgTimeDur, "");
+        }
+
+        // ---- ★ v3.7.15 可点进度条：20 格，点第 i 格 seek 到 (i+0.5)/20 ----
+        //
+        //  RemoteViews 用的是普通 PendingIntent，extras 不参与"同不同一"的判定，
+        //  所以 20 格必须配 20 个**不同 requestCode**，否则 FLAG_UPDATE_CURRENT
+        //  会让最后注册的那个覆盖全部，点哪一格都跳同一个位置。
+        //  这里 requestCode 用 100+i 固定偏移，与三个按钮（11/12/13）、
+        //  打开 App（14/15）都不冲突。
+        //
+        //  秒数直接算进 PendingIntent：目标 = (i + 0.5) / 20 * dur。
+        //  没有播放内容时（dur<=0）不挂点击，避免点了乱跳。
+        boolean seekable = has && dur > 0;
+        for (int i = 0; i < SEEK_SEGMENTS; i++) {
+            int viewId = ctx.getResources().getIdentifier(
+                    "wgSeek" + i, "id", ctx.getPackageName());
+            if (viewId == 0) continue;
+            if (!seekable) {
+                // 清掉旧 PendingIntent：挂一个"什么都不做"的空 PendingIntent 反而更糟，
+                // 直接指向同一个 view 但用 NO_OP 语义难以表达；这里改用"跳到 0"以外
+                // 的做法 —— 不设置。RemoteViews 重建时未设置的点击本来就是空的。
+                continue;
+            }
+            int target = (int) ((i + 0.5) * dur / SEEK_SEGMENTS);
+            v.setOnClickPendingIntent(viewId, seekPi(ctx, target, 100 + i));
         }
 
         // ---- 播放/暂停图标 ----
@@ -217,9 +265,26 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         return PendingIntent.getService(ctx, req, i, flags);
     }
 
+    /**
+     * ★ v3.7.15 进度条点击的 PendingIntent。
+     *
+     * <p>与 {@link #pi} 的区别只有一处：带 {@code sec} extra。
+     * Android 判定两个 PendingIntent "是否相同"只看 requestCode + Intent 的
+     * action/data/component/categories，**不看 extras**。所以 20 格必须用
+     * 20 个不同 requestCode（见调用处的 {@code 100 + i}），
+     * 且这里**不能**用 FLAG_UPDATE_CURRENT 之外的复用技巧。
+     */
+    private PendingIntent seekPi(Context ctx, int sec, int req) {
+        Intent i = new Intent(ctx, PlayerWidgetProvider.class);
+        i.setAction(WIDGET_SEEK);
+        i.putExtra("sec", sec);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        return PendingIntent.getBroadcast(ctx, req, i, flags);
+    }
+
     /** 打开 App（点面板主体） */
-    private PendingIntent openApp(Context ctx, int req) {
-        Intent i = new Intent(ctx, MainActivity.class);
+    private PendingIntent openApp(Context ctx, int req) {        Intent i = new Intent(ctx, MainActivity.class);
         i.setAction(Intent.ACTION_MAIN);
         i.addCategory(Intent.CATEGORY_LAUNCHER);
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
