@@ -18,7 +18,7 @@ BT=/root/android/android-14
 ANDROID_JAR=/root/android/android-35/android.jar
 TOOL=/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d3f-06c26dccc000/toolchain
 JDK=$TOOL/jdk-18.0.2.1+1/bin
-KS=/root/android/test.keystore
+KS=/root/android/test.keystore   # ★ 别名已改为 fengxi（原 test 是无身份信息的占位证书，vivo 安装器会拒绝）
 OUT=$PROJ/out
 LIB=$PROJ/java-lib
 
@@ -318,7 +318,7 @@ echo "    + APK 资产复核通过（java/chaquopy.so 已入包）"
 echo "==> [8/9] sign"
 "$BT/apksigner" sign \
   --ks "$KS" --ks-pass pass:android --key-pass pass:android \
-  --ks-key-alias test \
+  --ks-key-alias fengxi \
   --out "$PROJ/TingShu.apk" "$OUT/aligned.apk"
 
 echo "==> [9/9] verify"
@@ -338,6 +338,23 @@ if ! "$BT/apksigner" verify "$PROJ/TingShu.apk" >/dev/null 2>&1; then
   echo "       （若你拿到的是 aligned.apk 的副本，就是这个原因）" >&2
   exit 1
 fi
+
+# ★ v3.7.15：证书身份闸门。
+#
+#   教训：原证书 Subject 只有一个 "CN=Test"，无组织 / 无地区 / 无任何身份信息。
+#   apksigner 认为它"签名有效"，但 vivo / OPPO 等厂商安装器会校验证书完整性，
+#   判定为「缺乏开发者证书」直接拒绝安装（用户装机报"软件包似乎无效"）。
+#   所以这里额外断言证书确实带组织与地区信息。
+if ! "$BT/apksigner" verify --print-certs "$PROJ/TingShu.apk" 2>/dev/null \
+     | grep -q "O=FengXi TingShu Project"; then
+  echo "    !! 签名证书身份不完整（Subject 缺少 O=/C= 等字段）" >&2
+  echo "       厂商安装器（vivo/OPPO）会报「缺乏开发者证书」。请用规范证书重签：" >&2
+  echo "       keytool -genkeypair -keystore \$KS -alias fengxi -keyalg RSA -keysize 2048 \\" >&2
+  echo "         -validity 10950 -storetype PKCS12 -storepass android -keypass android \\" >&2
+  echo "         -dname \"CN=FengXi TingShu, OU=Mobile Development, O=FengXi TingShu Project, L=Beijing, ST=Beijing, C=CN\"" >&2
+  exit 1
+fi
+echo "    + 证书身份闸门通过（含 O= / C= 字段）"
 if cmp -s "$PROJ/TingShu.apk" "$OUT/aligned.apk"; then
   echo "    !! 成品与未签名的 aligned.apk 完全相同 —— 说明签这一步被跳过了" >&2
   exit 1
