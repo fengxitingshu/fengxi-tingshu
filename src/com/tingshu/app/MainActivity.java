@@ -26,6 +26,7 @@ import com.tingshu.app.source.SourceRegistry;
 
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.List;
 
 /**
@@ -47,6 +48,55 @@ public class MainActivity extends Activity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // ★ v3.7.15：崩溃日志落盘。
+        //
+        //   用户反馈"概率闪退"，但拿不到 logcat —— 没有堆栈就只能盲猜。
+        //   这里挂一个默认 UncaughtExceptionHandler：任何未捕获异常都把
+        //   完整堆栈写到应用私有目录 crash/ 下（保留最近 5 份），
+        //   下次闪退后让用户把文件发来即可精确定位。
+        //   处理完仍走系统默认流程（该崩还是崩，不吞）。
+        try {
+            final Thread.UncaughtExceptionHandler prev =
+                    Thread.getDefaultUncaughtExceptionHandler();
+            Thread.setDefaultUncaughtExceptionHandler(
+                    new Thread.UncaughtExceptionHandler() {
+                public void uncaughtException(Thread t, Throwable e) {
+                    try {
+                        File dir = new File(getFilesDir(), "crash");
+                        if (!dir.exists()) dir.mkdirs();
+                        String ts = new java.text.SimpleDateFormat(
+                                "yyyyMMdd-HHmmss", java.util.Locale.US)
+                                .format(new java.util.Date());
+                        File f = new File(dir, "crash-" + ts + ".log");
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("时间: ").append(ts).append('\n')
+                          .append("线程: ").append(t.getName()).append('\n')
+                          .append("版本: ")
+                          .append(cnversionName()).append('\n')
+                          .append("机型: ").append(android.os.Build.MANUFACTURER)
+                          .append(' ').append(android.os.Build.MODEL)
+                          .append(" (Android ").append(android.os.Build.VERSION.RELEASE)
+                          .append(")\n\n");
+                        java.io.PrintWriter pw = new java.io.PrintWriter(f, "UTF-8");
+                        pw.write(sb.toString());
+                        e.printStackTrace(pw);
+                        pw.close();
+                        // 只保留最近 5 份，防膨胀
+                        File[] all = dir.listFiles();
+                        if (all != null && all.length > 5) {
+                            java.util.Arrays.sort(all, new java.util.Comparator<File>() {
+                                public int compare(File a, File b) {
+                                    return Long.compare(b.lastModified(), a.lastModified());
+                                }
+                            });
+                            for (int i = 5; i < all.length; i++) all[i].delete();
+                        }
+                    } catch (Throwable ignored) {}
+                    if (prev != null) prev.uncaughtException(t, e);
+                }
+            });
+        } catch (Throwable ignored) {}
 
         FrameLayout root = new FrameLayout(this);
         web = new WebView(this);
@@ -267,6 +317,16 @@ public class MainActivity extends Activity
     @Override public void svcNext() { next(); }
     @Override public void svcPrev() { prev(); }
     @Override public void svcStop() { core.stop(); refreshNotification(); }
+
+    /** ★ v3.7.15：崩溃日志用的本地版本号（拿不到就退化为清单里的版本名） */
+    private String cnversionName() {
+        try {
+            return getPackageManager()
+                    .getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "unknown";
+        }
+    }
 
     /** ★ v2.0：系统媒体控件（原子播放器/锁屏）拖动进度 */
     @Override public void svcSeek(int sec) {

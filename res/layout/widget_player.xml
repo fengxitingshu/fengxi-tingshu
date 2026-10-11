@@ -151,121 +151,121 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="horizontal">
-        <View
+        <ImageView
             android:id="@+id/wgSeek0"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek1"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek2"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek3"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek4"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek5"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek6"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek7"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek8"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek9"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek10"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek11"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek12"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek13"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek14"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek15"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek16"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek17"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek18"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"/>
 
-        <View
+        <ImageView
             android:id="@+id/wgSeek19"
             android:layout_width="0dp"
             android:layout_height="match_parent"

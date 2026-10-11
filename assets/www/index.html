@@ -343,6 +343,17 @@
       <div class="setval">&#8250;</div>
     </div>
 
+    <!-- ★ v3.7.15-fix：诊断 —— 源加载自检 + 崩溃日志，截图即可反馈 -->
+    <div class="chapter-hd"><span>问题诊断</span></div>
+    <div class="setrow" onclick="App.ui.openDiag()">
+      <div class="setlabel">源加载诊断<span class="setdesc">JS 源「不见了」时先看这里</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openCrashLog()">
+      <div class="setlabel">崩溃日志<span class="setdesc">闪退记录，反馈时请附上</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
     <!-- ★ v2.5：更新与反馈入口 —— 点一下复制群号并提示去 QQ 搜群 -->
     <div class="chapter-hd"><span>更新与反馈（QQ 群）</span></div>
     <div class="upd-card">
@@ -365,6 +376,49 @@
     </div>
 
     <div class="tip">所有收藏、历史、缓存都只保存在本机，不联网上传、不需要账号。</div>
+  </div>
+</div>
+
+<!-- ==================== 源加载诊断（二级页） ★ v3.7.15-fix ==================== -->
+<div id="pageDiag" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">源加载诊断</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="diag-sum" id="diagSum">正在检测…</div>
+    <div id="diagList"></div>
+    <div class="chapter-hd"><span>运行期记录</span></div>
+    <pre class="diag-log" id="diagLog">（暂无）</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.diagRefresh()">重新检测</button>
+      <button class="mini ghost" onclick="App.ui.diagCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.diagClear()">清空记录</button>
+    </div>
+    <div class="tip">
+      这一页只显示本机当前状态，不上传任何数据。反馈问题时把这页截图发出来即可。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 崩溃日志（二级页） ★ v3.7.15-fix ==================== -->
+<div id="pageCrash" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">崩溃日志</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <pre class="diag-log" id="crashBody">正在读取…</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.crashRefresh()">重新读取</button>
+      <button class="mini ghost" onclick="App.ui.crashCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.crashClear()">清空日志</button>
+    </div>
+    <div class="tip">
+      只记录本机闪退堆栈，不会上传。若这里为空，说明还没抓到闪退记录。
+    </div>
   </div>
 </div>
 

@@ -2287,4 +2287,47 @@ public class Bridge {
             }
         });
     }
+
+    // ==================== 源加载诊断（★ v3.7.15-fix） ====================
+
+    /**
+     * 源加载自检：JS 插件包是否在库里、目录/manifest 是否还在、
+     * 实际注册出了几个源、重试加载报什么错。
+     *
+     * <p>用途：用户反馈「之前的 JS 源似乎没有了」时，让他打开这个页面截图，
+     * 比让他连电脑抓 logcat 现实得多。
+     */
+    @JavascriptInterface
+    public void sourceDiag() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o = com.tingshu.app.source.SourceRegistry.diagJson();
+                } catch (Throwable t) {
+                    try {
+                        o.put("error", t.getClass().getSimpleName() + ": "
+                                + (t.getMessage() == null ? "" : t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                try {
+                    o.put("runtimeLog", com.tingshu.app.core.DiagLog.dump());
+                } catch (Throwable ignored) {}
+                callback("onSourceDiag", o);
+            }
+        });
+    }
+
+    /** 清空运行期诊断缓冲 */
+    @JavascriptInterface
+    public void sourceDiagClear() {
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    com.tingshu.app.core.DiagLog.clear();
+                } catch (Throwable ignored) {}
+                sourceDiag();
+            }
+        });
+    }
 }

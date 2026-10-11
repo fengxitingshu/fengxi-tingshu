@@ -2427,3 +2427,27 @@ body.multi-on .chk { display: block; }
     text-align: center; font-size: 12px; color: var(--text2);
     padding: 4px 0 18px; opacity: .8;
 }
+
+/* ==================== ★ v3.7.15-fix 诊断页（源加载自检 / 崩溃日志） ==================== */
+.diag-sum {
+    margin: 12px 14px 6px; padding: 14px 16px; border-radius: 16px;
+    background: var(--card); border: 1px solid var(--line);
+    font-size: 14px; font-weight: 600; color: var(--text);
+    line-height: 1.5;
+}
+.diag-log {
+    margin: 10px 14px; padding: 12px 14px; border-radius: 14px;
+    background: var(--card); border: 1px solid var(--line);
+    font-size: 12px; line-height: 1.65; color: var(--text2);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 52vh; overflow: auto;
+}
+.diag-act {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px 4px;
+}
+.diag-act button.mini.ghost {
+    background: transparent; color: var(--primary);
+    border-color: var(--primary);
+}

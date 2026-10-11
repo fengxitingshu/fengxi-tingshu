@@ -1,5 +1,6 @@
 package com.tingshu.app.source;
 
+import com.tingshu.app.core.Utils;
 import com.tingshu.app.data.SourceConfig;
 import com.tingshu.app.data.SourceStore;
 import com.tingshu.app.source.impl.BokanVoiceSource;
@@ -241,7 +242,11 @@ public final class SourceRegistry {
         } catch (Throwable t) {
             return;
         }
-        if (plugins == null || plugins.isEmpty()) return;
+        if (plugins == null || plugins.isEmpty()) {
+            diag("JS 插件：库里没有记录（源管理里装了 JS 插件包吗？）");
+            return;
+        }
+        diag("JS 插件：库里有 " + plugins.size() + " 个记录，开始重建源");
 
         for (int i = 0; i < plugins.size(); i++) {
             com.tingshu.app.data.PluginRepo.Plugin p = plugins.get(i);
@@ -255,9 +260,98 @@ public final class SourceRegistry {
                     for (Source s : r.sources) {
                         if (s != null && s.id() != null) ALL.put(s.id(), s);
                     }
+                    diag("JS 插件 OK：" + (Utils.empty(p.fileName) ? p.filePath : p.fileName)
+                            + " → " + r.sources.size() + " 个源");
+                } else {
+                    // ★ v3.7.15-fix：加载失败不再静默吞掉。
+                    //   源"莫名消失"时用户/我们都需要知道是哪个包、为什么没起来。
+                    String fn = Utils.empty(p.fileName) ? p.filePath : p.fileName;
+                    String why = (r == null) ? "loader 返回 null" : nz(r.error);
+                    android.util.Log.w("SourceRegistry", "JS 插件加载失败：" + fn + " — " + why);
+                    diag("JS 插件加载失败：" + fn + " — " + why);
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                String fn = Utils.empty(p.fileName) ? p.filePath : p.fileName;
+                String why = t.getClass().getSimpleName() + ": "
+                        + (t.getMessage() == null ? "" : t.getMessage());
+                android.util.Log.w("SourceRegistry", "JS 插件加载异常：" + fn + " — " + why);
+                diag("JS 插件加载异常：" + fn + " — " + why);
+            }
         }
+    }
+
+    /** 空串兜底 */
+    private static String nz(String s) {
+        return (s == null || s.length() == 0) ? "未知原因" : s;
+    }
+
+    /** 把源加载诊断写进可导出的日志缓冲区（前端「源加载诊断」页读它） */
+    private static void diag(String msg) {
+        try {
+            com.tingshu.app.core.DiagLog.add(msg);
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * ★ v3.7.15-fix：源加载自检 —— 供前端「源加载诊断」页调用。
+     *
+     * <p>解决用户反馈的「之前的 JS 源似乎没有了」：以前失败是静默的，
+     * 现在把「库里记了几个 JS 插件 / 实际起来了几个源 / 每个失败在哪一步」
+     * 一次性摊开，用户截图即可定位，不用连电脑抓 logcat。
+     */
+    public static org.json.JSONObject diagJson() {
+        org.json.JSONObject o = new org.json.JSONObject();
+        org.json.JSONArray items = new org.json.JSONArray();
+        try {
+            List<com.tingshu.app.data.PluginRepo.Plugin> js =
+                    com.tingshu.app.data.PluginRepo.byKind(
+                            com.tingshu.app.data.PluginRepo.KIND_JS);
+            int registered = 0;
+            for (int i = 0; i < js.size(); i++) {
+                com.tingshu.app.data.PluginRepo.Plugin p = js.get(i);
+                org.json.JSONObject it = new org.json.JSONObject();
+                it.put("fileName", Utils.empty(p.fileName) ? p.filePath : p.fileName);
+                it.put("enabled", p.enabled);
+                it.put("path", p.filePath);
+
+                java.io.File dir = new java.io.File(p.filePath);
+                boolean dirOk = dir.isDirectory();
+                boolean mfOk = dirOk && new java.io.File(dir, "manifest.json").exists();
+                it.put("dirExists", dirOk);
+                it.put("manifestExists", mfOk);
+
+                // 库里登记的源 id 与「实际注册进注册表」的源数量
+                String[] ids = (p.sourceIds == null ? "" : p.sourceIds).split(",");
+                int live = 0;
+                for (int k = 0; k < ids.length; k++) {
+                    if (ids[k].trim().length() > 0 && ALL.get(ids[k].trim()) != null) live++;
+                }
+                it.put("declaredSources", ids.length == 1 && ids[0].trim().length() == 0 ? 0 : ids.length);
+                it.put("liveSources", live);
+                registered += live;
+
+                // 现场重试一次加载，把真实错误原样带回前端（不改注册表）
+                try {
+                    com.tingshu.app.core.js.JsPluginLoader.JsResult r =
+                            com.tingshu.app.core.js.JsPluginLoader.loadInstalled(p.filePath);
+                    it.put("loadOk", r != null && r.ok);
+                    it.put("loadError", (r == null || r.ok) ? "" : nz(r.error));
+                    if (r != null && r.ok) it.put("loadCount", r.sources.size());
+                } catch (Throwable t) {
+                    it.put("loadOk", false);
+                    it.put("loadError", t.getClass().getSimpleName() + ": "
+                            + (t.getMessage() == null ? "" : t.getMessage()));
+                }
+                items.put(it);
+            }
+            o.put("plugins", items);
+            o.put("pluginCount", js.size());
+            o.put("liveSourceCount", registered);
+            o.put("totalSources", ALL.size());
+        } catch (Throwable t) {
+            try { o.put("error", t.getClass().getSimpleName()); } catch (Throwable ignored) {}
+        }
+        return o;
     }
 
     /** 注册插件加载出来的源（导入 jar 时用；reload 也会走 loadPlugins） */

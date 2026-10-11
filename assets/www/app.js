@@ -92,6 +92,8 @@
         srcGroup: 'pageSrcGroup', reward: 'pageReward',
         settings: 'pageSettings', about: 'pageAbout',
         changelog: 'pageChangelog',   // ★ v3.7.3 更新公告
+        diag: 'pageDiag',             // ★ v3.7.15-fix 源加载诊断
+        crash: 'pageCrash',           // ★ v3.7.15-fix 崩溃日志
         dlmanage: 'pageDlManage' };   // ★ v2.9 下载管理
 
     function allPages() {
@@ -6238,6 +6240,138 @@
         }
     };
 
+    // ==================== ★ v3.7.15-fix 诊断页（源加载自检 / 崩溃日志） ====================
+
+    /** 源加载诊断：进页面即拉一次 */
+    ui.openDiag = function () {
+        goSub('diag');
+        var sum = $('diagSum');
+        if (sum) sum.textContent = '正在检测…';
+        var list = $('diagList');
+        if (list) list.innerHTML = '';
+        var log = $('diagLog');
+        if (log) log.textContent = '（读取中…）';
+        TS.call('sourceDiag');
+    };
+
+    ui.diagRefresh = function () {
+        var sum = $('diagSum');
+        if (sum) sum.textContent = '正在检测…';
+        TS.call('sourceDiag');
+    };
+
+    ui.diagClear = function () {
+        TS.call('sourceDiagClear');
+    };
+
+    /** 把诊断内容整块复制，方便贴到群里 / issue 里 */
+    ui.diagCopy = function () {
+        var txt = _diagText();
+        if (!txt) { TS.toast('暂无内容'); return; }
+        try { TS.call('copyText', txt); TS.toast('诊断信息已复制'); }
+        catch (e) { TS.toast('复制失败'); }
+    };
+
+    var _diagCache = '';
+
+    function _diagText() {
+        return _diagCache;
+    }
+
+    function _esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    /** 原生回调：源加载诊断结果 */
+    window.onSourceDiag = function (o) {
+        o = o || {};
+        var sum = $('diagSum');
+        var list = $('diagList');
+        var logEl = $('diagLog');
+
+        var lines = [];
+        var plugins = o.plugins || [];
+        var total = o.totalSources || 0;
+        var live = o.liveSourceCount || 0;
+
+        lines.push('插件包：' + (o.pluginCount || 0) + ' 个');
+        lines.push('JS 源：' + live + ' 个存活');
+        lines.push('当前源总数：' + total);
+
+        if (sum) {
+            sum.textContent = 'JS 插件 ' + (o.pluginCount || 0) + ' 个 · JS 源 '
+                + live + ' 个 · 源总数 ' + total;
+        }
+
+        // 没有 JS 插件包时的明确指引（这是「源不见了」最常见的一种）
+        if (!plugins.length) {
+            lines.push('');
+            lines.push('【结论】本机没有已安装的 JS 插件包。');
+            lines.push('如果之前装过，多半是在重装/更新时被清掉了'
+                + '（换签名后必须卸载旧版，卸载会一并清空本机数据）。');
+            lines.push('解决办法：在「书源管理」里重新导入一次 JS 插件包即可。');
+        } else {
+            lines.push('');
+            for (var i = 0; i < plugins.length; i++) {
+                var p = plugins[i];
+                lines.push('— ' + (p.fileName || '(无名)')
+                    + '　[' + (p.enabled ? '已启用' : '已停用') + ']');
+                lines.push('　目录存在：' + (p.dirExists ? '是' : '否')
+                    + '　manifest：' + (p.manifestExists ? '有' : '缺失'));
+                lines.push('　登记源：' + (p.declaredSources || 0)
+                    + ' 个　实际存活：' + (p.liveSources || 0) + ' 个');
+                if (p.loadOk) {
+                    lines.push('　重试加载：成功（' + (p.loadCount || 0) + ' 个源）');
+                } else {
+                    lines.push('　重试加载：失败');
+                    if (p.loadError) lines.push('　原因：' + p.loadError);
+                }
+            }
+        }
+
+        var runtime = o.runtimeLog || '';
+        _diagCache = lines.join('\n')
+            + (runtime ? '\n\n===== 运行期记录 =====\n' + runtime : '');
+
+        if (list) {
+            list.innerHTML = '<pre class="diag-log">' + _esc(lines.join('\n')) + '</pre>';
+        }
+        if (logEl) {
+            logEl.textContent = runtime ? runtime : '（本次启动暂无可记录的异常）';
+        }
+    };
+
+    /** 崩溃日志页 */
+    ui.openCrashLog = function () {
+        goSub('crash');
+        var el = $('crashBody');
+        if (el) el.textContent = '正在读取…';
+        TS.call('crashLog');
+    };
+
+    ui.crashRefresh = function () { TS.call('crashLog'); };
+
+    ui.crashClear = function () { TS.call('crashClear'); };
+
+    ui.crashCopy = function () {
+        var el = $('crashBody');
+        var txt = el ? el.textContent : '';
+        if (!txt || txt === '正在读取…') { TS.toast('暂无内容'); return; }
+        try { TS.call('copyText', txt); TS.toast('崩溃日志已复制'); }
+        catch (e) { TS.toast('复制失败'); }
+    };
+
+    /** 原生回调：崩溃日志 */
+    window.onCrashLog = function (o) {
+        o = o || {};
+        var el = $('crashBody');
+        if (!el) return;
+        el.textContent = o.empty
+            ? '（暂无崩溃记录 —— 本次运行没有抓到未捕获异常）'
+            : (o.log || '');
+    };
+
     // ==================== ★ v3.7.9 关于页：更新检查 / 开源链接 ====================
 
     /** 仓库地址（与原生 checkUpdate 里查的仓库保持一致） */
@@ -6315,7 +6449,11 @@
             date: '2025-10-11',
             fixes: [
                 '修复上一版（v3.7.14）安装包无法安装的问题 —— 那个包是没签名的，手机一律报「解析包错误」。原因已经定位：打包时把签名之前的中间产物当成了成品。现在构建脚本和发布脚本都加了签名硬闸门，签不过名直接判构建失败，这类问题不会再流到手上',
-                '如果装过 v3.7.14，请先卸载再装本版（未签名包与正式签名冲突，无法直接覆盖）'
+                '如果装过 v3.7.14，请先卸载再装本版（未签名包与正式签名冲突，无法直接覆盖）',
+                '★ 修复桌面小组件「一片空白」：给进度条加的 20 个点击分区用了普通 View，而桌面小组件系统只允许特定几种控件（白名单里没有 View），启动器加载布局时直接失败，整块就渲染成空白。现在全部换成 ImageView，外观和点击行为完全一样。并加了自动校验，以后布局里再出现非法控件会直接构建失败',
+                '★ 修复「之前能用的 JS 书源突然不见了」：以前 JS 插件加载失败是静默吞掉的，失败了什么都不说，只看到源没了。现在失败会记录原因，并新增「源加载诊断」页（关于页 → 问题诊断），一眼看清每个插件包的目录是否还在、加载出几个源、失败报什么错',
+                '说明：本版换了签名证书，必须先卸载旧版才能装，而卸载会清空本机数据 —— JS 插件包就存在应用私有目录里。所以重装后需要重新导入一次 JS 插件包，诊断页会明确告诉你属于哪种情况',
+                '★ 给闪退装上「黑匣子」：新增崩溃日志记录，任何闪退都会把完整堆栈 + 版本号 + 机型写到本机。下次闪退后打开「关于 → 崩溃日志」截图发我即可精确定位（本版只加记录能力，没有盲改业务逻辑）'
             ],
             adds: [
                 '桌面小组件改成系统通知播放器的样子：封面改成方形圆角并居左，书名一行大字、下面一行灰色小字显示「主播 · 集数」，三个控制键去掉背板、变成三枚均匀分布的白色图标，卡片换成 26dp 圆角的中性半透明玻璃底',

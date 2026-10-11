@@ -1391,6 +1391,139 @@ function check(name, ok, detail) {
 
   check('v3.7.14/W：setFloat 加 API 31 守卫（低版本不崩）',
     /Build\.VERSION\.SDK_INT >= 31[\s\S]{0,600}?setFloat/.test(provider14));
+
+  // ==================== ★ v3.7.15-fix：三项回归（小组件空白 / JS 源丢失 / 闪退） ====================
+
+  // ---- 1) 小组件空白：RemoteViews 白名单 ----
+  //
+  // 根因回顾：v3.7.15 进度条上盖的 20 个点击分区用了 <View>，
+  // 而 RemoteViews 白名单里没有 View（只有 LinearLayout/FrameLayout/
+  // RelativeLayout/ImageView/TextView/ProgressBar/Button 等），
+  // 桌面启动器 inflate 直接失败 → 整块小组件渲染成空白。
+  // 这里把"布局里绝不能出现非白名单控件"固化成断言，
+  // 以后再往小组件里加控件时会被当场拦下。
+  check('v3.7.15-fix/W：布局里已无 <View>（RemoteViews 白名单不含 View）',
+    !/<View\b/.test(wgLay14));
+  check('v3.7.15-fix/W：进度条 20 格点击分区全部是 ImageView',
+    (wgLay14.match(/@\+id\/wgSeek\d+/g) || []).length === 20
+    && (wgLay14.match(/<ImageView/g) || []).length >= 24);
+  //
+  // 白名单校验：把布局里出现过的所有标签名抽出来，逐个比对。
+  // 任何一个不在名单里的标签都会让桌面渲染失败。
+  const allowedRv = ['LinearLayout', 'FrameLayout', 'RelativeLayout', 'ImageView',
+    'TextView', 'ProgressBar', 'Button', 'ImageButton', 'ViewFlipper', 'ViewStub',
+    'Chronometer', 'AnalogClock', 'Space', 'GridLayout', 'GridLayout$Alignment',
+    'ScrollView', 'HorizontalScrollView', 'ListView', 'GridView', 'StackView',
+    'AdapterViewFlipper', 'ViewSwitcher', 'CheckedTextView', 'RadioButton',
+    'RadioGroup', 'CheckBox', 'Switch', 'ToggleButton', 'Spinner', 'RatingBar',
+    'SeekBar', 'DatePicker', 'TimePicker', 'NumberPicker', 'CalendarView',
+    'TextClock', 'EditText', 'AutoCompleteTextView', 'MultiAutoCompleteTextView',
+    'ExpandableListView', 'WebView', 'TableLayout', 'TableRow', 'AbsoluteLayout',
+    'ViewAnimator', 'MediaController', 'SurfaceView', 'TextureView', 'ProgressBar'];
+  // 只取"真正的控件标签"：形如 <Tag 或 </Tag，排除 <attr/ 之类的属性元素
+  const tags = (wgLay14.match(/<\/?([A-Z][A-Za-z0-9$_.]*)/g) || [])
+    .map(s => s.replace(/^<\/?/, ''));
+  const illegal = tags.filter(t => allowedRv.indexOf(t) < 0)
+    .filter(t => ['shape', 'corners', 'gradient', 'stroke', 'solid', 'item',
+      'selector', 'layer-list', 'ripple'].indexOf(t.toLowerCase()) < 0);
+  check('v3.7.15-fix/W：布局控件全在 RemoteViews 白名单内（非法控件：'
+    + (illegal.length ? illegal.join(',') : '无') + '）',
+    illegal.length === 0);
+  //
+  // 打包后复核：以 aapt2 反解出的真实标签为准，避免"源码改了但没进包"。
+  const rvTagsInApk = rvTagsFromApk();
+  check('v3.7.15-fix/W：打包后布局中 <View> 数量为 0（aapt2 复核）',
+    rvTagsInApk.filter(t => t === 'View').length === 0);
+  check('v3.7.15-fix/W：打包后 ImageView ≥ 24（封面 + 3 键 + 20 分区）',
+    rvTagsInApk.filter(t => t === 'ImageView').length >= 24);
+
+  // ---- 2) JS 源消失：加载失败不再静默 ----
+  const sr15 = fs.readFileSync(
+    '/root/tingshu-app/src/com/tingshu/app/source/SourceRegistry.java', 'utf8');
+  check('v3.7.15-fix/SRC：JS 插件加载失败会记诊断（不再静默吞异常）',
+    /JS 插件加载失败/.test(sr15) && /DiagLog\.add/.test(sr15));
+  check('v3.7.15-fix/SRC：catch 分支也记录（含异常类名与消息）',
+    /JS 插件加载异常/.test(sr15)
+    && /t\.getClass\(\)\.getSimpleName\(\)[\s\S]{0,120}?t\.getMessage\(\)/.test(sr15));
+  check('v3.7.15-fix/SRC：成功路径记录"几个源"（便于比对数量骤减）',
+    /JS 插件 OK/.test(sr15) && /r\.sources\.size\(\)/.test(sr15));
+  check('v3.7.15-fix/SRC：无 JS 插件记录时给出明确提示',
+    /库里没有记录/.test(sr15));
+  check('v3.7.15-fix/SRC：新增 diagJson（目录/manifest/登记数/存活数/重试结果）',
+    /public static org\.json\.JSONObject diagJson\(\)/.test(sr15)
+    && /manifestExists/.test(sr15) && /liveSources/.test(sr15)
+    && /loadError/.test(sr15) && /totalSources/.test(sr15));
+  check('v3.7.15-fix/SRC：diagJson 重试加载时"不改注册表"（只读探针）',
+    /现场重试一次加载/.test(sr15));
+
+  const dl15 = fs.readFileSync(
+    '/root/tingshu-app/src/com/tingshu/app/core/DiagLog.java', 'utf8');
+  check('v3.7.15-fix/DIAG：新增 DiagLog 环形缓冲（上限 200 条，不落盘）',
+    /class DiagLog/.test(dl15) && /MAX = 200/.test(dl15)
+    && /ArrayDeque/.test(dl15));
+
+  const br15 = fs.readFileSync('/root/tingshu-app/src/com/tingshu/app/Bridge.java', 'utf8');
+  check('v3.7.15-fix/DIAG：Bridge 暴露 sourceDiag / sourceDiagClear',
+    /public void sourceDiag\(\)/.test(br15)
+    && /public void sourceDiagClear\(\)/.test(br15)
+    && /onSourceDiag/.test(br15));
+
+  // ---- 3) 概率闪退：崩溃日志落盘 + 崩溃日志页 ----
+  check('v3.7.15-fix/CRASH：MainActivity 挂默认 UncaughtExceptionHandler',
+    /setDefaultUncaughtExceptionHandler/.test(mact14)
+    && /UncaughtExceptionHandler\(\)/.test(mact14));
+  check('v3.7.15-fix/CRASH：崩溃日志落到 filesDir/crash/ 并带时间戳',
+    /new File\(getFilesDir\(\), "crash"\)/.test(mact14)
+    && /crash-" \+ ts \+ "\.log/.test(mact14));
+  check('v3.7.15-fix/CRASH：日志含版本/机型/Android 版本（便于定位机型问题）',
+    /版本: /.test(mact14) && /MANUFACTURER/.test(mact14) && /VERSION\.RELEASE/.test(mact14));
+  check('v3.7.15-fix/CRASH：只保留最近 5 份（按修改时间倒序裁剪）',
+    /all\.length > 5/.test(mact14) && /lastModified/.test(mact14));
+  check('v3.7.15-fix/CRASH：记完仍走系统默认处理（不吞异常）',
+    /prev\.uncaughtException\(t, e\)/.test(mact14));
+
+  const idx15 = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
+  const app15 = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
+  check('v3.7.15-fix/UI：新增「源加载诊断」二级页',
+    /id="pageDiag"/.test(idx15) && /id="diagSum"/.test(idx15) && /id="diagLog"/.test(idx15));
+  check('v3.7.15-fix/UI：新增「崩溃日志」二级页',
+    /id="pageCrash"/.test(idx15) && /id="crashBody"/.test(idx15));
+  check('v3.7.15-fix/UI：关于页加入两个诊断入口',
+    /App\.ui\.openDiag\(\)/.test(idx15) && /App\.ui\.openCrashLog\(\)/.test(idx15));
+  check('v3.7.15-fix/UI：两个二级页已注册进 SUBS（切页与返回键才认）',
+    /diag: 'pageDiag'/.test(app15) && /crash: 'pageCrash'/.test(app15));
+  check('v3.7.15-fix/UI：回调 onSourceDiag / onCrashLog 已实现',
+    /window\.onSourceDiag = function/.test(app15)
+    && /window\.onCrashLog = function/.test(app15));
+  check('v3.7.15-fix/UI：无插件时给出可操作结论（重新导入 JS 插件包）',
+    /没有已安装的 JS 插件包/.test(app15) && /重新导入/.test(app15));
+  check('v3.7.15-fix/UI：诊断页支持一键复制（便于反馈）',
+    /ui\.diagCopy = function/.test(app15) && /ui\.crashCopy = function/.test(app15));
+
+  const css15 = fs.readFileSync('/root/tingshu-app/assets/www/style.css', 'utf8');
+  check('v3.7.15-fix/CSS：诊断页样式已补齐（.diag-sum/.diag-log/.diag-act）',
+    /\.diag-sum\s*\{/.test(css15) && /\.diag-log\s*\{/.test(css15)
+    && /\.diag-act\s*\{/.test(css15));
+  check('v3.7.15-fix/CSS：日志块等宽字体 + 可滚动（长堆栈能翻）',
+    /monospace/.test(css15) && /max-height: 52vh; overflow: auto/.test(css15));
+
+  // ---- 版本号 ----
+  check('v3.7.15/V：前端关于页版本号已到 3.7.15',
+    /id="aboutVer">3\.7\.15/.test(idx15) && /id="appVer">3\.7\.15/.test(idx15));
+}
+
+// 打包后复核用：从 APK 里反解小组件布局的真实标签名
+function rvTagsFromApk() {
+  try {
+    const out = require('child_process').execSync(
+      '/root/android/android-14/aapt2 dump xmltree '
+      + '/root/tingshu-app/TingShu.apk --file res/layout/widget_player.xml 2>/dev/null',
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    return (out.match(/E: ([A-Za-z][A-Za-z0-9_.]*)/g) || [])
+      .map(s => s.replace(/^E: /, ''));
+  } catch (e) {
+    return [];
+  }
 }
 
 // ---------- 输出 ----------
