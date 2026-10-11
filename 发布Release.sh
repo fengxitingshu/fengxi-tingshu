@@ -74,6 +74,23 @@ else
   echo "    已存在，id = $RELEASE_ID，改为上传资产"
 fi
 
+# 1b) ★ v3.7.15：必须把本版标成 latest。
+#
+#     GitHub 的 /releases/latest 取的是「最近创建的非草稿、非预发布 Release」，
+#     而**不是**版本号最大的那个。所以补传历史版本（如先发 3.7.15 再补 3.7.12）
+#     会让 latest 落到旧版本上 —— App 里「检查更新」就会提示降级到 3.7.12。
+#     make_latest 是 GitHub 唯一能显式指定 latest 的手段，这里必须设置。
+say "标记 $TAG 为 latest"
+curl -sS -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+  -d '{"make_latest":"true"}' "$API/releases/$RELEASE_ID" >/dev/null
+LATEST_TAG="$(curl -sS "${AUTH[@]}" "$API/releases/latest" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)"
+if [[ "$LATEST_TAG" != "$TAG" ]]; then
+  echo "    !! latest 仍指向 $LATEST_TAG（期望 $TAG）—— App 检查更新会出错" >&2
+  exit 1
+fi
+echo "    /releases/latest 已指向 $TAG"
+
 # 2) 既有同名资产先删掉（避免重名冲突）
 say "清理同名旧资产"
 curl -sS "${AUTH[@]}" "$API/releases/$RELEASE_ID/assets" \
