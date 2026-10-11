@@ -1828,26 +1828,33 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
     padding: 12px 10px 10px; text-align: center;
     border: 1px solid var(--line);
 }
+/* ★ v3.7.11b：aspect-ratio → padding-top 兼容写法（1:1 = 100%），原因同 .bk-cover */
 .rw-code-img {
-    width: 100%; aspect-ratio: 1 / 1;
+    position: relative;
+    width: 100%; height: 0; padding-top: 100%;
     border-radius: 8px; overflow: hidden;
     background: var(--line);
-    display: flex; align-items: center; justify-content: center;
     margin-bottom: 8px;
     /* 长按识别时不要有选中高亮/系统菜单干扰 */
     -webkit-touch-callout: default;
     user-select: none;
 }
 .rw-code-img img {
+    position: absolute; left: 0; top: 0;
     width: 100%; height: 100%; object-fit: contain; display: block;
     background: #fff;
 }
-/* 占位态（还没放真码时）：虚线框 + 提示文字 */
+/* 占位态（还没放真码时）：虚线框 + 提示文字。
+   padding-top 已把画布撑开，占位文字改为 absolute 居中铺在画布上 */
 .rw-code-img.placeholder {
     background: transparent;
     border: 1.5px dashed var(--line);
     color: var(--text2); font-size: 11px; line-height: 1.6;
-    padding: 8px;
+    text-align: center;
+}
+.rw-code-img.placeholder > * {
+    position: absolute; left: 0; right: 0; top: 50%;
+    transform: translateY(-50%); padding: 0 8px;
 }
 .rw-code-name {
     font-size: 12px; color: var(--text2);
@@ -2346,17 +2353,23 @@ body.multi-src-on .chk-src { display: block; }
 /* ============================================================
    ★ v3.7.11 · 收藏页「书本封面陈列」（书架样式）
    ============================================================ */
+/* ★ v3.7.11b：列宽必须用 minmax(0, 1fr)。
+   原来写 1fr 时，网格列的"最小尺寸"默认是 auto = 内容 max-content，
+   封面 <img> 的原始宽度（站点给的 800/1200px 大图）会把列撑到整行宽，
+   表现为"图炸了、一张图占满一屏"。minmax(0, 1fr) 把最小尺寸压到 0，
+   列宽就只由容器决定，图片再大也被 object-fit 裁进格子里。 */
 .shelf {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px 12px;
     padding: 14px 14px 6px;
 }
-@media (min-width: 520px) { .shelf { grid-template-columns: repeat(4, 1fr); } }
-@media (min-width: 720px) { .shelf { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 520px) { .shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 720px) { .shelf { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 
 .bk {
     display: flex; flex-direction: column; gap: 7px;
+    min-width: 0;                       /* ★ v3.7.11b：防止大图把书本卡片顶宽 */
     cursor: pointer;
     -webkit-touch-callout: none;
     animation: bkIn .22s ease both;
@@ -2365,10 +2378,14 @@ body.multi-src-on .chk-src { display: block; }
 @media (prefers-reduced-motion: reduce) { .bk { animation: none; } }
 .bk:active .bk-cover { transform: scale(.965); }
 
-/* 封面本体：竖立的一册书 */
+/* 封面本体：竖立的一册书。
+   ★ v3.7.11b：aspect-ratio 旧 WebView（Chrome 88 前）不支持 → 高度塌陷后
+   img height:100% 失效，封面图按原始尺寸渲染直接撑爆页面。
+   改用 padding-top 撑比例的经典写法（4.15 / 3 = 138.33%），全版本兼容。 */
 .bk-cover {
     position: relative;
-    width: 100%; aspect-ratio: 3 / 4.15;
+    width: 100%; height: 0; padding-top: 138.33%;
+    max-width: 100%; min-width: 0;      /* ★ v3.7.11b：永不被内容撑宽 */
     border-radius: 3px 8px 8px 3px;      /* 左侧书脊更方、右侧书口更圆 */
     overflow: hidden;
     background: linear-gradient(145deg, var(--line2), var(--card));
@@ -2378,7 +2395,12 @@ body.multi-src-on .chk-src { display: block; }
         0 1px 2px rgba(0, 0, 0, .16);
     transition: transform .16s ease;
 }
-.bk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* img 必须绝对定位压在 padding 撑出的画布上，否则参与流内布局再次撑高 */
+.bk-cover img {
+    position: absolute; left: 0; top: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+}
 .bk-ph {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
