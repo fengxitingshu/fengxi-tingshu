@@ -763,6 +763,37 @@ public class Bridge {
         });
     }
 
+    /**
+     * ★ v3.7.9：查询 Python 运行时状态。
+     *
+     * <p>背景：冷启动时 Python 解释器在后台解压 assets（13MB），这段时间
+     * .py 源还没登记进源表。前端需要区分两种情况再决定提示文案：
+     * <ul>
+     *   <li>{@code state="loading"} —— 正在后台初始化，稍等就好（不要吓唬用户说"不支持"）；</li>
+     *   <li>{@code state="ready"}   —— 已就绪；</li>
+     *   <li>{@code state="failed"}  —— 启动失败，附 {@code error} 原因；</li>
+     *   <li>{@code state="idle"}    —— 还没开始（理论上不会出现）。</li>
+     * </ul>
+     */
+    @JavascriptInterface
+    public void pythonStatus() {
+        JSONObject o = new JSONObject();
+        try {
+            boolean ok = com.tingshu.app.python.PythonHost.available();
+            String state;
+            if (ok) state = "ready";
+            else if (com.tingshu.app.python.PythonHost.starting()) state = "loading";
+            else if (com.tingshu.app.python.PythonHost.lastError() != null
+                    && com.tingshu.app.python.PythonHost.lastError().length() > 0) state = "failed";
+            else state = "idle";
+            o.put("ok", ok);
+            o.put("state", state);
+            o.put("error", com.tingshu.app.python.PythonHost.lastError());
+            o.put("pending", com.tingshu.app.source.SourceRegistry.pythonPending());
+        } catch (Throwable ignored) {}
+        callback("onPythonStatus", o);
+    }
+
     // ==================== 源导入 / 导出 ====================
     // 全部丢 singlePool：解析 JSON、写库、拉网络都可能慢。
     // 前端回调统一走 onSourceImported / onSourceExported / onCustomList / onSourceTested。
@@ -1547,6 +1578,170 @@ public class Bridge {
             i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             activity.startActivity(i);
         } catch (Throwable ignored) {}
+    }
+
+    // ==================== ★ v3.7.9 关于页：打开链接 / 检查更新 ====================
+
+    /**
+     * 用系统浏览器打开一个外部链接。
+     *
+     * <p>用于「关于 → GitHub 仓库 / 问题反馈」这类入口 —— 这些页面在
+     * WebView 里打开体验很差（没有下载、没有登录态、还可能被源嗅探逻辑干扰），
+     * 交给系统浏览器最稳妥。
+     *
+     * <p>只允许 http/https，防止被前端（或某个书源脚本）诱导打开 intent:// 之类的
+     * 危险 scheme 去干别的事。
+     */
+    @JavascriptInterface
+    public void openUrl(final String url) {
+        if (url == null) return;
+        final String u = url.trim();
+        if (!u.startsWith("http://") && !u.startsWith("https://")) return;
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    android.content.Intent i = new android.content.Intent(
+                            android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u));
+                    i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    activity.startActivity(i);
+                } catch (Throwable t) {
+                    js("window.onToast(" + JSONObject.quote("没有可打开链接的应用") + ")");
+                }
+            }
+        });
+    }
+
+    /**
+     * ★ v3.7.9：检查是否有新版本。
+     *
+     * <p>查的是 GitHub Releases 的 latest 接口（仓库已有发布流程，放这里最自然）：
+     * <pre>
+     *   https://api.github.com/repos/&lt;owner&gt;/&lt;repo&gt;/releases/latest
+     * </pre>
+     * 返回 JSON 里 {@code tag_name}（如 {@code v3.7.9}）与 {@code html_url}（发布页）。
+     * 与本地 versionName 做版本号比较（三段数字逐位比），有新版才提示。
+     *
+     * <p>网络失败 / 仓库还没有 release 都**不能**当成错误弹给用户 ——
+     * 没网是常态，安静地回一句"检查失败"即可，别在关于页糊一个红框。
+     */
+    @JavascriptInterface
+    public void checkUpdate() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                String local = localVersionName();
+                try {
+                    o.put("local", local);
+                } catch (Throwable ignored) {}
+                try {
+                    String body = httpGetText(UPDATE_API, 8000);
+                    if (body == null || body.length() == 0) {
+                        o.put("ok", false);
+                        o.put("error", "网络请求失败");
+                        callback("onUpdateResult", o);
+                        return;
+                    }
+                    org.json.JSONObject j = new org.json.JSONObject(body);
+                    String tag = j.optString("tag_name", "");
+                    String page = j.optString("html_url", "");
+                    if (tag.length() == 0) {
+                        o.put("ok", false);
+                        o.put("error", "没有找到发布版本");
+                        callback("onUpdateResult", o);
+                        return;
+                    }
+                    String latest = tag.startsWith("v") || tag.startsWith("V")
+                            ? tag.substring(1) : tag;
+                    o.put("ok", true);
+                    o.put("latest", latest);
+                    o.put("tag", tag);
+                    o.put("url", page);
+                    o.put("hasNew", compareVer(latest, local) > 0);
+                    callback("onUpdateResult", o);
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", t.getClass().getSimpleName());
+                    } catch (Throwable ignored) {}
+                    callback("onUpdateResult", o);
+                }
+            }
+        });
+    }
+
+    /** 版本更新检查地址（GitHub Releases latest） */
+    private static final String UPDATE_API =
+            "https://api.github.com/repos/fengxitingshu/fengxi-tingshu/releases/latest";
+
+    /** 读本地安装包的 versionName */
+    private String localVersionName() {
+        try {
+            return activity.getPackageManager()
+                    .getPackageInfo(activity.getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "0.0.0";
+        }
+    }
+
+    /**
+     * 极简 HTTP GET（只用于更新检查这种一次性小请求）。
+     * 不引第三方库，超时短，失败返回 null。
+     */
+    private static String httpGetText(String url, int timeoutMs) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Accept", "application/vnd.github+json");
+            conn.setRequestProperty("User-Agent", "FengxiTingshu");
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+            java.io.InputStream in = conn.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            in.close();
+            return new String(bo.toByteArray(), "UTF-8");
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (conn != null) { try { conn.disconnect(); } catch (Throwable ignored) {} }
+        }
+    }
+
+    /**
+     * 版本号比较：a &gt; b 返回正数，相等 0，a &lt; b 返回负数。
+     * 只比前三段数字（3.7.9 这种），段数不齐按 0 补 —— 后缀（-beta）忽略。
+     */
+    private static int compareVer(String a, String b) {
+        int[] va = verParts(a);
+        int[] vb = verParts(b);
+        for (int i = 0; i < 3; i++) {
+            if (va[i] != vb[i]) return va[i] - vb[i];
+        }
+        return 0;
+    }
+
+    private static int[] verParts(String s) {
+        int[] out = new int[]{0, 0, 0};
+        if (s == null) return out;
+        String t = s.trim();
+        // 去掉 -beta / +build 这类后缀
+        int dash = t.indexOf('-');
+        if (dash >= 0) t = t.substring(0, dash);
+        int plus = t.indexOf('+');
+        if (plus >= 0) t = t.substring(0, plus);
+        String[] seg = t.split("\\.");
+        for (int i = 0; i < 3 && i < seg.length; i++) {
+            try {
+                out[i] = Integer.parseInt(seg[i].replaceAll("[^0-9]", ""));
+            } catch (Throwable ignored) {}
+        }
+        return out;
     }
 
     // ==================== 缓存 ====================

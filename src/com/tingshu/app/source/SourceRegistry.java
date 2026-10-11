@@ -71,6 +71,14 @@ public final class SourceRegistry {
      *
      * <p>源文件放在 {@code <filesDir>/python_sources/}，文件名即源 id。
      * 每个文件独立 try-catch，单个坏源不影响其它源。
+     *
+     * <p>★★ v3.7.9：本方法**绝不再触发解释器启动**。
+     * 它会被 {@code App.onCreate()}（主线程）经 {@code registerAll()} 调到，
+     * 而解释器首次启动要解压 13MB assets —— 一旦在这里同步跑，
+     * 冷启动主线程就被钉住数秒，用户看到"第一次打开没有书源，等很久才出来"。
+     * 现在只做「已就绪才登记」：未就绪直接返回，等
+     * {@link com.tingshu.app.python.PythonHost} 后台启动完成、
+     * {@code App} 收到 ReadyListener 回调后重新 {@link #reload()} 补齐。
      */
     private static void loadPythonSources() {
         android.content.Context ctx;
@@ -90,8 +98,12 @@ public final class SourceRegistry {
         File[] files = dir.listFiles();
         if (files == null || files.length == 0) return;
 
-        // 运行时没起来就整体跳过（首次启动会解压 assets，这里不阻塞主线程）
-        if (!com.tingshu.app.python.PythonHost.available()) return;
+        // ★ v3.7.9：只查状态，不点火（available 内部也不再阻塞，绝不会启动解释器）
+        if (!com.tingshu.app.python.PythonHost.available()) {
+            PY_PENDING.set(true);   // 标记"有 .py 源等着补登记"，供 App 决定是否要热重载
+            return;
+        }
+        PY_PENDING.set(false);
 
         java.util.Arrays.sort(files, new java.util.Comparator<File>() {
             public int compare(File a, File b) {
@@ -115,6 +127,15 @@ public final class SourceRegistry {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /** ★ v3.7.9：还有已导入的 .py 源没登记上（等解释器后台启动完再补） */
+    private static final java.util.concurrent.atomic.AtomicBoolean PY_PENDING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** 是否存在「因 Python 运行时未就绪而暂缓登记」的源 */
+    public static boolean pythonPending() {
+        return PY_PENDING.get();
     }
 
     /** ★ v3.4：只取 Python 源 */

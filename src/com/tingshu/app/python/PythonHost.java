@@ -38,6 +38,17 @@ public final class PythonHost {
     private static volatile String lastError = "";
     private static volatile PyObject module;
 
+    /**
+     * ★ v3.7.9：解释器当前处于「正在启动」状态。
+     *
+     * <p>启动是**一次性的**（首次解压 assets + self_test），一旦开始就必须跑完，
+     * 中途不能被并发线程重复进入 —— 而它会持续几百毫秒到两三秒。
+     * 这段时间里所有问 {@link #available()} 的地方都会拿到 false，
+     * 但原因不是"不支持"而是"还没好"。调用方（尤其是前端提示文案）
+     * 需要区分这两种情况，所以单独开一个可读的标记。
+     */
+    private static volatile boolean starting = false;
+
     private PythonHost() {}
 
     /**
@@ -47,36 +58,122 @@ public final class PythonHost {
      * 直接返回 false，导致全项目没有任何一处真正启动过解释器，
      * 真机上永远报「Python 运行时不可用」（原因还是空字符串）。
      * 现在自己取 Application 上下文尝试启动，调用方不再需要关心传 Context。
+     *
+     * <p>★★ v3.7.9 关键修复：**这个方法不再阻塞调用线程**。
+     *
+     * <p><b>问题</b>：原实现里，首次调用会当场执行 {@code Python.start()} ——
+     * Chaquopy 要把 {@code assets/chaquopy} 下 13MB 资源（bootstrap-native 5.6M /
+     * requirements 3.2M / stdlib 2.8M）解压到 filesDir，还要跑一次 self_test。
+     * 而调用链是：
+     * <pre>
+     *   App.onCreate()            ← 主线程
+     *     └ SourceRegistry.registerAll()
+     *         └ reload() → loadPythonSources() → available() → ensureStarted()
+     * </pre>
+     * 于是**每次冷启动主线程都被卡住数秒**，WebView 首屏一直拿不到源列表
+     * （前端 listSources 走 singlePool，可主线程正被占着，Activity 都没起来），
+     * 用户看到的就是"第一次打开没有书源，等很久才出来"。
+     *
+     * <p><b>现在的策略</b>：本方法只做「查状态 + 必要时点火」，绝不等待。
+     * <ul>
+     *   <li>已就绪 → 直接 true；</li>
+     *   <li>正在启动 → 立刻 false（调用方本轮先跳过 Python 源）；</li>
+     *   <li>没启动过 → **丢到后台线程**去 ensureStarted，立刻返回 false；</li>
+     *   <li>启动完成 → 回调 {@link #onReady} 让上层热重载源表。</li>
+     * </ul>
+     * 这样主线程永远是毫秒级返回，源列表（JSON/jar/JS）先出来，Python 源稍后补上。
      */
     public static boolean available() {
         if (ok) return true;
-        if (!TRIED.get()) {
-            android.content.Context app = null;
-            try {
-                app = com.tingshu.app.core.App.ctx();
-            } catch (Throwable ignored) {}
-            if (app == null) {
-                // App 还没初始化（极早阶段），不标记 TRIED，下次再试
-                return false;
-            }
-            return ensureStarted(app);
-        }
-        return ok;
-    }
-
-    /** 最近一次失败原因（诊断用） */
-    public static String lastError() {
-        return lastError;
+        if (starting) return false;             // 正在解压，本次先跳过
+        if (TRIED.get()) return ok;             // 启动过了但失败 → 永久 false
+        kickStart();
+        return false;                            // 首次调用：本轮不等，后台去启动
     }
 
     /**
-     * 确保运行时已启动。首次调用会解压 assets，可能耗时，建议在子线程调。
+     * ★ v3.7.9：判断「Python 运行时是否还在准备中」（区别于"不可用"）。
+     * 前端用它来决定提示文案：准备中说"正在初始化"，失败才说"不可用"。
+     */
+    public static boolean starting() {
+        return starting && !ok;
+    }
+
+    /** 运行时就绪回调（只保留一个，见 {@link #setReadyListener}） */
+    public interface ReadyListener {
+        void onReady(boolean ok);
+    }
+
+    private static volatile ReadyListener readyListener;
+
+    /**
+     * 注册「Python 运行时就绪」回调。
+     *
+     * <p>由 {@code App} 在 onCreate 里挂上：启动完成（无论成败）时喊一声，
+     * App 据此在后台线程把源表重新 reload 一次，把刚才跳过没登记的 .py 源补进去，
+     * 并主动推一次 onSourceList 给前端。回调在**后台线程**触发，实现方自己切主线程。
+     */
+    public static void setReadyListener(ReadyListener l) {
+        readyListener = l;
+        // 注册时若已经就绪（比如热重载、或上个进程留下的状态），立刻补一次通知，
+        // 避免"注册晚了一步，回调永远不来"。
+        if (l != null && TRIED.get()) {
+            try { l.onReady(ok); } catch (Throwable ignored) {}
+        }
+    }
+
+    /** 后台点火：把 ensureStarted 丢给单线程池，绝不占用调用线程 */
+    private static void kickStart() {
+        if (!TRIED.compareAndSet(false, true)) return;   // 别人抢到了就不重复点
+        starting = true;
+        android.content.Context app = null;
+        try {
+            app = com.tingshu.app.core.App.ctx();
+        } catch (Throwable ignored) {}
+        if (app == null) {
+            // App 还没初始化（极早阶段），撤回标记，下次再试
+            TRIED.set(false);
+            starting = false;
+            return;
+        }
+        final android.content.Context ctx = app.getApplicationContext();
+        try {
+            com.tingshu.app.source.Aggregator.singlePool().execute(new Runnable() {
+                public void run() {
+                    startNow(ctx);
+                    starting = false;
+                    ReadyListener l = readyListener;
+                    if (l != null) {
+                        try { l.onReady(ok); } catch (Throwable ignored) {}
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            // 线程池都不可用（极端情况）：退回同步启动，总比整个不可用强
+            startNow(ctx);
+            starting = false;
+        }
+    }
+
+    /**
+     * 确保运行时已启动（**阻塞式**，只允许在后台线程调）。
+     *
+     * <p>★ v3.7.9：本方法保留给「导入 .py 源」这条路 —— 用户明确点了导入，
+     * 等一会是合理的，而且必须等解释器真的可用才能装载脚本。
+     * 冷启动路径**不要**用这个方法，走 {@link #available()}（非阻塞点火）。
      *
      * @param ctx Application 上下文；为 null 时若未启动过则立即返回 false
      */
     public static synchronized boolean ensureStarted(Context ctx) {
-        if (TRIED.get()) return ok;
+        if (TRIED.get() && !starting) return ok;
         if (ctx == null) return false;
+        return startNow(ctx);
+    }
+
+    /** 真正的启动逻辑：解压 assets + self_test。耗时，禁止在主线程调。 */
+    private static synchronized boolean startNow(Context ctx) {
+        if (ctx == null) return false;
+        if (ok) return true;
         TRIED.set(true);
         try {
             if (!Python.isStarted()) {
@@ -95,6 +192,11 @@ public final class PythonHost {
             Log.e(TAG, "Python 运行时启动失败", t);
         }
         return ok;
+    }
+
+    /** 最近一次失败原因（诊断用） */
+    public static String lastError() {
+        return lastError;
     }
 
     /**

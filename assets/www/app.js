@@ -19,6 +19,8 @@
         book: null,
         chapIdx: -1,
         detailIntro: '',
+        // ★ v3.7.9：章节列表视图偏好 —— 分列数（1/2/3）与当前区间段号
+        chapView: { cols: 1, seg: 0 },
 
         playing: false,
         cur: 0,
@@ -239,8 +241,13 @@
     // ★ v3.7.5：首页"加载更多"状态
     App.homeHasMore = false;        // 当前分类是否还有下一页
     App.homeMoreBusy = false;       // 是否正在拉下一页（防重复触发）
+    App.homeMoreSince = 0;          // ★ v3.7.9：本次加载开始时间戳（用于超时兜底复位）
     App.homeMoreWait = null;        // 正在等哪一页（{src,cat,page}）
     App.homePageSize = 0;           // ★ v3.7.6：满页基准（首屏这一页的条数）
+    // ★ v3.7.9：Python 运行时状态（冷启动时它会在后台慢慢起）
+    App.pyState = 'idle';           // idle | loading | ready | failed
+    App.pyBootToast = false;        // 就绪后是否要提示"已就绪 N 个 Python 书源"
+    App._pyPollTimer = null;        // ★ v3.7.9：Python 启动兜底轮询定时器
 
     function loadHome() {
         // 继续收听 / 收藏 / 历史统计仍走原生，用于底部「继续收听」和空态提示
@@ -381,6 +388,7 @@
     function resetHomePaging() {
         App.homeHasMore = false;
         App.homeMoreBusy = false;
+        App.homeMoreSince = 0;
         App.homeMoreWait = null;
         App.homePageSize = 0;
     }
@@ -659,7 +667,26 @@
 
     /** 加载当前分类的下一页 */
     ui.homeMore = function () {
-        if (App.homeMoreBusy || !App.homeHasMore) return;
+        // ★ v3.7.9：修复「加载更多按钮点了没反应」。
+        //   根因：滚到底部时会**自动**触发一次 ui.homeMore（near < 320），
+        //   把 homeMoreBusy 置 true；用户随后点按钮，被这个守卫静默 return 掉，
+        //   而按钮又没被置灰（disabled 在守卫之后才设），看起来就是"点了没作用"。
+        //   现在：正在加载时给按钮明确的"加载中"反馈；并且只在真的卡住（>15s）
+        //   时才拦，其余情况允许用户再点一次（重复页会被 onBrowse 的页号匹配丢弃，
+        //   不会造成错乱）。
+        var now = Date.now();
+        if (App.homeMoreBusy) {
+            var stuck = App.homeMoreSince && (now - App.homeMoreSince) > 15000;
+            if (!stuck) {
+                var b0 = $('homeMoreBtn');
+                if (b0) { b0.disabled = true; b0.textContent = '加载中…'; }
+                return;
+            }
+            // 卡太久（源超时/网络异常）→ 复位，让这次点击真正生效
+            App.homeMoreBusy = false;
+            App.homeMoreWait = null;
+        }
+        if (!App.homeHasMore) return;
         var cfg = homeCurrentSrc();
         if (!cfg || !cfg.id) return;
         var cat = App.home.cat;
@@ -668,6 +695,7 @@
         var cached = browseLoad(cfg.id, cat, next, false);
         if (cached) { renderHomeList(cached, cfg.id, cat, next, true); return; }
         App.homeMoreBusy = true;
+        App.homeMoreSince = now;
         var btn = $('homeMoreBtn');
         if (btn) { btn.disabled = true; btn.textContent = '加载中…'; }
         // 谁在等这一页（首页 onBrowse 用它判断该追加还是整块渲染）
@@ -1382,6 +1410,16 @@
         if (b) App.book = b;
         App.chapters = d.chapters || [];
         App.detailIntro = d.intro || '';
+        // ★ v3.7.9：一批新章节到手，区间段号要按新总数收敛（上一本可能只有 1 段，
+        //   这本有 8 段，用户上次停在第 3 段 → 保持不变；反之超出就夹回最后一段）。
+        loadChapView();
+        if (App.chapters.length) {
+            var w0 = chapWindow(App.chapters.length);
+            if (App.chapView.seg !== w0.seg) {
+                App.chapView.seg = w0.seg;
+                saveChapView();
+            }
+        }
 
         // 会话恢复场景：native 只回了集号，这里拿到完整章节表后校正 index
         if (App.sessionResume && App.chapters.length) {
@@ -1419,6 +1457,145 @@
             renderDetail();
         }
     };
+
+    // ==================== ★ v3.7.9：章节列表 分列 / 区间 ====================
+    //
+    // 长列表（几千集）的痛点：一列得滑很久，而且想跳到第 1500 集基本靠拖。
+    // 给两个控件：
+    //   ① 分列 1 / 2 / 3 —— 手机上 2 列通常最舒服，3 列适合集名很短的源；
+    //   ② 区间切换 —— 每 200 集一段，直接点段号跳过去（第 3 段 = 401~600）。
+    //
+    // 状态存在 App.chapView，从详情页返回再进来会保持，不会每次都重置成 1 列第 1 段。
+
+    /** 每段集数（区间切换的步长） */
+    var CHAP_SEG = 200;
+
+    /** 取当前分列数（1/2/3，默认 1） */
+    function chapCols() {
+        var n = App.chapView && App.chapView.cols;
+        return (n === 2 || n === 3) ? n : 1;
+    }
+
+    /** 取当前区间下标（0 基，默认 0） */
+    function chapSeg() {
+        var n = App.chapView && App.chapView.seg;
+        return (typeof n === 'number' && n >= 0) ? n : 0;
+    }
+
+    /** 当前区间覆盖的下标范围 [start, end) */
+    function chapWindow(total) {
+        var segCount = Math.max(1, Math.ceil(total / CHAP_SEG));
+        var seg = chapSeg();
+        if (seg >= segCount) seg = segCount - 1;
+        if (seg < 0) seg = 0;
+        var start = seg * CHAP_SEG;
+        var end = Math.min(total, start + CHAP_SEG);
+        return { start: start, end: end, seg: seg, segCount: segCount };
+    }
+
+    /** 区间段的中文标签：第 1 段 → 1~200 */
+    function chapSegLabel(i, total) {
+        var a = i * CHAP_SEG + 1;
+        var b = Math.min(total, (i + 1) * CHAP_SEG);
+        return a + '~' + b;
+    }
+
+    /**
+     * 渲染章节工具条：分列切换 + 区间切换。
+     * 集数不多（<= 一屏能忍）时只出分列，不出现区间（省得界面啰嗦）。
+     */
+    function renderChapTools(total) {
+        var cols = chapCols();
+        var win = chapWindow(total);
+
+        var h = '<div class="chap-tools" id="chapTools">';
+
+        // 列数切换
+        var names = { 1: '1 列', 2: '2 列', 3: '3 列' };
+        h += '<div class="ct-group"><span class="ct-lb">显示</span>';
+        for (var n = 1; n <= 3; n++) {
+            h += '<span class="ct-btn' + (n === cols ? ' on' : '') +
+                 '" onclick="App.ui.chapSetCols(' + n + ')">' + names[n] + '</span>';
+        }
+        h += '</div>';
+
+        // 区间切换：只在真的需要分段时才出现
+        if (win.segCount > 1) {
+            h += '<div class="ct-group"><span class="ct-lb">区间</span>';
+            h += '<span class="ct-btn ct-nav" onclick="App.ui.chapSegStep(-1)"' +
+                 (win.seg <= 0 ? ' disabled' : '') + '>‹</span>';
+            for (var i = 0; i < win.segCount; i++) {
+                // 段太多（>12 段）只显示当前段附近，避免一排按钮横到天边
+                if (win.segCount > 12 && Math.abs(i - win.seg) > 2 && i !== 0
+                        && i !== win.segCount - 1) {
+                    if (Math.abs(i - win.seg) === 3) h += '<span class="ct-dots">…</span>';
+                    continue;
+                }
+                h += '<span class="ct-btn' + (i === win.seg ? ' on' : '') +
+                     '" onclick="App.ui.chapSetSeg(' + i + ')">' +
+                     chapSegLabel(i, total) + '</span>';
+            }
+            h += '<span class="ct-btn ct-nav" onclick="App.ui.chapSegStep(1)"' +
+                 (win.seg >= win.segCount - 1 ? ' disabled' : '') + '>›</span>';
+            h += '</div>';
+        }
+
+        h += '</div>';
+        return h;
+    }
+
+    /** 切换分列（1/2/3）：只改容器 class + 重画工具条，不整页重绘 */
+    ui.chapSetCols = function (n) {
+        if (n !== 1 && n !== 2 && n !== 3) return;
+        if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
+        App.chapView.cols = n;
+        saveChapView();
+        var list = $('chapList');
+        if (list) {
+            list.className = 'chapter-list cols-' + n;
+        }
+        var tools = $('chapTools');
+        if (tools) tools.outerHTML = renderChapTools(App.chapters.length);
+    };
+
+    /** 跳到指定区间段：需要重画列表（只画这一段） */
+    ui.chapSetSeg = function (i) {
+        if (typeof i !== 'number' || i < 0) return;
+        if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
+        App.chapView.seg = i;
+        saveChapView();
+        renderDetail();
+        // 换段后回到列表顶部，别停在上一段的滚动位置
+        var c = $('detailContent');
+        if (c) c.scrollTop = 0;
+    };
+
+    /** 上一段 / 下一段 */
+    ui.chapSegStep = function (d) {
+        var win = chapWindow(App.chapters.length);
+        ui.chapSetSeg(win.seg + d);
+    };
+
+    /** 章节视图偏好持久化（下次进详情页还是这个列数/段号） */
+    function saveChapView() {
+        try {
+            localStorage.setItem('fx_chap_view_v1', JSON.stringify(App.chapView || {}));
+        } catch (e) {}
+    }
+
+    function loadChapView() {
+        try {
+            var s = localStorage.getItem('fx_chap_view_v1');
+            if (s) {
+                var o = JSON.parse(s);
+                App.chapView = {
+                    cols: (o && (o.cols === 2 || o.cols === 3)) ? o.cols : 1,
+                    seg: (o && typeof o.seg === 'number' && o.seg >= 0) ? o.seg : 0
+                };
+            }
+        } catch (e) {}
+        if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
+    }
 
     function renderDetail() {
         var c = $('detailContent');
@@ -1494,7 +1671,17 @@
         h += '<div class="chapter-hd"><span>章节列表</span>' +
              '<span class="rt">共 ' + chs.length + ' 集</span></div>';
 
-        for (var i = 0; i < chs.length; i++) {
+        // ★ v3.7.9：章节列表太长（几百上千集）时的两个控件 ——
+        //   ① 分列：1 / 2 / 3 列，长列表一屏能看更多；
+        //   ② 区间：每 200 集切一段，直接跳段，不用滚到底。
+        //   两者都存进 App.chapView，切页面/重进详情时保持用户的选择。
+        h += renderChapTools(chs.length);
+
+        // ★ v3.7.9：只渲染「当前区间」那一段（每段 200 集），
+        //   不然上千集一次性建几千个 DOM 节点，进详情页会明显卡顿。
+        var win = chapWindow(chs.length);
+        h += '<div class="chapter-list cols-' + chapCols() + '" id="chapList">';
+        for (var i = win.start; i < win.end; i++) {
             var ch = chs[i];
             var no = ch.index || (i + 1);
             // ★ v2.9：长按进入多选（600ms）。
@@ -1517,6 +1704,7 @@
                  '" onclick="event.stopPropagation();App.ui.dlChapter(' + no + ')"></div>';
             h += '</div>';
         }
+        h += '</div>';
         c.innerHTML = h;
         c.scrollTop = 0;
         if (App.chapIdx >= 0) highlight(App.chapIdx);
@@ -2143,10 +2331,14 @@
             if (total > 0) {
                 // 章节自带 index（有些源集号不连续）时优先用它
                 var no = ch.index || (idx + 1);
-                // ★ v3.7.6：去汉字，只留数字用括号括起来。
-                //   原来「第 3 集 / 共 120 集」太长，在窄屏上会和主播名抢位置；
-                //   现在就是一个紧凑的 (3/120)。
-                ep.textContent = '(' + no + '/' + total + ')';
+                // ★ v3.7.9：括号改成中文全角「（N/M）」。
+                //   半角 (3/120) 在中文语境里字形偏瘦、和字重不搭，
+                //   而且数字贴着括号壁看着挤 —— 全角括号自带内边距，
+                //   与旁边的「主播名」pill 摆在一起也更协调。
+                //   同时把两个数字拆成独立 span，让「当前集」比「总数」重一档，
+                //   一眼能抓住"播到第几集"这个信息。
+                ep.innerHTML = '<i>（</i><b>' + no + '</b><s>/</s><em>' + total +
+                               '</em><i>）</i>';
                 ep.style.display = '';
             } else {
                 ep.textContent = '';
@@ -3295,6 +3487,7 @@
     };
 
     window.onSourceList = function (arr) {
+        var prev = App.sources || [];
         App.sources = arr || [];
         // 名字映射缓存（详情/播放/搜索分组标注来源用）
         var map = {};
@@ -3311,7 +3504,51 @@
             paintSrcGroup();
         }
         if (App.page === TABS.home) paintHomeSources();
+
+        // ★ v3.7.9：源表在"启动后"变多了 —— 说明是 Python 运行时后台就绪后
+        //   补登记的那批 .py 源。这时要把首页/发现页的源列表一起刷新，
+        //   并把用户之前记着的那个源重新选中（可能它刚刚才出现）。
+        if (App.sources.length > prev.length) {
+            TS.call('discoverSources');
+            if (App.pyBootToast) {
+                App.pyBootToast = false;
+                var added = App.sources.length - prev.length;
+                if (added > 0) TS.toast('已就绪 ' + added + ' 个 Python 书源');
+            }
+        }
     };
+
+    /**
+     * ★ v3.7.9：Python 运行时状态回调。
+     * 冷启动时解释器在后台解压 assets（13MB），.py 源要等它起好才登记。
+     * 前端据此给用户一句明确的提示，而不是让人对着空列表发愣。
+     */
+    window.onPythonStatus = function (o) {
+        o = o || {};
+        App.pyState = o.state || 'idle';
+        if (o.state === 'loading') {
+            App.pyBootToast = true;     // 就绪后由 onSourceList 弹"已就绪 N 个"提示
+            // 兜底轮询：原生回调理论上会推 onSourceList，但万一错过，
+            // 这里每 1.5s 问一次状态，就绪后自己再拉一遍源表。
+            pyPoll();
+        }
+    };
+
+    /** ★ v3.7.9：Python 运行时启动期间的兜底轮询（最多 ~30 次，约 45 秒） */
+    function pyPoll() {
+        if (App._pyPollTimer) return;
+        var tries = 0;
+        App._pyPollTimer = setInterval(function () {
+            tries++;
+            if (tries > 30) { clearInterval(App._pyPollTimer); App._pyPollTimer = null; return; }
+            if (App.pyState === 'ready' || App.pyState === 'failed') {
+                clearInterval(App._pyPollTimer); App._pyPollTimer = null;
+                return;
+            }
+            TS.call('pythonStatus');
+            TS.call('listSources');
+        }, 1500);
+    }
 
     window.onSourceNames = function (o) {
         App.sourceNames = o || {};
@@ -4774,6 +5011,7 @@
             // ★ v3.7.5：「加载更多」这一路：追加到已有列表
             var w = App.homeMoreWait;
             App.homeMoreBusy = false;
+            App.homeMoreSince = 0;
             if (w && o && o.source === w.src && o.path === w.cat && o.page === w.page) {
                 App.homeMoreWait = null;
                 if (o.error) {
@@ -5272,8 +5510,10 @@
         // 版本号用 native 回传的真实值，别再写死在 HTML 里。
         // ★ v2.5：页面上有两个版本位 —— 设置页的 appVer 与关于页的 aboutVer，都要同步。
         if (o && o.version) {
+            App.version = o.version;
             if ($('appVer')) $('appVer').textContent = o.version;
             if ($('aboutVer')) $('aboutVer').textContent = o.version;
+            if ($('updCurVer')) $('updCurVer').textContent = o.version;
             if ($('aboutEntrySub')) $('aboutEntrySub').textContent =
                 '版本 ' + o.version + ' · 更新与交流';
         }
@@ -5318,12 +5558,94 @@
         }
     };
 
+    // ==================== ★ v3.7.9 关于页：更新检查 / 开源链接 ====================
+
+    /** 仓库地址（与原生 checkUpdate 里查的仓库保持一致） */
+    var GH_REPO = 'https://github.com/fengxitingshu/fengxi-tingshu';
+    var GH_ISSUES = GH_REPO + '/issues';
+
+    /** 交给系统浏览器打开仓库主页 */
+    ui.openGitHub = function () {
+        TS.call('openUrl', GH_REPO);
+    };
+
+    /** 打开 issue 列表 */
+    ui.openGitHubIssues = function () {
+        TS.call('openUrl', GH_ISSUES);
+    };
+
+    /**
+     * 检查更新：问原生要 GitHub 最新 release，再按结果刷新卡片。
+     * 原生那头已经做了超时与失败兜底，这里只管把结果画出来。
+     */
+    ui.checkUpdate = function () {
+        var btn = $('updCheckBtn');
+        var msg = $('updMsg');
+        if (btn) { btn.disabled = true; btn.textContent = '检查中…'; }
+        if (msg) msg.innerHTML = '正在向 GitHub 查询最新版本…';
+        TS.call('checkUpdate');
+    };
+
+    /** 更新检查结果回调（原生 onUpdateResult） */
+    window.onUpdateResult = function (o) {
+        o = o || {};
+        var btn = $('updCheckBtn');
+        var msg = $('updMsg');
+        var acts = $('updActions');
+        if (btn) { btn.disabled = false; btn.textContent = '检查更新'; }
+
+        var cur = o.local || App.version || '';
+
+        if (!o.ok) {
+            if (msg) msg.innerHTML = '检查失败：' + TS.esc(o.error || '网络不可用') +
+                '<br><span style="opacity:.7">' + TS.esc(cur ? '当前版本 ' + cur : '') +
+                '，可稍后重试，或直接去仓库看最新发布。</span>';
+            return;
+        }
+
+        if (o.hasNew) {
+            if (msg) msg.innerHTML = '发现新版本 <b>' + TS.esc(o.latest) + '</b>' +
+                '（当前 ' + TS.esc(cur) + '）<br>' +
+                '<span style="opacity:.75">去 GitHub Releases 下载最新安装包。</span>';
+            // 有新版时把按钮换成"去下载"，直接开 release 页
+            if (acts && !$('updGoBtn')) {
+                var b = document.createElement('button');
+                b.className = 'mini';
+                b.id = 'updGoBtn';
+                b.textContent = '去下载';
+                b.onclick = function () {
+                    TS.call('openUrl', o.url || (GH_REPO + '/releases'));
+                };
+                acts.appendChild(b);
+            }
+        } else {
+            if (msg) msg.innerHTML = '已是最新版本 <b>' + TS.esc(o.latest || cur) +
+                '</b>，无需更新。';
+        }
+    };
+
     // ==================== ★ v3.7.3 更新公告 ====================
     //
     // 只写「修复了哪些问题 / 增加了哪些功能」两件事，不写实现过程。
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.7.9',
+            date: '2025-10-11',
+            fixes: [
+                '修复首页「加载更多」点了没反应的问题（按钮反馈与真实加载状态现在一致）',
+                '修复每次冷启动都要等很久才出书源的问题（Python 书源改为后台初始化，不再卡住启动）',
+                '修复播放页集数括号与主播名挤在一起、看着不协调的问题'
+            ],
+            adds: [
+                '章节列表新增「1 / 2 / 3 列」显示切换，长列表一屏能看更多',
+                '章节列表新增「区间」切换，每 200 集一段，可直接跳段不用一路滑',
+                '关于页新增「检查更新」，可一键查询最新发布版本',
+                '关于页新增 GitHub 仓库与问题反馈入口',
+                'Python 书源在后台就绪后会自动补进源列表，并提示已就绪数量'
+            ]
+        },
         {
             ver: '3.7.8',
             date: '2025-10-11',
@@ -5543,6 +5865,10 @@
         TS.call('deviceInfo');
         TS.call('listSources');
         TS.call('listPlugins');
+        // ★ v3.7.9：问一次 Python 运行时状态。冷启动时它还在后台解压 assets，
+        //   这一步是**非阻塞**的（原生侧不会等解释器），拿到 loading 就先提示
+        //   "正在初始化"，等它就绪后 onSourceList 会把 .py 源补齐。
+        TS.call('pythonStatus');
         goTab('home');
         // 悬浮球常驻：先按当前状态摆好（没内容时是灰球）
         syncBall();

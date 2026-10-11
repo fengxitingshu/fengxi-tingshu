@@ -804,8 +804,12 @@ public final class BridgeSource {
             return r;
         }
 
-        // Python 运行时没起来就别装了（装进去也跑不了）
-        if (!com.tingshu.app.python.PythonHost.available()) {
+        // ★ v3.7.9：这里必须**阻塞等**解释器就绪，不能像以前那样调 available()
+        //   一票否决 —— 因为 available() 现在改成非阻塞了（首次调用只点火不等），
+        //   用户刚装完 App 就来导入 .py，会因为"后台还在解压"而被误报
+        //   "Python 运行时不可用"。导入是用户主动操作，等几秒是合理的。
+        //   本方法整体跑在 bg()（后台线程）里，阻塞不会卡 UI。
+        if (!com.tingshu.app.python.PythonHost.ensureStarted(ctx)) {
             String why = com.tingshu.app.python.PythonHost.lastError();
             addMsg(r, "Python 运行时不可用"
                     + (why == null || why.isEmpty()

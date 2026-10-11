@@ -298,11 +298,11 @@
     <div class="ab-hero">
       <div class="ab-logo">&#127925;</div>
       <div class="ab-name">枫兮听书</div>
-      <div class="ab-ver">版本 <span id="aboutVer">3.7.8</span></div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.7.9</span></div>
     </div>
 
     <div class="chapter-hd"><span>信息</span></div>
-    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.8</div></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.7.9</div></div>
     <div class="setrow" onclick="App.ui.openChangelog()">
       <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
       <div class="setval">&#8250;</div>
@@ -310,8 +310,41 @@
     <div class="setrow"><div class="setlabel">网络</div><div class="setval" id="netInfo">检测中…</div></div>
     <div class="setrow"><div class="setlabel">数据存储</div><div class="setval">仅本机</div></div>
 
+    <!-- ★ v3.7.9：更新接口 —— 点一下查 GitHub 最新发布版，有新版直接给入口 -->
+    <div class="chapter-hd"><span>软件更新</span></div>
+    <div class="upd-card">
+      <div class="upd-hd">
+        <span class="upd-ico">&#128260;</span>
+        <span class="upd-t">检查更新</span>
+      </div>
+      <div class="upd-bd" id="updMsg">
+        点下面的按钮向 GitHub 查询最新发布版本。当前版本 <b id="updCurVer">3.7.9</b>。
+      </div>
+      <div class="upd-qr" id="updActions">
+        <div class="upd-qr-l">
+          <div class="upd-qr-k">更新渠道</div>
+          <div class="upd-qr-v">GitHub Releases</div>
+        </div>
+        <button class="mini" id="updCheckBtn" onclick="App.ui.checkUpdate()">检查更新</button>
+      </div>
+      <div class="upd-tip">
+        <a class="ab-link" onclick="App.ui.openGitHub()">打开 GitHub 仓库 &#8250;</a>
+      </div>
+    </div>
+
+    <!-- ★ v3.7.9：开源与反馈 -->
+    <div class="chapter-hd"><span>开源与反馈</span></div>
+    <div class="setrow" onclick="App.ui.openGitHub()">
+      <div class="setlabel">GitHub 仓库<span class="setdesc">源码、发布包与更新记录</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openGitHubIssues()">
+      <div class="setlabel">问题反馈<span class="setdesc">遇到 bug 或有建议，在这里提</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
     <!-- ★ v2.5：更新与反馈入口 —— 点一下复制群号并提示去 QQ 搜群 -->
-    <div class="chapter-hd"><span>更新与反馈</span></div>
+    <div class="chapter-hd"><span>更新与反馈（QQ 群）</span></div>
     <div class="upd-card">
       <div class="upd-hd">
         <span class="upd-ico">&#128227;</span>
