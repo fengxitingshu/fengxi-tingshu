@@ -185,6 +185,13 @@
     }
 
     ui.back = function () {
+        // ★ v3.8.1：自绘弹窗（confirmSheet / inputSheet / 各类 sheet）打开时，
+        //   返回键必须先关弹窗。以前这里完全不看 #sheetWrap，返回键会穿透弹窗
+        //   去关全屏播放页或退回上一级，用户看到的是「弹窗关不掉、按返回却在切页」。
+        //   所有弹窗统一挂在 #sheetWrap 下，所以一处判断即可覆盖全部。
+        if ($('sheetWrap')) { ui.closeSheet(); return true; }
+        // 长按菜单（更多/书签/选集下拉）同理，它挂在 #ctxMenu 上
+        if ($('ctxMenu')) { ctxClose(); return true; }
         // ★ v3.2：离开当前页面前先收起播放页的「更多」下拉，
         //   否则它会悬空留在新页面上
         ui.closeMore();
@@ -2711,6 +2718,11 @@
         App.playErrStreak = 0;
         // ★ v3.7.18：这一集播起来了 → 静默重试计数清零
         App._playRetry = null;
+        // ★ v3.8.1：播成功就作废所有在途的失败看门狗，并清掉去重吞没计数，
+        //   否则下一次真失败可能被上一次遗留的计数吞掉而不出提示
+        App._playErrSeq = (App._playErrSeq || 0) + 1;
+        App._playErrSwallow = 0;
+        if (App._playFailTimer) { clearTimeout(App._playFailTimer); App._playFailTimer = null; }
         // ★ 图标真源只有一个：native 说在播就是在播
         App.playing = true;
         paintPlayIcon(true);
@@ -2793,29 +2805,68 @@
         var retryKey = (bk.key || bk.title || '?') + ':' + chIdx;
 
         // ---- 第一级：静默自救（同一集只自救一次） ----
+        // ★ v3.8.1：必须同时满足「有这一集」，否则重试会调 playChapter，
+        //   而 playChapter 在没有章节列表时只挂 pendingAutoPlay、不关转圈，
+        //   于是转圈永远转下去 —— 这就是「卡死、整个界面点不动」的来源之一。
+        var canRetry = chIdx >= 0 && App.chapters && App.chapters.length > 0
+                && chIdx < App.chapters.length;
         var tries = (App._playRetry && App._playRetry.key === retryKey)
             ? App._playRetry.tries : 0;
-        if (tries < 1 && chIdx >= 0) {
+        if (tries < 1 && canRetry) {
             App._playRetry = { key: retryKey, tries: tries + 1 };
+            // 每次错误发一个单调递增的序号，只有「最新那次」的看门狗有效，
+            // 避免上一集的定时器把这一集的面板提前弹出来。
+            var stamp = (App._playErrSeq = (App._playErrSeq || 0) + 1);
             // 转圈保持转着（不 setBuffering(false)），用户知道还在加载
             setTimeout(function () {
                 // 用户已经手动切了别的集 / 换了书 / 开始播了 → 放弃这次重试
                 if (App.chapIdx !== chIdx || App.playing || !App.book) return;
                 ui.playChapter(chIdx);
             }, 800);
+            // ★ 看门狗：自救这条路必须有个终点。10 秒内还没播起来就认定失败，
+            //   停转圈并弹面板。以前只靠「下一次 onPlayError 会来」兜底，
+            //   但重试请求可能压根发不出去（网络挂死/取链线程卡住），
+            //   那时就再也不会有第二次错误上报 → 永久卡在转圈。
+            if (App._playFailTimer) clearTimeout(App._playFailTimer);
+            App._playFailTimer = setTimeout(function () {
+                App._playFailTimer = null;
+                if (App._playErrSeq !== stamp) return;   // 已经有更新的错误接管了
+                if (App.playing) return;                 // 已经播起来了
+                if (App.chapIdx !== chIdx) return;       // 用户已经切走了
+                App._playRetry = null;
+                showPlayFail(o, bk, chIdx);
+            }, 10000);
             return;
         }
         App._playRetry = null;
 
         // ---- 第二级：彻底失败，弹面板 ----
+        showPlayFail(o, bk, chIdx);
+    };
+
+    /**
+     * 弹出「播放失败」面板（第二级）。
+     *
+     * <p>★ v3.8.1：去重必须**有上限**。以前 5 秒内的重复报错直接 return，
+     * 什么都不做 —— 自动连播时可能连撞好几集，如果每次都被吞掉，用户看到的
+     * 就是「转圈停了、面板没出来、也没有任何后续动作」，观感等同卡死。
+     * 现在同一窗口内最多吞 2 次，第 3 次强制出提示。
+     */
+    function showPlayFail(o, bk, chIdx) {
+        // 无论走哪条分支，转圈都必须停 —— 这是"不留半截状态"的底线
         setBuffering(false);
-        var ch = (App.chapters && chIdx >= 0) ? App.chapters[chIdx] : null;
+
         var sec = Math.floor(Date.now() / 1000);
-        // 5 秒内重复报错 → 视为同一次故障，只提示一次（自动连播时可能连撞两集）
-        if (App._playErrAt && sec - App._playErrAt < 5) return;
+        if (App._playErrAt && sec - App._playErrAt < 5) {
+            App._playErrSwallow = (App._playErrSwallow || 0) + 1;
+            if (App._playErrSwallow <= 2) return;
+        } else {
+            App._playErrSwallow = 0;
+        }
         App._playErrAt = sec;
         App.playErrStreak = (App.playErrStreak || 0) + 1;
 
+        var ch = (App.chapters && chIdx >= 0) ? App.chapters[chIdx] : null;
         var lines = [];
         lines.push('「' + ((o && o.title) || (ch && ch.title) ||
             ('第' + ((ch && ch.index) || (App.chapIdx + 1)) + '集')) + '」没能取到播放地址。');
@@ -3070,6 +3121,8 @@
         // ★ v3.1：向原生要一次真实增益值，校正滑杆位置
         //   （进程被杀后重进播放页时，本地 App.gain 可能是默认值）
         TS.call('getGain');
+        // ★ v3.8.1：同理，跳过片头也要向原生要一次（菜单里要显示当前值）
+        TS.call('getSkipIntro');
 
         // 转圈状态跟着真实状态走：进来时若还在取链，转圈继续
         setBuffering(!!App.buffering);
@@ -3381,7 +3434,19 @@
                 }
                 close();
             }
-            function onScroll() { close(); }
+            // ★ v3.8.1：滚动同样要豁免「菜单自己滚」。
+            //   菜单受 max-height:56vh + overflow-y:auto 限制（约 9~10 项），
+            //   而章节分段每段 200 章 —— 超过 2000 章就有 10 段以上，必须滚动才能
+            //   点到下面的段。以前 onScroll 无豁免，一滚就把菜单关掉，
+            //   表现就是「书一过 2000 章，后面的分段点不出来」。
+            function onScroll(e) {
+                var t = e.target;
+                while (t) {
+                    if (t.id === 'ctxMenu') return;
+                    t = t.parentNode;
+                }
+                close();
+            }
             // 用 pointerdown 而不是 click：它在下拉/滚动开始时就到，
             // 且不会与"打开菜单那次 click"混在一起。捕获阶段确保先收到。
             document.addEventListener('pointerdown', onDown, true);
@@ -3883,6 +3948,11 @@
             {
                 label: '音量增益', icon: '🔊', val: gainLabel(App.gain),
                 pick: function () { ui.moreGain(); }
+            },
+            {
+                // ★ v3.8.1 跳过片头：起播时自动快进掉片头曲
+                label: '跳过片头', icon: '⏭', val: skipIntroLabel(),
+                pick: function () { ui.moreSkipIntro(); }
             }
         ];
         App._moreOpen = true;
@@ -3925,6 +3995,98 @@
         ui.closeMore();
         var panel = $('gainPanel');
         if (panel && panel.classList.contains('hide')) ui.toggleGain();
+    };
+
+    // ==================== ★ v3.8.1 跳过片头 ====================
+    //
+    // 起播时自动快进掉开头若干秒（片头曲/开场白）。规则：
+    //   · 只对「没有续播进度」的集生效 —— 听到一半的集仍然从原位置续听，
+    //     否则每次续听都会被再往前推一次，越听越靠后；
+    //   · 0 秒 = 关闭；
+    //   · 0~300 秒可调，给几个常用档 + 5 秒微调。
+
+    /** 「跳过片头」当前设置的人话描述（显示在菜单右侧） */
+    function skipIntroLabel() {
+        var s = App.skipIntro || 0;
+        return s > 0 ? (s + ' 秒') : '关';
+    }
+
+    /** 菜单里选「跳过片头」→ 弹出微调面板 */
+    ui.moreSkipIntro = function () {
+        ui.closeMore();
+        var cur = App.skipIntro || 0;
+        var presets = [0, 10, 15, 20, 30, 45, 60, 90];
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">跳过片头</div>';
+        h += '<div class="cf-msg">起播时自动快进开头这段时间（片头曲 / 开场白）。'
+            + '<br><span style="opacity:.7">听到一半的集仍从原位置续听，不会被再推一次。</span></div>';
+        for (var i = 0; i < presets.length; i++) {
+            var v = presets[i];
+            h += '<div class="sheet-item' + (v === cur ? ' on' : '') + '" data-skip="' + v + '">'
+                + (v === 0 ? '关闭' : v + ' 秒') + '</div>';
+        }
+        // 复用 .diag-act（已有的一行按钮容器），不新造 CSS
+        h += '<div class="diag-act">';
+        h += '<button class="mini ghost" id="skipMinus">−5 秒</button>';
+        h += '<input class="sheet-input" id="skipVal" type="number" min="0" max="300" step="5" value="'
+            + cur + '" style="width:84px;text-align:center;flex:0 0 auto">';
+        h += '<button class="mini ghost" id="skipPlus">+5 秒</button>';
+        h += '</div>';
+        h += '<div class="sheet-item" id="skipOk">确定</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+
+        // ★ 委托必须挂在 .sheet 上（而不是 #sheetWrap）：
+        //   .sheet 自带 onclick="event.stopPropagation()"（防点内部时冒泡到遮罩
+        //   把弹窗关掉），所以事件根本到不了外层容器。
+        //   用 addEventListener 而不是 .onclick，避免把那个内联 handler 覆盖掉。
+        var box = document.querySelector('#sheetWrap .sheet') || $('sheetWrap');
+        if (box) box.addEventListener('click', function (e) {
+            var t = e.target || e.srcElement;
+            if (!t) return;
+            var v = t.getAttribute && t.getAttribute('data-skip');
+            if (v !== null && v !== undefined && v !== '') {
+                var el = $('skipVal');
+                if (el) el.value = v;
+                return;
+            }
+            if (t.id === 'skipMinus') { adj(-5); return; }
+            if (t.id === 'skipPlus') { adj(5); return; }
+            if (t.id === 'skipOk') {
+                var inp = $('skipVal');
+                var n = parseInt(inp ? inp.value : '0', 10);
+                if (isNaN(n) || n < 0) n = 0;
+                if (n > 300) n = 300;
+                ui.closeSheet();
+                applySkipIntro(n);
+            }
+        });
+
+        function adj(d) {
+            var inp = $('skipVal');
+            if (!inp) return;
+            var n = parseInt(inp.value, 10);
+            if (isNaN(n)) n = 0;
+            n += d;
+            if (n < 0) n = 0;
+            if (n > 300) n = 300;
+            inp.value = n;
+        }
+    };
+
+    /** 把秒数落盘并提示（原生负责持久化，这里同步本地缓存以便菜单立刻显示） */
+    function applySkipIntro(sec) {
+        App.skipIntro = sec;
+        TS.call('setSkipIntro', sec);
+        TS.toast(sec > 0 ? ('已开启跳过片头 ' + sec + ' 秒') : '已关闭跳过片头');
+    }
+
+    /** 原生回调：跳过片头设置已保存 */
+    window.onSkipIntro = function (o) {
+        o = o || {};
+        if (typeof o.sec === 'number') App.skipIntro = o.sec;
     };
 
     /** 倍速面板折叠/展开（默认收起，从「更多」菜单里点开） */
@@ -5601,6 +5763,14 @@
     /** 统一挂弹层 */
     function sheet(html) {
         ui.closeSheet();
+        // ★ v3.8.1：选集弹层用的是另一个容器 #chSheetWrap，两者都是全屏
+        //   .sheet-mask（z-index 500）。如果它还在，关掉本弹窗后那层遮罩会
+        //   继续盖在界面上，表现就是「弹窗关了但整个页面点不动」。
+        //   弹新弹窗前连它一起收掉。
+        try {
+            var c = $('chSheetWrap');
+            if (c && c.parentNode) c.parentNode.removeChild(c);
+        } catch (e) {}
         var d = document.createElement('div');
         d.id = 'sheetWrap';
         d.innerHTML = html;
@@ -6107,9 +6277,32 @@
 
     App.theme = 'system';
 
+    /**
+     * 把主题真正写到 DOM 上。
+     *
+     * <p>★ v3.8.1：以前只有原生的 Bridge.setTheme 会改
+     * {@code document.documentElement.className}，JS 侧（onDeviceInfo /
+     * ui.setTheme）只改变量、重画分段控件，从不碰 DOM。于是只要原生那次
+     * evaluateJavascript 没生效（最常见的就是冷启动时页面还没加载完），
+     * 界面就一直是白的 —— 也就是用户反馈的「深色模式存不住，大退回白色」。
+     * 现在 JS 自己也写一次，两条路互为兜底。
+     */
+    function applyThemeDom(mode) {
+        var dark;
+        if (mode === 'dark') dark = true;
+        else if (mode === 'light') dark = false;
+        else {
+            // system：问系统要。matchMedia 拿不到时退回浅色（而不是乱猜）。
+            dark = !!(window.matchMedia
+                && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        }
+        document.documentElement.className = dark ? 'dark' : '';
+    }
+
     ui.setTheme = function (mode) {
         App.theme = mode;
-        TS.call('setTheme', mode);
+        TS.call('setTheme', mode);   // 让原生落盘（commit）并切换 WebView 底色
+        applyThemeDom(mode);         // 本页立刻生效，不等原生回调
         paintTheme();
     };
 
@@ -6367,7 +6560,8 @@
 
     window.onDeviceInfo = function (o) {
         App.canSpeed = !o || o.canSpeed !== false;
-        if (o && o.theme) { App.theme = o.theme; paintTheme(); }
+        // ★ v3.8.1：拿到主题后自己写一次 DOM（不再只依赖原生那次 evaluateJavascript）
+        if (o && o.theme) { App.theme = o.theme; applyThemeDom(o.theme); paintTheme(); }
         // 版本号用 native 回传的真实值，别再写死在 HTML 里。
         // ★ v2.5：页面上有两个版本位 —— 设置页的 appVer 与关于页的 aboutVer，都要同步。
         if (o && o.version) {
@@ -6712,7 +6906,10 @@
             if (!o.cancel) TS.toast(o.error || '未选择目录');
             return;
         }
-        App.bk.treeUri = o.treeUri || '';
+        // ★ 原生下发的键是 uri（与下载目录那套保持一致），历史上这里误读成
+        //   treeUri，导致 treeUri 恒为空串 → 备份时判成「没选过目录」。
+        //   两个键都认，避免任何一侧改名又断掉。
+        App.bk.treeUri = o.uri || o.treeUri || '';
         App.bk.dirName = o.name || '';
         lsSet(LS_BK_TREE, App.bk.treeUri);
         lsSet(LS_BK_NAME, App.bk.dirName);
@@ -7154,6 +7351,23 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.8.1',
+            date: '2025-10-12',
+            fixes: [
+                '★★ 修复本地备份写不出去：选了文件夹却生成不了备份包。两个原因叠在一起 —— 一是界面读错了原生下发的字段（一直以为没选过目录），二是把「目录树地址」当成「文件地址」交给了系统，系统在里面找不到可写的落点。现在两条都修正，并加了一层兜底：根目录写不进去时自动退到子目录再试',
+                '★★ 修复播放失败面板经常卡住、甚至整个界面点不动：加了「自救看门狗」—— 静默重试后 10 秒内没播起来就不再干等，直接出提示；同时给「短时间内重复报错只提示一次」加了上限，最多吞两次，第三次必定提示，不会再出现「转圈停了但什么都没有」',
+                '★★ 修复深色模式存不住（大退后回到白色）：主题写入改成同步落盘，页面加载完成后再补刷一次主题，界面自己也会按已保存的主题重画。以前只在启动那一刻刷一次，而那时页面还没起来，等于白刷',
+                '★ 修复书章节超过 2000 章后下面的分段选不了：分段菜单一滚动就把自己关掉了，而章节一多（每 200 章一段，2000 章就是 10 段）就必须滚动才能看到下面的段。现在菜单内部滚动不再误关',
+                '★ 修复部分弹窗按返回键没反应：返回键以前完全不认识自绘弹窗，会直接穿透过去关掉播放页或退回上一级。现在返回键优先关弹窗',
+                '★ 修复悬浮球偶尔跑到右上角：位置不再按绝对像素存，改成存「靠左/靠右 + 纵向比例」，横竖屏切换、折叠屏展开都不会跑偏；同时给顶部留了安全距离，不会再贴到状态栏上',
+                '★ 修复带 @ 的书源链接添加失败（形如 https://xxx/a.json?download=true@____）：现在会自动剥掉 @ 后面的备注再请求，且只在确认不会影响正常网址时才剥',
+                '修复播放失败面板与选集弹层叠在一起时，关掉上层后下层遮罩仍在、整页点不动'
+            ],
+            adds: [
+                '★ 新增「跳过片头」：播放页「更多」菜单里。可设定起播自动快进多少秒（0~300 秒，带常用档位与 ±5 秒微调）。只对「没有续播进度」的集生效 —— 听到一半的集仍从原位置接着听，不会被再往前推一次'
+            ]
+        },
         {
             ver: '3.8.0',
             date: '2025-10-12',

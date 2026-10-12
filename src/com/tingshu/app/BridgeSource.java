@@ -254,7 +254,11 @@ public final class BridgeSource {
             bump(r, "failed");
             return r;
         }
-        String u = url.trim();
+        // ★ v3.8.1：支持「链接@名称」这种在书源圈子里流传很广的写法，
+        //   例如 https://xxx/api/p/os/xml_lrt.json?download=true@____
+        //   （@ 后面常常只是个占位符，所以切出来为空时也必须能正常导入）。
+        String[] un = splitUrlName(url);
+        String u = un[0];
         if (!u.startsWith("http://") && !u.startsWith("https://")) {
             u = "https://" + u;
         }
@@ -262,10 +266,30 @@ public final class BridgeSource {
         try {
             body = com.tingshu.app.core.Net.get(u, null);
         } catch (Throwable t) {
-            JSONObject r = importResult();
-            addMsg(r, "下载失败：" + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage()));
-            bump(r, "failed");
-            return r;
+            // 兜底：切掉 @ 后缀后仍失败，再拿原始整串试一次
+            //      （万一切错了，至少还有原样请求这条路）
+            String raw = url.trim();
+            if (!raw.equals(u)) {
+                if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
+                    raw = "https://" + raw;
+                }
+                try {
+                    body = com.tingshu.app.core.Net.get(raw, null);
+                    u = raw;
+                } catch (Throwable t2) {
+                    JSONObject r = importResult();
+                    addMsg(r, "下载失败："
+                            + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage()));
+                    bump(r, "failed");
+                    return r;
+                }
+            } else {
+                JSONObject r = importResult();
+                addMsg(r, "下载失败："
+                        + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage()));
+                bump(r, "failed");
+                return r;
+            }
         }
         if (Utils.empty(body)) {
             JSONObject r = importResult();
@@ -285,6 +309,39 @@ public final class BridgeSource {
             r.put("fromUrl", u);
         } catch (Throwable ignored) {}
         return r;
+    }
+
+    /**
+     * ★ v3.8.1：把「链接@名称」拆成 {链接, 名称}。
+     *
+     * <p>这个写法在书源分享里很常见（便于一眼看出这批源是什么），
+     * 例如 {@code https://xxx/a.json?download=true@____}。
+     * 难点是 URL 自己也可能带 @（{@code http://user:pass@host/path}），
+     * 所以**不能无脑按 @ 切**。规则：
+     * <ol>
+     *   <li>取最后一个 @；</li>
+     *   <li>@ 之后的部分若含 {@code / ? : #} → 判定它是 URL 内部成分，不切；</li>
+     *   <li>@ 之后是空串或纯占位符（下划线/短横/星号/空格）→ 只取链接，名称留空。</li>
+     * </ol>
+     *
+     * @return {链接, 名称}，名称可能为 ""
+     */
+    private static String[] splitUrlName(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        int at = s.lastIndexOf('@');
+        if (at <= 0) return new String[]{s, ""};
+        String head = s.substring(0, at).trim();
+        String tail = s.substring(at + 1).trim();
+        if (head.length() == 0) return new String[]{s, ""};
+        if (tail.indexOf('/') >= 0 || tail.indexOf('?') >= 0
+                || tail.indexOf(':') >= 0 || tail.indexOf('#') >= 0) {
+            return new String[]{s, ""};       // @ 属于 URL 本身
+        }
+        // 纯占位符（____ / ---- / **** / 空白）视为没写名字
+        String bare = tail.replace("_", "").replace("-", "")
+                .replace("*", "").replace(" ", "").trim();
+        if (bare.length() == 0) return new String[]{head, ""};
+        return new String[]{head, tail};
     }
 
     // ==================== 原版「我的听书」订阅清单 ====================

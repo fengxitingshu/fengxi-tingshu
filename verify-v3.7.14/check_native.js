@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 46', /android:versionCode="46"/.test(man));
-  check('versionName = 3.8.0（三段式）', /android:versionName="3\.8\.0"/.test(man));
+  check('versionCode = 47', /android:versionCode="47"/.test(man));
+  check('versionName = 3.8.1（三段式）', /android:versionName="3\.8\.1"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.8.0', /id="appVer">3\.8\.0</.test(idx));
-  check('关于页版本显示 3.8.0', /id="aboutVer">3\.8\.0</.test(idx));
+  check('设置页版本显示 3.8.1', /id="appVer">3\.8\.1</.test(idx));
+  check('关于页版本显示 3.8.1', /id="aboutVer">3\.8\.1</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1181,8 +1181,8 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=46 / versionName=3.8.0',
-    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=47 / versionName=3.8.1',
+    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1261,8 +1261,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=46 / versionName=3.8.0',
-    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=47 / versionName=3.8.1',
+    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1286,11 +1286,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=46 / versionName=3.8.0',
-    /android:versionCode="46"/.test(mf) && /android:versionName="3\.8\.0"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=47 / versionName=3.8.1',
+    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.8.0',
-    /id="appVer">3\.8\.0</.test(idxHtml) && /id="aboutVer">3\.8\.0</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.8.1',
+    /id="appVer">3\.8\.1</.test(idxHtml) && /id="aboutVer">3\.8\.1</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1467,11 +1467,11 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('v3.7.18/V：前端关于页版本号已到 3.8.0（v3.7.18 之后又升过版）',
-    /id="aboutVer">3\.8\.0/.test(idx16s) && /id="appVer">3\.8\.0/.test(idx16s));
-  check('v3.7.18/V：AndroidManifest 版本号同步到 3.8.0 / code 46',
-    /android:versionCode="46"/.test(manifest16)
-    && /android:versionName="3\.8\.0"/.test(manifest16));
+  check('v3.7.18/V：前端关于页版本号已到 3.8.1（v3.7.18 之后又升过版）',
+    /id="aboutVer">3\.8\.1/.test(idx16s) && /id="appVer">3\.8\.1/.test(idx16s));
+  check('v3.7.18/V：AndroidManifest 版本号同步到 3.8.1 / code 47',
+    /android:versionCode="47"/.test(manifest16)
+    && /android:versionName="3\.8\.1"/.test(manifest16));
   check('v3.7.18/LOG：CHANGELOG 仍保留 3.7.18 条目（历史不丢）',
     /ver: '3\.7\.18'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
   // ★ v3.7.17：Rhino 反射类保名（NoClassDefFoundError: org.mozilla.javascript.W2 的根因）
@@ -1814,8 +1814,131 @@ function check(name, ok, detail) {
     /fengxi-/.test(appjs) && /fxbak/.test(appjs));
   check('v3.8.0/UI：本地备份目录存 localStorage 两个键（换机恢复后免重选）',
     /fx_bk_tree_v1/.test(appjs) && /fx_bk_name_v1/.test(appjs));
-  check('v3.8.0/LOG：CHANGELOG 首条即 3.8.0（更新公告能弹出）',
-    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.0'/.test(appjs));
+  check('v3.8.0/LOG：CHANGELOG 首条即 3.8.1（更新公告能弹出）',
+    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.1'/.test(appjs));
+}
+
+// ==================== ★ v3.8.1：八项修复 / 新增 ====================
+//
+// 对应用户反馈的 8 条：
+//   1 跳过片头        2 本地备份写不出去      3 播放失败面板卡死
+//   4 带 @ 的源链接    5 弹窗返回键无效        6 悬浮球跑右上角
+//   7 深色模式存不住   8 超 2000 章分段选不了
+{
+  const R = '/root/tingshu-app/';
+  const rd = (p) => fs.readFileSync(R + p, 'utf8');
+
+  const bridge = rd('src/com/tingshu/app/Bridge.java');
+  const main   = rd('src/com/tingshu/app/MainActivity.java');
+  const setg   = rd('src/com/tingshu/app/data/Settings.java');
+  const ball   = rd('src/com/tingshu/app/player/FloatBallService.java');
+  const pcore  = rd('src/com/tingshu/app/player/PlayerCore.java');
+  const bsrc   = rd('src/com/tingshu/app/BridgeSource.java');
+  const repo   = rd('src/com/tingshu/app/data/BackupRepo.java');
+  const appjs  = rd('assets/www/app.js');
+  const brjs   = rd('assets/www/bridge.js');
+
+  // ---------- ① 跳过片头 ----------
+  check('v3.8.1/SKIP：Settings 新增 skipIntroSec（0~300 秒，默认 0）',
+    /public static int skipIntroSec\(\)/.test(setg)
+    && /getInt\("skip_intro_sec", 0\)/.test(setg)
+    && /if \(v > 300\) v = 300;/.test(setg));
+  check('v3.8.1/SKIP：★ 只在没有续播进度时跳过（听到一半的集仍从原位置续听）',
+    /if \(seekTo <= 0\) \{/.test(pcore) && /skipIntroSec\(\)/.test(pcore));
+  check('v3.8.1/SKIP：起播点仍在 onPrepared 内 seekTo（换集/换源同一条路径）',
+    /public void onPrepared/.test(pcore) && /mp\.seekTo\(\(int\) seekTo\)/.test(pcore));
+  check('v3.8.1/SKIP：Bridge 暴露 setSkipIntro / getSkipIntro',
+    /public void setSkipIntro\(/.test(bridge) && /public void getSkipIntro\(\)/.test(bridge));
+  check('v3.8.1/SKIP：入口在播放页「更多」菜单（ui.moreMenu 的 items 里）',
+    /label: '跳过片头'/.test(appjs) && /ui\.moreSkipIntro/.test(appjs));
+  check('v3.8.1/SKIP：可微调（预设档位 + ±5 秒 + 数字输入）',
+    /data-skip=/.test(appjs) && /skipMinus/.test(appjs) && /skipPlus/.test(appjs)
+    && /id="skipVal"/.test(appjs));
+  check('v3.8.1/SKIP：设置随备份包一起走（skip_intro_sec 进 SETTINGS_KEYS）',
+    /"skip_intro_sec"/.test(repo));
+
+  // ---------- ② 本地备份 ----------
+  check('v3.8.1/BAK：★★ 前端读原生下发的 uri（不再误读 treeUri 导致恒空）',
+    /App\.bk\.treeUri = o\.uri \|\| o\.treeUri \|\| '';/.test(appjs));
+  check('v3.8.1/BAK：★★ 先把 tree URI 转成 document URI 再 createFile',
+    /buildDocumentUriUsingTree\(/.test(bridge)
+    && /getTreeDocumentId\(tree\)/.test(bridge));
+  check('v3.8.1/BAK：根目录写不进时兜底到子目录',
+    /ensureDir\(c, tree, "枫兮听书备份"\)/.test(bridge));
+  check('v3.8.1/BAK：失败文案给出可行动建议（换文件夹重试）',
+    /无法在所选目录创建文件（可换一个文件夹重试）/.test(bridge));
+
+  // ---------- ③ 播放失败面板 ----------
+  check('v3.8.1/FAIL：★★ 静默重试带看门狗（10 秒没播起来就出提示，不再干等）',
+    /_playFailTimer/.test(appjs) && /\}, 10000\);/.test(appjs));
+  check('v3.8.1/FAIL：★ 看门狗用递增序号作废过期任务（上集定时器不误弹本集面板）',
+    /App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1/.test(appjs)
+    && /if \(App\._playErrSeq !== stamp\) return;/.test(appjs));
+  check('v3.8.1/FAIL：★★ 去重有上限（最多吞 2 次，第 3 次必定提示）',
+    /App\._playErrSwallow/.test(appjs) && /if \(App\._playErrSwallow <= 2\) return;/.test(appjs));
+  check('v3.8.1/FAIL：重试前置条件含「章节列表非空」（防 playChapter 挂起不关转圈）',
+    /var canRetry = chIdx >= 0 && App\.chapters && App\.chapters\.length > 0/.test(appjs));
+  check('v3.8.1/FAIL：播成功即作废看门狗并清吞没计数',
+    /App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1;/.test(appjs)
+    && /App\._playErrSwallow = 0;/.test(appjs));
+  check('v3.8.1/FAIL：弹新弹窗前连选集弹层一起收掉（防遮罩叠层吞点击）',
+    /var c = \$\('chSheetWrap'\);/.test(appjs));
+
+  // ---------- ④ 带 @ 的源链接 ----------
+  check('v3.8.1/AT：新增 splitUrlName 归一化',
+    /private static String\[\] splitUrlName/.test(bsrc));
+  check('v3.8.1/AT：★ 只在 @ 后不含 / ? : # 时才切（不误伤 user:pass@host）',
+    /tail\.indexOf\('\/'\) >= 0 \|\| tail\.indexOf\('\?'\) >= 0/.test(bsrc)
+    && /tail\.indexOf\(':'\) >= 0 \|\| tail\.indexOf\('#'\) >= 0/.test(bsrc));
+  check('v3.8.1/AT：★ 纯占位符（____）视为没写名字，只取链接',
+    /replace\("_", ""\)/.test(bsrc) && /if \(bare\.length\(\) == 0\) return new String\[\]\{head, ""\};/.test(bsrc));
+  check('v3.8.1/AT：切后失败仍用原始整串兜底重试一次',
+    /if \(!raw\.equals\(u\)\)/.test(bsrc));
+
+  // ---------- ⑤ 弹窗返回键 ----------
+  check('v3.8.1/BACK：★ ui.back 首行先收自绘弹窗（#sheetWrap）',
+    /ui\.back = function \(\) \{[\s\S]{0,400}?if \(\$\('sheetWrap'\)\) \{ ui\.closeSheet\(\); return true; \}/.test(appjs));
+  check('v3.8.1/BACK：长按菜单（#ctxMenu）同样纳入返回键',
+    /if \(\$\('ctxMenu'\)\) \{ ctxClose\(\); return true; \}/.test(appjs));
+
+  // ---------- ⑥ 悬浮球 ----------
+  check('v3.8.1/BALL：★ 位置改存归一化（侧别 + 纵向千分比），不再只存绝对像素',
+    /float_ball_side/.test(setg) && /float_ball_yr/.test(setg));
+  check('v3.8.1/BALL：savePos 同时写归一化坐标',
+    /setFloatBallSide\(/.test(ball) && /setFloatBallYR\(yr\)/.test(ball));
+  check('v3.8.1/BALL：★ 顶部留安全边距（不再因 FLAG_LAYOUT_NO_LIMITS 归零到右上角）',
+    /private int topSafe\(\)/.test(ball) && /if \(y < top\) return top;/.test(ball));
+  check('v3.8.1/BALL：★ 响应屏幕变化重取尺寸并重定位（横竖屏/分屏/折叠）',
+    /public void onConfigurationChanged/.test(ball)
+    && /screenW = dm\.widthPixels;[\s\S]{0,120}?screenH = dm\.heightPixels;/.test(ball));
+  check('v3.8.1/BALL：归一化坐标随备份包走',
+    /"float_ball_side"/.test(repo) && /"float_ball_yr"/.test(repo));
+
+  // ---------- ⑦ 深色模式 ----------
+  check('v3.8.1/THEME：★ 主题写入改 commit（apply 异步落盘会被杀进程丢掉）',
+    /putString\("theme", v\)\.commit\(\)/.test(setg));
+  check('v3.8.1/THEME：★ 页面加载完成后再刷一次主题（onPageFinished）',
+    /public void onPageFinished\(WebView v, String url\) \{[\s\S]{0,80}?applyTheme\(\);/.test(main));
+  check('v3.8.1/THEME：★ JS 侧自己也写 DOM（applyThemeDom），不等原生回调',
+    /function applyThemeDom\(mode\)/.test(appjs)
+    && /document\.documentElement\.className = dark \? 'dark' : ''/.test(appjs));
+  check('v3.8.1/THEME：onDeviceInfo / ui.setTheme 都调 applyThemeDom',
+    /applyThemeDom\(o\.theme\)/.test(appjs) && /applyThemeDom\(mode\)/.test(appjs));
+
+  // ---------- ⑧ 超 2000 章分段 ----------
+  check('v3.8.1/SEG：★ 菜单内部滚动不再误关（onScroll 与 onDown 同样豁免）',
+    /function onScroll\(e\) \{[\s\S]{0,220}?if \(t\.id === 'ctxMenu'\) return;/.test(appjs));
+  check('v3.8.1/SEG：区间下拉仍全量生成 items（不做折叠，配合滚动可达）',
+    /for \(var i = 0; i < win\.segCount; i\+\+\) \{[\s\S]{0,200}?items\.push/.test(appjs));
+
+  // ---------- 通用 ----------
+  check('v3.8.1/COMMON：新回调 onSkipIntro 已在 bridge.js 占位',
+    /window\.onSkipIntro = noop;/.test(brjs));
+  check('v3.8.1/COMMON：app.js / bridge.js 语法可解析',
+    (function () {
+      try { new Function(appjs); new Function(brjs); return true; }
+      catch (e) { return false; }
+    })());
 }
 
 // ---------- 输出 ----------

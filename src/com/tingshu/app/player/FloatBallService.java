@@ -208,12 +208,23 @@ public class FloatBallService extends Service {
         lp.gravity = Gravity.TOP | Gravity.START;
 
         // 还原上次位置；没摆过就默认贴右侧、纵向居中偏下
-        int x = com.tingshu.app.data.Settings.floatBallX();
-        int y = com.tingshu.app.data.Settings.floatBallY();
-        if (x < 0) x = screenW - size - dp(12);
-        if (y < 0) y = (int) (screenH * 0.62f);
-        lp.x = clampX(x, size);
-        lp.y = clampY(y, size);
+        // ★ v3.8.1：优先用「侧别 + 纵向千分比」还原，屏幕尺寸变了也不会跑偏。
+        int size2 = size;
+        int sx = com.tingshu.app.data.Settings.floatBallSide();
+        int yr = com.tingshu.app.data.Settings.floatBallYR();
+        int x, y;
+        if (sx >= 0 && yr >= 0) {
+            x = (sx == 1) ? (screenW - size2 - dp(4)) : dp(4);
+            y = (int) ((screenH - size2) * (yr / 1000.0f));
+        } else {
+            // 兼容老版本存的绝对像素：只在有值时用，且务必过一遍 clamp
+            x = com.tingshu.app.data.Settings.floatBallX();
+            y = com.tingshu.app.data.Settings.floatBallY();
+            if (x < 0) x = screenW - size2 - dp(12);
+            if (y < 0) y = (int) (screenH * 0.62f);
+        }
+        lp.x = clampX(x, size2);
+        lp.y = clampY(y, size2);
 
         ball.setOnTouchListener(new View.OnTouchListener() {
             public boolean onTouch(View v, MotionEvent e) {
@@ -276,6 +287,14 @@ public class FloatBallService extends Service {
         try {
             com.tingshu.app.data.Settings.setFloatBallX(lp.x);
             com.tingshu.app.data.Settings.setFloatBallY(lp.y);
+            // ★ v3.8.1：同时存一份归一化坐标，横竖屏切换后按它还原
+            int span = screenH - lp.height;
+            int yr = span > 0 ? (int) (lp.y * 1000L / span) : 500;
+            if (yr < 0) yr = 0;
+            if (yr > 1000) yr = 1000;
+            com.tingshu.app.data.Settings.setFloatBallSide(
+                    (lp.x + lp.width / 2 < screenW / 2) ? 0 : 1);
+            com.tingshu.app.data.Settings.setFloatBallYR(yr);
         } catch (Throwable ignored) {}
     }
 
@@ -305,9 +324,46 @@ public class FloatBallService extends Service {
     }
 
     private int clampY(int y, int h) {
-        if (y < 0) return 0;
-        if (y > screenH - h) return Math.max(0, screenH - h);
+        // ★ v3.8.1：上边留出安全距离，别让球贴在状态栏/刘海那一带。
+        //   以前这里 y<0 直接归 0，而 FLAG_LAYOUT_NO_LIMITS 又允许把球拖出
+        //   上边界，松手归零后再持久化 → 下次打开就稳稳待在右上角。
+        int top = topSafe();
+        if (y < top) return top;
+        int max = screenH - h - dp(4);
+        if (max < top) max = top;
+        if (y > max) return max;
         return y;
+    }
+
+    /** 顶部安全边距（状态栏高度 + 一点余量） */
+    private int topSafe() {
+        int r = dp(8);
+        try {
+            int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+            if (id > 0) r += getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {}
+        return r;
+    }
+
+    /**
+     * ★ v3.8.1：屏幕尺寸变化（横竖屏 / 分屏 / 折叠屏展开）后必须重新取尺寸，
+     * 否则 clampX/clampY 仍然按创建时的旧尺寸算，球会被推到边角上。
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        try {
+            if (wm == null) return;
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            wm.getDefaultDisplay().getMetrics(dm);
+            screenW = dm.widthPixels;
+            screenH = dm.heightPixels;
+            if (lp != null && ball != null) {
+                lp.x = clampX(lp.x, lp.width);
+                lp.y = clampY(lp.y, lp.height);
+                update();
+            }
+        } catch (Throwable ignored) {}
     }
 
     private int dp(int v) {

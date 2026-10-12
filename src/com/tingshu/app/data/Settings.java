@@ -86,6 +86,28 @@ public final class Settings {
         SP.edit().putInt("gain_pct", v).apply();
     }
 
+    // ---------- ★ v3.8.1 跳过片头 ----------
+
+    /**
+     * 起播时自动跳过的秒数。0 = 关闭（默认）。合法范围 0~300 秒。
+     *
+     * <p>只在「没有续播进度」时生效：如果这一集之前听到一半，
+     * 续播位置优先，不会再跳一次片头（否则每次续听都被往前推）。
+     */
+    public static int skipIntroSec() {
+        int v = SP.getInt("skip_intro_sec", 0);
+        if (v < 0) return 0;
+        if (v > 300) return 300;
+        return v;
+    }
+
+    public static void setSkipIntroSec(int v) {
+        if (v < 0) v = 0;
+        if (v > 300) v = 300;
+        try { SP.edit().putInt("skip_intro_sec", v).commit(); }
+        catch (Throwable t) { SP.edit().putInt("skip_intro_sec", v).apply(); }
+    }
+
     // ---------- ★ v3.1 音频焦点（其他媒体声音打断） ----------
 
     /**
@@ -169,6 +191,33 @@ public final class Settings {
 
     public static void setFloatBallY(int v) {
         SP.edit().putInt("float_ball_y", v).apply();
+    }
+
+    // ---------- ★ v3.8.1：悬浮球位置改为「归一化」存储 ----------
+    //
+    // 以前存的是绝对像素。两个后果：
+    //   ① 横竖屏切换 / 分屏 / 折叠屏展开后，屏幕尺寸变了，旧的绝对坐标
+    //      会被 clamp 到一个莫名其妙的位置（典型就是 y 被归零 → 右上角）；
+    //   ② 松手吸附时允许 y 为负（FLAG_LAYOUT_NO_LIMITS 让球能拖出上边界），
+    //      clamp 成 0 之后存下来，下次打开就在右上角。
+    // 现在存「靠左还是靠右」+「纵向千分比」，屏幕怎么变都能回到对的地方。
+
+    /** 吸附侧：0=左，1=右，-1=没存过 */
+    public static int floatBallSide() {
+        return SP.getInt("float_ball_side", -1);
+    }
+
+    public static void setFloatBallSide(int v) {
+        SP.edit().putInt("float_ball_side", v).apply();
+    }
+
+    /** 纵向位置千分比（0~1000）。-1=没存过 */
+    public static int floatBallYR() {
+        return SP.getInt("float_ball_yr", -1);
+    }
+
+    public static void setFloatBallYR(int v) {
+        SP.edit().putInt("float_ball_yr", v).apply();
     }
 
     // ==================== ★ v2.9 下载目录（SAF） ====================
@@ -270,8 +319,15 @@ public final class Settings {
         return SP.getString("theme", "system");
     }
 
+    /**
+     * ★ v3.8.1：主题必须用 {@code commit()} 而不是 {@code apply()}。
+     * apply() 是异步落盘，用户选完深色立刻杀进程（或系统回收）时，
+     * 最后一次写入还没刷到磁盘 → 重启又变回白色。主题是低频写但高感知的
+     * 设置，同步写的代价可以忽略。
+     */
     public static void setTheme(String v) {
-        SP.edit().putString("theme", v).apply();
+        try { SP.edit().putString("theme", v).commit(); }
+        catch (Throwable t) { SP.edit().putString("theme", v).apply(); }
     }
 
     public static String themeColor() {
@@ -279,7 +335,8 @@ public final class Settings {
     }
 
     public static void setThemeColor(String v) {
-        SP.edit().putString("theme_color", v).apply();
+        try { SP.edit().putString("theme_color", v).commit(); }
+        catch (Throwable t) { SP.edit().putString("theme_color", v).apply(); }
     }
 
     // ---------- 源 ----------

@@ -261,6 +261,7 @@
     window.onCacheDone = noop;
     window.onCacheList = noop;
     window.onDeviceInfo = noop;
+    window.onSkipIntro = noop;          // ★ v3.8.1 跳过片头设置
     // ★ v3.8.0 备份与恢复（13 个回调，由备份页按需覆盖）
     window.onBackupStatus = noop;
     window.onBackupDir = noop;

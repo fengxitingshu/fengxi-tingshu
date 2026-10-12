@@ -240,8 +240,16 @@ public class PlayerCore {
                     applyGainInternal(mp);
                     // ★ v3.1：起播前拿音频焦点，这样微信来语音时我们才能收到通知
                     acquireFocus();
-                    if (start > 0 && start < mp.getDuration()) {
-                        mp.seekTo((int) start);
+                    // ★ v3.8.1 跳过片头：只在「没有续播进度」时生效。
+                    //   playUrl 覆盖了首次起播 / 自动下一集 / 手动切集 / 自动换源
+                    //   四条路径，所以改这一处即可，不用分别改。
+                    long seekTo = start;
+                    if (seekTo <= 0) {
+                        int skip = com.tingshu.app.data.Settings.skipIntroSec();
+                        if (skip > 0) seekTo = skip * 1000L;
+                    }
+                    if (seekTo > 0 && seekTo < mp.getDuration()) {
+                        mp.seekTo((int) seekTo);
                     }
                     mp.start();
                     startProgress();

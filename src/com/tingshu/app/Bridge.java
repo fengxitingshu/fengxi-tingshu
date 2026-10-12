@@ -739,6 +739,46 @@ public class Bridge {
         callback("onGain", o);
     }
 
+    // ==================== ★ v3.8.1 跳过片头 ====================
+
+    /**
+     * 设置「起播自动跳过」的秒数。0 = 关闭。
+     *
+     * <p>只对**没有续播进度**的集生效：听到一半的集仍然从原位置续上，
+     * 不会每次续听都被再推一次片头。播放页「更多 → 跳过片头」调这个。
+     */
+    @JavascriptInterface
+    public void setSkipIntro(final int sec) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    com.tingshu.app.data.Settings.setSkipIntroSec(sec);
+                    o.put("ok", true);
+                    o.put("sec", com.tingshu.app.data.Settings.skipIntroSec());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onSkipIntro", o);
+            }
+        });
+    }
+
+    /** 读当前跳过片头的秒数（打开「更多」菜单时显示用） */
+    @JavascriptInterface
+    public void getSkipIntro() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", true);
+                    o.put("sec", com.tingshu.app.data.Settings.skipIntroSec());
+                } catch (Throwable ignored) {}
+                callback("onSkipIntro", o);
+            }
+        });
+    }
+
     @JavascriptInterface
     public void stop() {
         ui.post(new Runnable() {
@@ -2572,9 +2612,35 @@ public class Bridge {
                                     false, ls, versionName(), versionCodeInt());
 
                             // 2) 建目标文件
+                            //    ★ 关键：SafOut.createFile 的第二个参数必须是
+                            //      「document URI」而不是「tree URI」。
+                            //      ACTION_OPEN_DOCUMENT_TREE 给回来的是 tree URI
+                            //      （形如 content://.../tree/xxx，path 只有 2 段），
+                            //      而 createFile 内部 findChild 会调
+                            //      DocumentsContract.getDocumentId(parent) —— 对 tree
+                            //      URI 取不到 documentId（要 ≥4 段），异常被吞后返回
+                            //      null；随后 createDocument 以 tree URI 为父目录，
+                            //      多数 provider 直接失败。这就是「本地备份写不出去」
+                            //      的根因。正确做法是先用 buildDocumentUriUsingTree
+                            //      把 tree URI 换成它自己的 document URI。
+                            android.net.Uri dir =
+                                    android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                                            tree,
+                                            android.provider.DocumentsContract
+                                                    .getTreeDocumentId(tree));
                             android.net.Uri target = com.tingshu.app.core.SafOut
-                                    .createFile(c, tree, name, "application/octet-stream");
-                            if (target == null) throw new IllegalStateException("无法在所选目录创建文件");
+                                    .createFile(c, dir, name, "application/octet-stream");
+                            if (target == null) {
+                                // 兜底：目录根写不进去时，退到子目录再试一次
+                                //      （部分 ROM 的 Downloads 根目录不允许直接建文件）
+                                android.net.Uri sub = com.tingshu.app.core.SafOut
+                                        .ensureDir(c, tree, "枫兮听书备份");
+                                if (sub != null) {
+                                    target = com.tingshu.app.core.SafOut
+                                            .createFile(c, sub, name, "application/octet-stream");
+                                }
+                            }
+                            if (target == null) throw new IllegalStateException("无法在所选目录创建文件（可换一个文件夹重试）");
 
                             // 3) 流式搬过去
                             long wrote = com.tingshu.app.core.SafOut.copyInto(c, tmp, target);

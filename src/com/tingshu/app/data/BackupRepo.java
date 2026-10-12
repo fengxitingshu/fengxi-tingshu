@@ -73,7 +73,8 @@ public final class BackupRepo {
             "audio_focus_mode", "wifi_play_only", "play_on_full", "float_ball",
             "sleep_minutes", "exit_on_timer", "pause_after_chapters",
             "auto_cache_enabled", "auto_cache_count", "wifi_cache_only", "cache_limit_mb",
-            "theme", "theme_color", "search_sources"
+            "theme", "theme_color", "search_sources",
+        "skip_intro_sec", "float_ball_side", "float_ball_yr"
     };
 
     /** 包内含中文名的插件目录序号（条目名用 ASCII，中文名放 JSON） */

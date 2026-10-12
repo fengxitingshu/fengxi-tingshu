@@ -124,7 +124,16 @@ public class MainActivity extends Activity
         // 页面本身是白底时，WebView 底色也必须是白的，否则 OVER_SCROLL / 加载瞬间会漏黑
         web.setBackgroundColor(0xFFFFFFFF);
 
-        web.setWebViewClient(new WebViewClient());
+        // ★ v3.8.1：主题在页面加载完成后必须再刷一次。
+        //   原来只在 onCreate 里 applyTheme() 一次，而那次在 web.loadUrl() 之前
+        //   执行 —— evaluateJavascript 打向的还是空白页，赋值随着页面导航被丢弃，
+        //   所以冷启动永远是白底（用户看到的就是「深色模式存不住」）。
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                applyTheme();
+            }
+        });
 
         // ★ v2.8 关键修复：必须设置 WebChromeClient，否则 JS 的
         //   alert / confirm / prompt 全部静默失效 —— confirm 恒返回 false、
