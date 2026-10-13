@@ -18,11 +18,12 @@
 -keep class com.tingshu.app.player.PlayerService { *; }
 -keep class com.tingshu.app.player.FloatBallService { *; }
 -keep class com.tingshu.app.player.PlayerBrowserService { *; }
-# ★ v3.7.18：桌面小组件已整体移除（com.tingshu.app.widget 包与
-#   com.tingshu.app.player.WidgetState 均已删除），原来的
-#   `-keep class com.tingshu.app.widget.** { *; }` 规则随之作废。
-#   留此注释是为了说明：这条规则曾经存在的唯一理由就是「Manifest 注册类
-#   被 R8 改名 → 系统按原始类名实例化时找不到类」，删包之后自然不需要了。
+# ★ v3.8.2：桌面小组件包整体保名。
+#   PlayerWidgetProvider / WidgetClickReceiver 都是 Manifest 注册组件，
+#   系统按原始类名实例化。v3.7.16 曾因缺这条规则被 R8 改名成 a/b，
+#   导致小组件空白、按钮全失灵。widget 包内还有 R.layout / R.id
+#   反射查找（getIdentifier("wgSeek"+i)），类名同样不能动。
+-keep class com.tingshu.app.widget.** { *; }
 
 # ---------- 2. WebView JS 桥 ----------
 -keep class com.tingshu.app.Bridge { *; }

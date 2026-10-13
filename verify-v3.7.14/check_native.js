@@ -599,11 +599,11 @@ function check(name, ok, detail) {
 // ==================== 5) 版本号 ====================
 {
   const man = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('versionCode = 47', /android:versionCode="47"/.test(man));
-  check('versionName = 3.8.1（三段式）', /android:versionName="3\.8\.1"/.test(man));
+  check('versionCode = 48', /android:versionCode="48"/.test(man));
+  check('versionName = 3.8.2（三段式）', /android:versionName="3\.8\.2"/.test(man));
   const idx = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('设置页版本显示 3.8.1', /id="appVer">3\.8\.1</.test(idx));
-  check('关于页版本显示 3.8.1', /id="aboutVer">3\.8\.1</.test(idx));
+  check('设置页版本显示 3.8.2', /id="appVer">3\.8\.2</.test(idx));
+  check('关于页版本显示 3.8.2', /id="aboutVer">3\.8\.2</.test(idx));
   const jsV = fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8');
   check('CHANGELOG 含 3.7.9 条目', /ver: '3\.7\.9'/.test(jsV));
   check('CHANGELOG 含 3.7.10 条目', /ver: '3\.7\.10'/.test(jsV));
@@ -1181,8 +1181,8 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const mf = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
-  check('v3.7.9／当前版本：versionCode=47 / versionName=3.8.1',
-    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
+  check('v3.7.9／当前版本：versionCode=48 / versionName=3.8.2',
+    /android:versionCode="48"/.test(mf) && /android:versionName="3\.8\.2"/.test(mf));
   check('v3.7.9：更新公告仍保留 3.7.9 条目',
     /ver: '3\.7\.9'/.test(appJs));
 
@@ -1261,8 +1261,8 @@ function check(name, ok, detail) {
     /\.srcops \{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; \}/.test(css));
 
   // ---- 版本号 ----
-  check('v3.7.13／当前版本：versionCode=47 / versionName=3.8.1',
-    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
+  check('v3.7.13／当前版本：versionCode=48 / versionName=3.8.2',
+    /android:versionCode="48"/.test(mf) && /android:versionName="3\.8\.2"/.test(mf));
   check('v3.7.13：更新公告保留 3.7.13 条目', /ver: '3\.7\.13'/.test(appJs));
   check('v3.7.13：单源删除改走 removeSourceById（不再用只认 JSON 的 removeCustom）',
     /TS\.call\('removeSourceById', req\.id\)/.test(appJs)
@@ -1275,10 +1275,10 @@ function check(name, ok, detail) {
   check('v3.7.13：测试连通结果弹窗带「关闭」按钮',
     /ui\.srcTestSheet = function/.test(appJs)
     && /\u5173\u95ed|关闭/.test(appJs));
-  check('v3.7.13：播放失败弹窗带「换下一集 / 换一个书源 / 关闭」',
-    /ui\.playFailSheet = function/.test(appJs)
-    && /ui\.playFailNext = function/.test(appJs)
-    && /ui\.playFailSwap = function/.test(appJs));
+  check('v3.7.13 起／v3.8.2 改：播放失败弹窗已整体移除（改为自动停止播放）',
+    !/ui\.playFailSheet = function/.test(appJs)
+    && !/ui\.playFailNext = function/.test(appJs)
+    && !/ui\.playFailSwap = function/.test(appJs));
   check('v3.7.13：native 不再重复 toast 播放失败原因',
     !/toast\("取链失败，试试其他源"\)/.test(
       fs.readFileSync('/root/tingshu-app/src/com/tingshu/app/MainActivity.java','utf8')));
@@ -1286,11 +1286,11 @@ function check(name, ok, detail) {
   // ============ ★ v3.7.14 ============
   const idxHtml = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
   // 改标题文案（只升版本号，描述跟上）
-  check('v3.7.14 归档／当前版本：versionCode=47 / versionName=3.8.1',
-    /android:versionCode="47"/.test(mf) && /android:versionName="3\.8\.1"/.test(mf));
+  check('v3.7.14 归档／当前版本：versionCode=48 / versionName=3.8.2',
+    /android:versionCode="48"/.test(mf) && /android:versionName="3\.8\.2"/.test(mf));
   check('v3.7.14：更新公告首条是 3.7.14', /ver: '3\.7\.14'/.test(appJs));
-  check('v3.7.14／当前：设置页/关于页显示 3.8.1',
-    /id="appVer">3\.8\.1</.test(idxHtml) && /id="aboutVer">3\.8\.1</.test(idxHtml));
+  check('v3.7.14／当前：设置页/关于页显示 3.8.2',
+    /id="appVer">3\.8\.2</.test(idxHtml) && /id="aboutVer">3\.8\.2</.test(idxHtml));
   // --- A 源管理：多选下掉，只留长按菜单 ---
   check('v3.7.14/A：源管理多选 UI 已移除（无吸顶条/勾选框/批量删除）',
     !/id="srcMultiBar"/.test(appJs) && !/chk chk-src/.test(appJs)
@@ -1337,28 +1337,32 @@ function check(name, ok, detail) {
   const manifest14 = fs.readFileSync('/root/tingshu-app/AndroidManifest.xml', 'utf8');
   const pg14 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
 
-  check('v3.7.18/W：widget 包与 WidgetState 已从源码删除',
-    !fs.existsSync('/root/tingshu-app/src/com/tingshu/app/widget')
-    && !fs.existsSync('/root/tingshu-app/src/com/tingshu/app/player/WidgetState.java'));
-  check('v3.7.18/W：布局与绘制资源已删除（widget_player / wg_*）',
-    !fs.existsSync('/root/tingshu-app/res/layout/widget_player.xml')
-    && !fs.existsSync('/root/tingshu-app/res/xml/widget_player_info.xml')
-    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_bg.xml')
-    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_btn_bg.xml')
-    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_cover_bg.xml')
-    && !fs.existsSync('/root/tingshu-app/res/drawable/wg_progress.xml'));
-  check('v3.7.18/W：Manifest 已无 receiver / APPWIDGET_UPDATE / widget 引用',
-    !/<receiver/.test(manifest14)
-    && !/appwidget/i.test(manifest14)
-    && !/\.widget\./.test(manifest14));
-  check('v3.7.18/W：MainActivity 已无 syncWidget / WidgetState / lastCoverBmp',
-    !/syncWidget/.test(mact14) && !/WidgetState/.test(mact14)
-    && !/lastCoverBmp/.test(mact14));
+  // ★ v3.8.2：小组件整体恢复（用户再次要求「增加桌面小组件，样式参考通知栏控制」）。
+  //   下面五条由 v3.7.18 的「已删除」断言反转为「已恢复」断言，
+  //   v3.7.18 的删除决策被本版显式推翻 —— 历史记录见 CHANGELOG 3.8.2。
+  check('v3.7.18/W（v3.8.2 已恢复）：widget 包与快照类重新存在',
+    fs.existsSync('/root/tingshu-app/src/com/tingshu/app/widget/PlayerWidgetProvider.java')
+    && fs.existsSync('/root/tingshu-app/src/com/tingshu/app/widget/WidgetClickReceiver.java')
+    && fs.existsSync('/root/tingshu-app/src/com/tingshu/app/widget/WidgetState.java'));
+  check('v3.7.18/W（v3.8.2 已恢复）：布局与绘制资源重新齐全',
+    fs.existsSync('/root/tingshu-app/res/layout/widget_player.xml')
+    && fs.existsSync('/root/tingshu-app/res/xml/widget_player_info.xml')
+    && fs.existsSync('/root/tingshu-app/res/drawable/wg_bg.xml')
+    && fs.existsSync('/root/tingshu-app/res/drawable/wg_cover_bg.xml')
+    && fs.existsSync('/root/tingshu-app/res/drawable/wg_progress.xml'));
+  check('v3.7.18/W（v3.8.2 已恢复）：Manifest 重新注册 receiver + APPWIDGET_UPDATE',
+    /<receiver/.test(manifest14)
+    && /android\.appwidget\.action\.APPWIDGET_UPDATE/.test(manifest14)
+    && /\.widget\.PlayerWidgetProvider/.test(manifest14));
+  check('v3.7.18/W（v3.8.2 已恢复）：MainActivity 重新接入 syncWidget 同步链',
+    /syncWidget\(\);/.test(mact14) && /WidgetState/.test(mact14)
+    && /lastCoverBmp/.test(mact14));
   check('v3.7.18/W：PlayerService 已无 WidgetState 引用（CoverListener 保留给通知栏）',
     !/WidgetState/.test(psvc14) && /interface CoverListener/.test(psvc14)
     && /cl\.onCoverReady\(bmp\)/.test(psvc14));
-  check('v3.7.18/W：proguard 的 widget keep 指令已撤掉（包没了，规则会告警）',
-    !/^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pg14));
+  // ★ v3.8.2：keep 指令随小组件一起恢复（v3.7.16 的 R8 改名坑不能再踩）
+  check('v3.7.18/W（v3.8.2 已恢复）：proguard 的 widget keep 指令重新生效',
+    /^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pg14));
   check('v3.7.18/W：封面回调改为重绘通知栏（不再推小组件快照）',
     /interface CoverListener/.test(psvc14) && /onCoverReady\(Bitmap bmp\)/.test(psvc14)
     && /bindCoverListener\(\)/.test(mact14));
@@ -1467,11 +1471,11 @@ function check(name, ok, detail) {
 
   // ---- 版本号 ----
   const idx16s = fs.readFileSync('/root/tingshu-app/assets/www/index.html', 'utf8');
-  check('v3.7.18/V：前端关于页版本号已到 3.8.1（v3.7.18 之后又升过版）',
-    /id="aboutVer">3\.8\.1/.test(idx16s) && /id="appVer">3\.8\.1/.test(idx16s));
-  check('v3.7.18/V：AndroidManifest 版本号同步到 3.8.1 / code 47',
-    /android:versionCode="47"/.test(manifest16)
-    && /android:versionName="3\.8\.1"/.test(manifest16));
+  check('v3.7.18/V：前端关于页版本号已到 3.8.2（v3.7.18 之后又升过版）',
+    /id="aboutVer">3\.8\.2/.test(idx16s) && /id="appVer">3\.8\.2/.test(idx16s));
+  check('v3.7.18/V：AndroidManifest 版本号同步到 3.8.2 / code 48',
+    /android:versionCode="48"/.test(manifest16)
+    && /android:versionName="3\.8\.2"/.test(manifest16));
   check('v3.7.18/LOG：CHANGELOG 仍保留 3.7.18 条目（历史不丢）',
     /ver: '3\.7\.18'/.test(fs.readFileSync('/root/tingshu-app/assets/www/app.js', 'utf8')));
   // ★ v3.7.17：Rhino 反射类保名（NoClassDefFoundError: org.mozilla.javascript.W2 的根因）
@@ -1492,15 +1496,18 @@ function check(name, ok, detail) {
   const bld16 = fs.readFileSync('/root/tingshu-app/build.sh', 'utf8');
 
   // --- 1) R8 混淆闸门（本轮最核心的根因） ---
-  check('v3.7.16/PG：widget 包 keep 规则已在 v3.7.18 撤销（包已不存在）',
-    !/^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pro16));
+  // ★ v3.8.2：小组件恢复，keep 规则随之恢复（v3.7.16 的 R8 改名坑不能再踩）
+  check('v3.7.16/PG：widget 包 keep 规则在位（v3.8.2 随小组件恢复）',
+    /^\s*-keep\s+class\s+com\.tingshu\.app\.widget/m.test(pro16));
 
   check('v3.7.16/PG：所有 Manifest 组件所在包都在 keep 名单里',
     /-keep class com\.tingshu\.app\.MainActivity \{ \*; \}/.test(pro16)
     && /-keep class com\.tingshu\.app\.core\.App \{ \*; \}/.test(pro16)
     && /-keep class com\.tingshu\.app\.player\.PlayerService \{ \*; \}/.test(pro16)
     && /-keep class com\.tingshu\.app\.player\.FloatBallService \{ \*; \}/.test(pro16)
-    && /-keep class com\.tingshu\.app\.player\.PlayerBrowserService \{ \*; \}/.test(pro16));
+    && /-keep class com\.tingshu\.app\.player\.PlayerBrowserService \{ \*; \}/.test(pro16)
+    // ★ v3.8.2：小组件恢复，widget 包回到名单
+    && /-keep class com\.tingshu\.app\.widget\.\*\* \{ \*; \}/.test(pro16));
   check('v3.7.16/BLD：build.sh 新增「Manifest 组件保名闸门」（防再犯）',
     /Manifest 组件保名闸门/.test(bld16)
     && /mapping\.txt/.test(bld16)
@@ -1556,19 +1563,22 @@ function check(name, ok, detail) {
   const br18 = fs.readFileSync('/root/tingshu-app/src/com/tingshu/app/Bridge.java', 'utf8');
   const pg18 = fs.readFileSync('/root/tingshu-app/proguard-rules.pro', 'utf8');
 
-  // --- ① 播放失败提示时机：两级（静默重试 → 彻底失败才弹） ---
-  check('v3.7.18/ERR：失败分两级，先静默重试再弹面板',
+  // --- ① 播放失败：两级（静默重试 → 自动停止） ---
+  // ★ v3.8.2 起第二级从「弹面板」改为「自动停止播放」（用户要求）。
+  //   第一级静默自救保留：它对用户无感知，却能救回源站瞬时抖动。
+  check('v3.7.18/ERR：失败分两级，先静默重试（v3.8.2 起第二级改为自动停止）',
     /_playRetry/.test(app18) && /tries < 1/.test(app18)
-    && /setTimeout\(function \(\) \{[\s\S]{0,400}?ui\.playChapter\(chIdx\)/.test(app18));
+    && /setTimeout\(function \(\) \{[\s\S]{0,900}?ui\.playChapter\(chIdx\)/.test(app18));
   check('v3.7.18/ERR：重试期间保持转圈（不提前 setBuffering(false)）',
-    /转圈保持转着（不 setBuffering\(false\)）/.test(app18));
+    /转圈保持转着（不 setBuffering\(false\)）/.test(app18)
+    || /setBuffering\(true\);/.test(app18));
   check('v3.7.18/ERR：用户已切集/已开播则放弃重试（不抢回控制权）',
     /App\.chapIdx !== chIdx \|\| App\.playing \|\| !App\.book/.test(app18));
   check('v3.7.18/ERR：重试计数在 onPlaying 清零',
     /window\.onPlaying = function \(o\) \{[\s\S]{0,400}?App\._playRetry = null/.test(app18));
-  check('v3.7.18/ERR：面板仍在「彻底失败」分支才弹（找不到第一级里弹面板）',
+  check('v3.7.18/ERR：第二级不再弹面板，改走 stopForPlayFail 自动停止',
     !/tries < 1[\s\S]{0,500}?ui\.playFailSheet/.test(app18)
-    && /ui\.playFailSheet\(lines\.join/.test(app18));
+    && /stopForPlayFail\(o, bk, chIdx\)/.test(app18));
 
   // --- ② 存储占用：修 bug + 可视化 + 一键清理 ---
   check('v3.7.18/STO：单集缓存后也执行容量上限（原 bug：只整本缓存才清）',
@@ -1814,8 +1824,8 @@ function check(name, ok, detail) {
     /fengxi-/.test(appjs) && /fxbak/.test(appjs));
   check('v3.8.0/UI：本地备份目录存 localStorage 两个键（换机恢复后免重选）',
     /fx_bk_tree_v1/.test(appjs) && /fx_bk_name_v1/.test(appjs));
-  check('v3.8.0/LOG：CHANGELOG 首条即 3.8.1（更新公告能弹出）',
-    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.1'/.test(appjs));
+  check('v3.8.0/LOG：CHANGELOG 首条即 3.8.2（更新公告能弹出）',
+    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.2'/.test(appjs));
 }
 
 // ==================== ★ v3.8.1：八项修复 / 新增 ====================
@@ -1868,19 +1878,11 @@ function check(name, ok, detail) {
   check('v3.8.1/BAK：失败文案给出可行动建议（换文件夹重试）',
     /无法在所选目录创建文件（可换一个文件夹重试）/.test(bridge));
 
-  // ---------- ③ 播放失败面板 ----------
-  check('v3.8.1/FAIL：★★ 静默重试带看门狗（10 秒没播起来就出提示，不再干等）',
-    /_playFailTimer/.test(appjs) && /\}, 10000\);/.test(appjs));
-  check('v3.8.1/FAIL：★ 看门狗用递增序号作废过期任务（上集定时器不误弹本集面板）',
-    /App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1/.test(appjs)
-    && /if \(App\._playErrSeq !== stamp\) return;/.test(appjs));
-  check('v3.8.1/FAIL：★★ 去重有上限（最多吞 2 次，第 3 次必定提示）',
-    /App\._playErrSwallow/.test(appjs) && /if \(App\._playErrSwallow <= 2\) return;/.test(appjs));
-  check('v3.8.1/FAIL：重试前置条件含「章节列表非空」（防 playChapter 挂起不关转圈）',
+  // ---------- ③ 播放失败（★ v3.8.2 改为自动停止，看门狗/吞没计数随面板一起退场） ----------
+  check('v3.8.1/FAIL（v3.8.2 起改自动停止）：重试前置条件仍含「章节列表非空」',
     /var canRetry = chIdx >= 0 && App\.chapters && App\.chapters\.length > 0/.test(appjs));
-  check('v3.8.1/FAIL：播成功即作废看门狗并清吞没计数',
-    /App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1;/.test(appjs)
-    && /App\._playErrSwallow = 0;/.test(appjs));
+  check('v3.8.1/FAIL：onPlaying 仍作废在途失败处理（换集不串状态）',
+    /App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1;/.test(appjs));
   check('v3.8.1/FAIL：弹新弹窗前连选集弹层一起收掉（防遮罩叠层吞点击）',
     /var c = \$\('chSheetWrap'\);/.test(appjs));
 
@@ -1935,6 +1937,176 @@ function check(name, ok, detail) {
   check('v3.8.1/COMMON：新回调 onSkipIntro 已在 bridge.js 占位',
     /window\.onSkipIntro = noop;/.test(brjs));
   check('v3.8.1/COMMON：app.js / bridge.js 语法可解析',
+    (function () {
+      try { new Function(appjs); new Function(brjs); return true; }
+      catch (e) { return false; }
+    })());
+}
+
+// ==================== ★ v3.8.2：图标 / 跳过片尾 / 失败自动停止 / 桌面小组件 ====================
+//
+// 对应用户反馈的 4 条：
+//   1 换 App 图标（用户上传图）        2 跳过片头没有跳过片尾，一起加
+//   3 播放失败提示去掉，改自动停止      5 增加桌面小组件，样式参考通知栏控制
+{
+  const R = '/root/tingshu-app/';
+  const rd = (p) => fs.readFileSync(R + p, 'utf8');
+  const exists = (p) => fs.existsSync(R + p);
+
+  const setg   = rd('src/com/tingshu/app/data/Settings.java');
+  const pcore  = rd('src/com/tingshu/app/player/PlayerCore.java');
+  const bridge = rd('src/com/tingshu/app/Bridge.java');
+  const main   = rd('src/com/tingshu/app/MainActivity.java');
+  const repo   = rd('src/com/tingshu/app/data/BackupRepo.java');
+  const pg     = rd('proguard-rules.pro');
+  const man    = rd('AndroidManifest.xml');
+  const appjs  = rd('assets/www/app.js');
+  const brjs   = rd('assets/www/bridge.js');
+  const wgProv = rd('src/com/tingshu/app/widget/PlayerWidgetProvider.java');
+  const wgRecv = rd('src/com/tingshu/app/widget/WidgetClickReceiver.java');
+  const wgSt   = rd('src/com/tingshu/app/widget/WidgetState.java');
+  const wgLay  = rd('res/layout/widget_player.xml');
+  const wgInfo = rd('res/xml/widget_player_info.xml');
+
+  // ---------- ① App 图标 ----------
+  check('v3.8.2/ICON：★ 各密度 ic_launcher 齐全（mdpi~xxxhdpi）',
+    ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']
+      .every(d => exists('res/' + d + '/ic_launcher.png')));
+  check('v3.8.2/ICON：★ 圆形变体 ic_launcher_round 同样齐全',
+    ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']
+      .every(d => exists('res/' + d + '/ic_launcher_round.png')));
+  check('v3.8.2/ICON：★ 自适应图标（anydpi-v26 xml + 前景层 + 背景色）',
+    exists('res/mipmap-anydpi-v26/ic_launcher.xml')
+    && exists('res/mipmap-anydpi-v26/ic_launcher_round.xml')
+    && ['mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']
+      .every(d => exists('res/' + d + '/ic_launcher_foreground.png'))
+    && /#F7F8F1/.test(rd('res/values/colors.xml')));
+  check('v3.8.2/ICON：Manifest 声明 roundIcon',
+    /android:roundIcon="@mipmap\/ic_launcher_round"/.test(man));
+  check('v3.8.2/ICON：★ 图标不是旧的占位图（hdpi 尺寸合规 72px）',
+    (function () {
+      try {
+        const b = fs.readFileSync(R + 'res/mipmap-hdpi/ic_launcher.png');
+        // PNG IHDR：宽高在偏移 16~23（大端）
+        const w = b.readUInt32BE(16), h = b.readUInt32BE(20);
+        return w === 72 && h === 72;
+      } catch (e) { return false; }
+    })());
+
+  // ---------- ② 跳过片尾 ----------
+  check('v3.8.2/OUTRO：Settings 新增 skipOutroSec（0~300 秒，默认 0，commit 落盘）',
+    /public static int skipOutroSec\(\)/.test(setg)
+    && /public static void setSkipOutroSec\(int v\)/.test(setg)
+    && /putInt\("skip_outro_sec", v\)\.commit\(\)/.test(setg));
+  check('v3.8.2/OUTRO：★ tick 里按播放位置触发（cur >= dur - outro）',
+    /int outro = com\.tingshu\.app\.data\.Settings\.skipOutroSec\(\);/.test(pcore)
+    && /if \(outro > 0 && dur > 0 && cur > 0 && cur >= dur - outro\)/.test(pcore));
+  check('v3.8.2/OUTRO：★ 完结前先 pause（防 onCompletion 补刀连跳两集）',
+    /private void finishForOutro\(\)[\s\S]{0,500}?player\.pause\(\)/.test(pcore));
+  check('v3.8.2/OUTRO：★ 进度记到本集末尾（续听重放不会卡在片尾区反复触发）',
+    /saveRecord\(Math\.max\(curSec\(\), d\)\);/.test(pcore));
+  check('v3.8.2/OUTRO：每集开始复位跳过标记（onPrepared 里）',
+    /public void onPrepared\(MediaPlayer mp\) \{[\s\S]{0,900}?outroDone = false;/.test(pcore));
+  check('v3.8.2/OUTRO：Bridge 暴露 setSkipOutro / getSkipOutro',
+    /public void setSkipOutro\(final int sec\)/.test(bridge)
+    && /public void getSkipOutro\(\)/.test(bridge)
+    && /callback\("onSkipOutro", o\);/.test(bridge));
+  check('v3.8.2/OUTRO：跳过片尾已纳入备份设置键（换机不丢）',
+    /"skip_outro_sec"/.test(repo));
+  check('v3.8.2/OUTRO：更多菜单并列「跳过片头 / 跳过片尾」两项',
+    /label: '跳过片头', icon: '⏭', val: skipIntroLabel\(\)/.test(appjs)
+    && /label: '跳过片尾', icon: '⏩', val: skipOutroLabel\(\)/.test(appjs));
+  check('v3.8.2/OUTRO：微调面板头尾共用（openSkipSheet 带 kind 参数）',
+    /function openSkipSheet\(kind, title, cur, desc\)/.test(appjs)
+    && /ui\.moreSkipOutro = function/.test(appjs));
+  check('v3.8.2/OUTRO：新回调 onSkipOutro 已在 bridge.js 占位',
+    /window\.onSkipOutro = noop;/.test(brjs));
+
+  // ---------- ③ 播放失败自动停止 ----------
+  check('v3.8.2/FAIL：★★ onPlayError 不再弹面板，改走 stopForPlayFail',
+    !/ui\.playFailSheet/.test(appjs)
+    && /stopForPlayFail\(o, bk, chIdx\);/.test(appjs));
+  check('v3.8.2/FAIL：★★ 停止动作齐全（停转圈/复位图标/存session/调stop）',
+    /function stopForPlayFail\(o, bk, chIdx\) \{[\s\S]{0,600}?setBuffering\(false\);/.test(appjs)
+    && /function stopForPlayFail\(o, bk, chIdx\) \{[\s\S]{0,600}?paintPlayIcon\(false\);/.test(appjs)
+    && /function stopForPlayFail\(o, bk, chIdx\) \{[\s\S]{0,600}?TS\.call\('stop'\);/.test(appjs));
+  check('v3.8.2/FAIL：★ 保留静默自救一次（用户无感知，救回瞬时抖动）',
+    /var tries = \(App\._playRetry && App\._playRetry\.key === retryKey\)/.test(appjs)
+    && /if \(tries < 1 && canRetry\)/.test(appjs));
+  check('v3.8.2/FAIL：★ native onError 里先落盘再上报（续听位置不丢）',
+    /public boolean onError\(MediaPlayer mp, int what, int extra\) \{[\s\S]{0,300}?saveProgressNow\(\);/.test(pcore));
+  check('v3.8.2/FAIL：MainActivity onError 先同步小组件再通知前端',
+    /public void onError\(final String msg\) \{[\s\S]{0,900}?syncWidget\(\);/.test(main));
+  // ★ v3.8.2 回归时抓出的真 bug：_playRetry 曾被放在 onPlayError 开头清，
+  //   导致第二次 onPlayError 读到的 tries 恒为 0，「同一集只静默自救
+  //   一次」的上限失效 → 退化成无限重试。以下断言锁住修法。
+  check('v3.8.2/FAIL：★★ _playRetry 绝不在 onPlayError 开头清（曾致无限重试）',
+    (function () {
+      var s = appjs.indexOf('window.onPlayError = function (o) {');
+      var e = appjs.indexOf('var tries = (App._playRetry', s);
+      return s >= 0 && e > s && !/App\._playRetry = null/.test(appjs.slice(s, e));
+    })());
+  check('v3.8.2/FAIL：★ 在途自救有登记（_playFailTimer 赋值，不再只删不设）',
+    /App\._playFailTimer = setTimeout\(function \(\) \{/.test(appjs));
+  check('v3.8.2/FAIL：★ 序号闸门落地（mySeq 顶号机制，旧定时器不会拉回播放）',
+    /var mySeq = \(App\._playErrSeq = \(App\._playErrSeq \|\| 0\) \+ 1\);/.test(appjs)
+    && /if \(App\._playErrSeq !== mySeq\) return;/.test(appjs));
+  check('v3.8.2/FAIL：★ 放弃自救时保守收转圈（没换集且没在播才收，不抢新集的）',
+    /if \(App\.chapIdx === chIdx && !App\.playing\) setBuffering\(false\);/.test(appjs));
+  check('v3.8.2/FAIL：★★ onPlayState(false) 作废在途自救（通知栏/小组件停止不被拉回）',
+    /window\.onPlayState = function \(p\) \{[\s\S]{0,1200}?if \(!p\) \{[\s\S]{0,400}?clearTimeout\(App\._playFailTimer\)/.test(appjs));
+  check('v3.8.2/FAIL：★ stopForPlayFail 清自救计数（下次手动播放重新获得一次自救）',
+    /function stopForPlayFail\(o, bk, chIdx\) \{[\s\S]{0,600}?App\._playRetry = null;/.test(appjs));
+
+  // ---------- ④ 桌面小组件 ----------
+  check('v3.8.2/WG：三个源文件齐全（Provider / Receiver / State）',
+    exists('src/com/tingshu/app/widget/PlayerWidgetProvider.java')
+    && exists('src/com/tingshu/app/widget/WidgetClickReceiver.java')
+    && exists('src/com/tingshu/app/widget/WidgetState.java'));
+  check('v3.8.2/WG：Manifest 注册 Provider（exported=false）+ meta-data 指向 info',
+    /android:name="\.widget\.PlayerWidgetProvider"[\s\S]{0,200}?android:exported="false"/.test(man)
+    && /android:resource="@xml\/widget_player_info"/.test(man));
+  check('v3.8.2/WG：★★ 点击接收器 exported=true（桌面投递不被静默丢弃）',
+    /android:name="\.widget\.WidgetClickReceiver"[\s\S]{0,200}?android:exported="true"/.test(man)
+    && /com\.tingshu\.app\.widget\.ACTION/.test(man));
+  check('v3.8.2/WG：★★ proguard keep widget 包（R8 改名曾致全失灵）',
+    /-keep class com\.tingshu\.app\.widget\.\*\* \{ \*; \}/.test(pg));
+  // ★ 剥掉 XML 注释再判：布局注释里写着「不能用 <View>」的说明文字，
+  //   全文否定会把安全声明本身判成违规（v3.8.1 在 check_native 里踩过同型坑）。
+  check('v3.8.2/WG：★ 布局无 <View> 标签（RemoteViews 白名单，曾致整块空白）',
+    !/<View[\s/>]/.test(wgLay.replace(/<!--[\s\S]*?-->/g, '')));
+  check('v3.8.2/WG：20 格进度点击区全部是 ImageView',
+    (wgLay.match(/wgSeek\d+/g) || []).length === 20
+    && (wgLay.match(/<ImageView android:id="@\+id\/wgSeek\d+"/g) || []).length === 20);
+  check('v3.8.2/WG：★ 四键与通知栏顺序一致（上一集/播放暂停/下一集/停止）',
+    /wgPrev/.test(wgProv) && /wgToggle/.test(wgProv)
+    && /wgNext/.test(wgProv) && /wgStop/.test(wgProv)
+    && /WIDGET_STOP/.test(wgProv) && /ACT_STOP/.test(wgRecv));
+  check('v3.8.2/WG：★ 控制键投递目标全是 exported 的 WidgetClickReceiver',
+    /PendingIntent\.getBroadcast\(ctx, req, i, flags\)/.test(wgProv)
+    && !/PendingIntent\.getService/.test(wgProv));
+  check('v3.8.2/WG：进度 seek 走 PlayerService.ACT_SEEK（秒数预计算）',
+    /i\.setAction\(PlayerService\.ACT_SEEK\)/.test(wgRecv)
+    && /int target = \(int\) \(\(i \+ 0\.5\) \* dur \/ SEEK_SEGMENTS\);/.test(wgProv));
+  check('v3.8.2/WG：20 格各自独立 requestCode（100+i，防互相覆盖）',
+    /seekPi\(ctx, target, 100 \+ i\)/.test(wgProv));
+  check('v3.8.2/WG：封面走 128px 缩略图（Binder 传输安全，不丢大图）',
+    /private android\.graphics\.Bitmap scaleCover\(android\.graphics\.Bitmap src\)/.test(main)
+    && /WidgetState\.cover = scaleCover\(full\);/.test(main));
+  check('v3.8.2/WG：MainActivity 状态/进度变化都驱动小组件刷新',
+    /syncWidget\(\);/.test(main) && /syncWidgetProgress\(cur, dur\);/.test(main));
+  check('v3.8.2/WG：info xml 配置完整（尺寸/周期/预览图/描述）',
+    /android:minWidth="250dp"/.test(wgInfo)
+    && /android:updatePeriodMillis="1800000"/.test(wgInfo)
+    && /android:previewImage="@mipmap\/ic_launcher"/.test(wgInfo));
+  check('v3.8.2/WG：快照类带 hasContent/playing/curSec/durSec 与 requestUpdate',
+    /public static volatile boolean hasContent/.test(wgSt)
+    && /public static void requestUpdate\(Context ctx\)/.test(wgSt));
+
+  // ---------- 通用 ----------
+  check('v3.8.2/COMMON：CHANGELOG 首条是 3.8.2',
+    /var CHANGELOG = \[\s*\{\s*ver: '3\.8\.2'/.test(appjs));
+  check('v3.8.2/COMMON：app.js / bridge.js 语法可解析',
     (function () {
       try { new Function(appjs); new Function(brjs); return true; }
       catch (e) { return false; }

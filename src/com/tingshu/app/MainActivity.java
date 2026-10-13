@@ -591,6 +591,8 @@ public class MainActivity extends Activity
         callJs("window.onPlayState(" + playing + ")");
         lastNotiTick = 0;   // 状态变化立刻刷新通知（不受节流影响）
         refreshNotification();
+        // ★ v3.8.2：同步桌面小组件（停止时 core.book() 已空 → 快照清空）
+        syncWidget();
         // ★ v2.8：悬浮球跟随播放状态 —— 开播显示、停播收起
         syncFloatBall(playing);
     }
@@ -615,9 +617,79 @@ public class MainActivity extends Activity
                     MainActivity.this.runOnUiThread(new Runnable() {
                         public void run() { refreshNotification(); }
                     });
+                    // ★ v3.8.2：桌面小组件同样要补这次封面
+                    MainActivity.this.runOnUiThread(new Runnable() {
+                        public void run() { syncWidget(); }
+                    });
                 }
             });
         } catch (Throwable ignored) {}
+    }
+
+    // ==================== ★ v3.8.2 桌面小组件同步 ====================
+
+    /**
+     * 把播放状态刷进 {@link com.tingshu.app.widget.WidgetState} 快照并请求重绘。
+     *
+     * <p>调用点：onStateChanged（开播/暂停/停止/切集换书）、onEnded、
+     * 封面到位。进度 tick 走轻量的 {@link #syncWidgetProgress}。
+     */
+    private void syncWidget() {
+        try {
+            com.tingshu.app.data.Models.Book bk = core.book();
+            if (bk == null) {
+                com.tingshu.app.widget.WidgetState.clear();
+                com.tingshu.app.widget.WidgetState.requestUpdate(this);
+                return;
+            }
+            List<Chapter> chs = core.chapters();
+            int idx = core.index();
+            com.tingshu.app.widget.WidgetState.sync(bk, chs, idx,
+                    core.isPlaying(), false, core.curSec(), core.durSec());
+            // 封面：复用通知栏已下好的位图，缩到 128px 再进快照。
+            // ★ 必须缩放：RemoteViews 走 Binder 传输，整张封面（常见
+            //   500~1000px，解码后 1~4MB）直接塞有 TransactionTooLarge
+            //   风险，小组件会整块更新失败。
+            android.graphics.Bitmap full = lastCoverBmp();
+            if (full != null) {
+                com.tingshu.app.widget.WidgetState.cover = scaleCover(full);
+            }
+            com.tingshu.app.widget.WidgetState.requestUpdate(this);
+        } catch (Throwable ignored) {}
+    }
+
+    /** 秒级进度同步（不重取封面，只更新进度字段后请求重绘） */
+    private void syncWidgetProgress(int cur, int dur) {
+        try {
+            if (!com.tingshu.app.widget.WidgetState.hasContent) return;
+            com.tingshu.app.widget.WidgetState.syncProgress(cur, dur);
+            com.tingshu.app.widget.WidgetState.requestUpdate(this);
+        } catch (Throwable ignored) {}
+    }
+
+    /** 复用 PlayerService 缓存里的封面位图（拿不到就返回 null，小组件显示占位） */
+    private android.graphics.Bitmap lastCoverBmp() {
+        try {
+            com.tingshu.app.player.PlayerService svc = PlayerService.get();
+            if (svc != null) return svc.coverBitmap();
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /** 封面缩放到 128px 见方（RemoteViews Binder 传输安全尺寸） */
+    private android.graphics.Bitmap scaleCover(android.graphics.Bitmap src) {
+        try {
+            int w = src.getWidth(), h = src.getHeight();
+            int side = Math.min(w, h);
+            if (side <= 0) return src;
+            if (side <= 128) return src;
+            float scale = 128f / side;
+            android.graphics.Matrix m = new android.graphics.Matrix();
+            m.setScale(scale, scale);
+            return android.graphics.Bitmap.createBitmap(src, 0, 0, w, h, m, true);
+        } catch (Throwable t) {
+            return src;
+        }
     }
 
     /**
@@ -679,6 +751,8 @@ public class MainActivity extends Activity
         if (svc != null && core.book() != null) {
             svc.updateProgress(cur * 1000L, dur * 1000L);
         }
+        // ★ v3.8.2：桌面小组件进度同步（秒级，与通知栏同频）
+        syncWidgetProgress(cur, dur);
     }
 
     @Override
@@ -693,6 +767,9 @@ public class MainActivity extends Activity
             return;
         }
         // 已经是最后一集（或压根没有队列）：真正的播放结束
+        // ★ v3.8.2：小组件同步到「播完态」（playing=false、进度保留），
+        //   随后前端多半会调 stop()，那时快照会被清空
+        syncWidget();
         callJs("window.onEnded()");
     }
 
@@ -713,8 +790,10 @@ public class MainActivity extends Activity
                 }
             }
         } catch (Throwable ignored) {}
-        // ★ v3.7.13：改成把原因交给前端统一展示（前端会弹带「关闭 / 换源」的面板），
-        //   这里不再 toast，避免两条提示互相覆盖。
+        // ★ v3.7.13：把原因交给前端（v3.8.2 起前端不再弹面板，
+        //   改为自动停止播放，见 app.js stopForPlayFail）。
+        // ★ v3.8.2：先把小组件同步到「已停止」态，不等前端 stop 回来。
+        syncWidget();
         try {
             JSONObject _o = new JSONObject();
             _o.put("reason", msg == null ? "" : msg);

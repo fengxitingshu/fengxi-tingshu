@@ -102,6 +102,15 @@ public class PlayerCore {
     /** 距上次写库的秒数，避免每秒写 */
     private static final long RECORD_INTERVAL_MS = 5000;
 
+    // ---------- ★ v3.8.2 跳过片尾 ----------
+    /**
+     * 本集是否已经因「跳过片尾」而完结过。
+     *
+     * <p>onPrepared 里重置为 false；finishForOutro() 内置 true。
+     * 有了它，暂停后恢复播放不会因为位置仍落在片尾区里而重复触发。
+     */
+    private boolean outroDone = false;
+
     public PlayerCore(Context c) {
         this.ctx = c.getApplicationContext();
         // ★ v3.1：增益与音频焦点设置跟着 App 全局走，构造时就恢复
@@ -240,6 +249,8 @@ public class PlayerCore {
                     applyGainInternal(mp);
                     // ★ v3.1：起播前拿音频焦点，这样微信来语音时我们才能收到通知
                     acquireFocus();
+                    // ★ v3.8.2：新的一集，片尾跳过标记复位
+                    outroDone = false;
                     // ★ v3.8.1 跳过片头：只在「没有续播进度」时生效。
                     //   playUrl 覆盖了首次起播 / 自动下一集 / 手动切集 / 自动换源
                     //   四条路径，所以改这一处即可，不用分别改。
@@ -277,6 +288,10 @@ public class PlayerCore {
             player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
                 public boolean onError(MediaPlayer mp, int what, int extra) {
                     stopProgress();
+                    // ★ v3.8.2：真正失败时先把进度落盘再上报 ——
+                    //   以前只靠 5 秒定时写库，续听位置最多丢 5 秒；
+                    //   而失败后用户第一反应往往就是重听这一集。
+                    saveProgressNow();
                     if (cb != null) {
                         cb.onStateChanged(false);
                         cb.onError("播放失败(" + what + "," + extra + ")");
@@ -770,11 +785,46 @@ public class PlayerCore {
         public void run() {
             if (!progressRunning) return;
             int cur = curSec(), dur = durSec();
+            // ★ v3.8.2 跳过片尾：当前位置落在结尾 N 秒内 → 提前完结本集。
+            //   先 pause 再走 onEnded：pause 之后 MediaPlayer 不会再来
+            //   onCompletion，避免同一集被完结两次、连跳两集。
+            if (!outroDone) {
+                int outro = com.tingshu.app.data.Settings.skipOutroSec();
+                if (outro > 0 && dur > 0 && cur > 0 && cur >= dur - outro) {
+                    finishForOutro();
+                    return;
+                }
+            }
             if (cb != null) cb.onProgress(cur, dur);
             maybeRecord(cur);
             ui.postDelayed(this, 1000);
         }
     };
+
+    /**
+     * ★ v3.8.2：因「跳过片尾」完结当前集。
+     *
+     * <p>与 {@link #onCompletion} 的自然结束走同一条下游
+     * （{@code stopProgress → 落盘 → cb.onEnded()}），区别有两点：
+     * <ol>
+     *   <li>先把播放器 pause 掉 —— 否则用户听到真实结尾时 onCompletion
+     *       会再来一次，同一集被完结两次、直接连跳两集；</li>
+     *   <li>进度记到本集末尾而不是当前秒数 —— 续听重放这一集时会自然
+     *       收尾进下一集，不会又落在片尾区里反复触发跳过。</li>
+     * </ol>
+     * 与 onCompletion 一致，这里也**不**喊 onStateChanged(false)：
+     * 下游大概率立刻开播下一集，提前置 false 会让图标闪一下。
+     */
+    private void finishForOutro() {
+        outroDone = true;
+        stopProgress();
+        try {
+            if (player != null && player.isPlaying()) player.pause();
+        } catch (Throwable ignored) {}
+        int d = durSec();
+        saveRecord(Math.max(curSec(), d));
+        if (cb != null) cb.onEnded();
+    }
 
     private void startProgress() {
         if (progressRunning) return;

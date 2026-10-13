@@ -779,6 +779,47 @@ public class Bridge {
         });
     }
 
+    // ---------- ★ v3.8.2 跳过片尾 ----------
+
+    /**
+     * 设置「播放到结尾前自动跳过」的秒数。0 = 关闭。
+     *
+     * <p>与片头的区别：片头按「有没有续播进度」判断，片尾按**播放位置**
+     * 判断 —— 当前进度落在结尾 N 秒内就生效（含用户手动拖动过去）。
+     * 播放页「更多 → 跳过片尾」调这个。
+     */
+    @JavascriptInterface
+    public void setSkipOutro(final int sec) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    com.tingshu.app.data.Settings.setSkipOutroSec(sec);
+                    o.put("ok", true);
+                    o.put("sec", com.tingshu.app.data.Settings.skipOutroSec());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onSkipOutro", o);
+            }
+        });
+    }
+
+    /** 读当前跳过片尾的秒数（打开「更多」菜单时显示用） */
+    @JavascriptInterface
+    public void getSkipOutro() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", true);
+                    o.put("sec", com.tingshu.app.data.Settings.skipOutroSec());
+                } catch (Throwable ignored) {}
+                callback("onSkipOutro", o);
+            }
+        });
+    }
+
     @JavascriptInterface
     public void stop() {
         ui.post(new Runnable() {

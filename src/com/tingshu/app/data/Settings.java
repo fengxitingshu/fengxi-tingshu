@@ -108,6 +108,32 @@ public final class Settings {
         catch (Throwable t) { SP.edit().putInt("skip_intro_sec", v).apply(); }
     }
 
+    // ---------- ★ v3.8.2 跳过片尾 ----------
+
+    /**
+     * 播放到距结尾不足这么多秒时，自动完结本集（走自动下一集 / 停止）。
+     * 0 = 关闭（默认）。合法范围 0~300 秒。
+     *
+     * <p>用于跳过片尾曲 / 结尾广告。与 {@link #skipIntroSec()} 的区别：
+     * 片头只在「没有续播进度」时生效，片尾则按**播放位置**判断 ——
+     * 只要当前位置落在结尾 N 秒内就生效（含用户手动拖动seek过去）。
+     *
+     * <p>「单集循环」模式下同样生效：跳过后从头重播本集。
+     */
+    public static int skipOutroSec() {
+        int v = SP.getInt("skip_outro_sec", 0);
+        if (v < 0) return 0;
+        if (v > 300) return 300;
+        return v;
+    }
+
+    public static void setSkipOutroSec(int v) {
+        if (v < 0) v = 0;
+        if (v > 300) v = 300;
+        try { SP.edit().putInt("skip_outro_sec", v).commit(); }
+        catch (Throwable t) { SP.edit().putInt("skip_outro_sec", v).apply(); }
+    }
+
     // ---------- ★ v3.1 音频焦点（其他媒体声音打断） ----------
 
     /**

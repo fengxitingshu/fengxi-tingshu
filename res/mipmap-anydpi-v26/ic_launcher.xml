@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.8.2：自适应图标（API 26+）。
+
+  两层结构：
+    background = 米色纯色（与原图四角取色一致 #F7F8F1）
+    foreground = 原图整体缩放到 108dp 画布的 80% 居中，四周留透明
+
+  两层叠加后视觉上与整幅原图一致；系统按桌面形状（圆形/圆角方形/
+  squircle）mask 时，裁掉的只是四周米色边缘，切不到主体笔画。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>

@@ -2718,10 +2718,11 @@
         App.playErrStreak = 0;
         // ★ v3.7.18：这一集播起来了 → 静默重试计数清零
         App._playRetry = null;
-        // ★ v3.8.1：播成功就作废所有在途的失败看门狗，并清掉去重吞没计数，
-        //   否则下一次真失败可能被上一次遗留的计数吞掉而不出提示
+        // ★ v3.8.1/v3.8.2：播成功就作废所有在途的失败处理（看门狗/重试计数），
+        //   否则下一集的第一次失败可能被上一集遗留的计数当成"已试过"而直接停止
         App._playErrSeq = (App._playErrSeq || 0) + 1;
         App._playErrSwallow = 0;
+        App._playRetry = null;
         if (App._playFailTimer) { clearTimeout(App._playFailTimer); App._playFailTimer = null; }
         // ★ 图标真源只有一个：native 说在播就是在播
         App.playing = true;
@@ -2750,51 +2751,31 @@
     };
 
     /**
-     * ★ v3.7.13：播放（取链）失败提示。
+     * ★ v3.7.13 起源 / ★ v3.8.2 改版：播放失败 → 自动停止播放。
      *
-     * <p>以前只有一个 toast「取链失败，换一集或换个源试试」，问题有三：
+     * <p>演进（三代）：
      * <ol>
-     *   <li>native 那边**也会** toast 一句（"取链失败，试试其他源"），两句糊在一起，
-     *       用户看到的提示是重复且错位的；</li>
-     *   <li>toast 1.6 秒就没了，用户切回列表时什么都没留下；</li>
-     *   <li>取链失败往往意味着**这个源的这一集废了**，但没有任何"下一步"入口 ——
-     *       用户只能自己去摸索怎么换源。</li>
+     *   <li>v3.7.13：一个 toast「取链失败」—— 与 native 的 toast 重复、
+     *       1.6 秒就没了、也没有下一步入口；</li>
+     *   <li>v3.7.18：两级 —— 同一集首次失败静默重试一次，仍失败才弹
+     *       「播放失败」面板（换下一集 / 换源）；</li>
+     *   <li><b>v3.8.2（本轮）</b>：用户要求「播放失败的提示去掉，改成
+     *       播放失败自动停止播放」。面板整体移除 —— 之前那层面板在弱网下
+     *       频繁弹出，还偶发卡住挡操作。现在真正失败就停，不停留半截状态。</li>
      * </ol>
      *
-     * <p>现在改成：一个带「关闭」按钮的结果弹窗，正文说明发生了什么 + 最可能的原因，
-     * 并给出「换一集」「换本地其它源」两个直接可点的动作。
-     * 同一个源连续报错只在第一次弹窗，避免连播时刷屏。
-     */
-    /**
-     * ★ v3.7.13：播放（取链）失败提示。
+     * <p>保留的「静默自救」：同一集第一次失败不惊动用户，延迟 800ms 自动
+     * 重走一次完整取链。它对用户完全无感知，却能把源站瞬时抖动 / 直链过期
+     * 救回来（native 在 onError 里已把该集取链缓存剔掉，重试含自动换源）。
      *
-     * <p>以前只有一个 toast「取链失败，换一集或换个源试试」，问题有三：
-     * <ol>
-     *   <li>native 那边**也会** toast 一句（"取链失败，试试其他源"），两句糊在一起，
-     *       用户看到的提示是重复且错位的；</li>
-     *   <li>toast 1.6 秒就没了，用户切回列表时什么都没留下；</li>
-     *   <li>取链失败往往意味着**这个源的这一集废了**，但没有任何"下一步"入口 ——
-     *       用户只能自己去摸索怎么换源。</li>
-     * </ol>
-     *
-     * <p>现在改成：一个带「关闭」按钮的结果弹窗，正文说明发生了什么 + 最可能的原因，
-     * 并给出「换一集」「换本地其它源」两个直接可点的动作。
-     * 同一个源连续报错只在第一次弹窗，避免连播时刷屏。
-     *
-     * <p>★ v3.7.18：提示时机改为「彻底确定无法连接播放之后」。
-     * <p>用户反馈：加载中经常直接弹「播放失败」面板 —— 但很多次只是源站
-     * 瞬时抖动 / 直链过期，native 在 onError 里已把该集的取链缓存剔掉
-     * （Aggregator.invalidateAudio），重新解析（含自动换源）就能救回来，
-     * 根本没必要立刻打扰用户。
-     * <p>所以现在分两级：
-     * <ol>
-     *   <li><b>第一级（静默自救）</b>：同一集的第一次失败**不弹任何面板**，
-     *       保持转圈，延迟 800ms 后自动重走一次完整取链（playChapter）；
-     *       若期间用户已手动点了别的集 / 别的书，则放弃这次重试。</li>
-     *   <li><b>第二级（彻底失败）</b>：同一集重试后仍失败 → 确实救不回来了，
-     *       这时才弹出「播放失败」面板（换下一集 / 换源动作不变）。</li>
-     * </ol>
-     * 重试计数按「书 + 集」记，换集 / 播成功（onPlaying）都会清零。
+     * <p>停止时做了什么：
+     * <ul>
+     *   <li>停转圈、播放图标复位为「播放」；</li>
+     *   <li>进度已由 native 在 onError 里落盘（saveProgressNow），
+     *       之后可从原位续听，不会丢超过 1 秒；</li>
+     *   <li>调 native {@code stop()}：释放播放器、撤通知、清队列；</li>
+     *   <li>一行 2 秒轻提示（toast，不是页面，不挡任何操作）。</li>
+     * </ul>
      */
     window.onPlayError = function (o) {
         App.playing = false;
@@ -2802,136 +2783,93 @@
 
         var bk = App.book || {};
         var chIdx = App.chapIdx;
-        var retryKey = (bk.key || bk.title || '?') + ':' + chIdx;
 
-        // ---- 第一级：静默自救（同一集只自救一次） ----
-        // ★ v3.8.1：必须同时满足「有这一集」，否则重试会调 playChapter，
+        // ---- 第一级：静默自救（同一集只试一次，用户无感知） ----
+        // ★ 必须同时满足「有这一集」，否则重试会调 playChapter，
         //   而 playChapter 在没有章节列表时只挂 pendingAutoPlay、不关转圈，
         //   于是转圈永远转下去 —— 这就是「卡死、整个界面点不动」的来源之一。
         var canRetry = chIdx >= 0 && App.chapters && App.chapters.length > 0
                 && chIdx < App.chapters.length;
+        var retryKey = (bk.key || bk.title || '?') + ':' + chIdx;
+        // ★ v3.8.2 修正（回归时抓出来的真 bug）：_playRetry 绝不能在函数
+        //   开头就清掉 —— 清早了，第二次 onPlayError 读到的 tries 永远
+        //   是 0，「同一集只自救一次」的上限失效，会退化成无限重试。
+        //   它只该在「真播起来了」（onPlaying）和「收摊停止」
+        //   （stopForPlayFail）时清。
         var tries = (App._playRetry && App._playRetry.key === retryKey)
             ? App._playRetry.tries : 0;
         if (tries < 1 && canRetry) {
             App._playRetry = { key: retryKey, tries: tries + 1 };
-            // 每次错误发一个单调递增的序号，只有「最新那次」的看门狗有效，
-            // 避免上一集的定时器把这一集的面板提前弹出来。
-            var stamp = (App._playErrSeq = (App._playErrSeq || 0) + 1);
-            // 转圈保持转着（不 setBuffering(false)），用户知道还在加载
-            setTimeout(function () {
-                // 用户已经手动切了别的集 / 换了书 / 开始播了 → 放弃这次重试
-                if (App.chapIdx !== chIdx || App.playing || !App.book) return;
-                ui.playChapter(chIdx);
-            }, 800);
-            // ★ 看门狗：自救这条路必须有个终点。10 秒内还没播起来就认定失败，
-            //   停转圈并弹面板。以前只靠「下一次 onPlayError 会来」兜底，
-            //   但重试请求可能压根发不出去（网络挂死/取链线程卡住），
-            //   那时就再也不会有第二次错误上报 → 永久卡在转圈。
-            if (App._playFailTimer) clearTimeout(App._playFailTimer);
+            // 自救期间继续转圈，用户知道还在尝试（但不弹任何东西）
+            setBuffering(true);
+            // 登记为「在途自救」：后来的失败/成功会作废它，不会叠出多重试
+            if (App._playFailTimer) { clearTimeout(App._playFailTimer); App._playFailTimer = null; }
+            var mySeq = (App._playErrSeq = (App._playErrSeq || 0) + 1);
             App._playFailTimer = setTimeout(function () {
                 App._playFailTimer = null;
-                if (App._playErrSeq !== stamp) return;   // 已经有更新的错误接管了
-                if (App.playing) return;                 // 已经播起来了
-                if (App.chapIdx !== chIdx) return;       // 用户已经切走了
-                App._playRetry = null;
-                showPlayFail(o, bk, chIdx);
-            }, 10000);
+                // 序号被更新的失败/成功顶掉 → 这次自救已过期
+                if (App._playErrSeq !== mySeq) return;
+                // 用户已经手动切了别的集 / 换了书 / 开始播了 → 放弃这次重试
+                if (App.chapIdx !== chIdx || App.playing || !App.book) {
+                    // 只有「没换集、没在播」时才敢收转圈：换集/开播时
+                    // 转圈可能是新集的，不能抢
+                    if (App.chapIdx === chIdx && !App.playing) setBuffering(false);
+                    return;
+                }
+                ui.playChapter(chIdx);
+            }, 800);
             return;
         }
-        App._playRetry = null;
 
-        // ---- 第二级：彻底失败，弹面板 ----
-        showPlayFail(o, bk, chIdx);
+        // ---- 第二级：自救后仍失败 → 自动停止播放 ----
+        setBuffering(false);
+        // 作废一切在途的自救/看门狗，防止它们把已停止的状态又拉起来
+        App._playErrSeq = (App._playErrSeq || 0) + 1;
+        if (App._playFailTimer) { clearTimeout(App._playFailTimer); App._playFailTimer = null; }
+        stopForPlayFail(o, bk, chIdx);
     };
 
     /**
-     * 弹出「播放失败」面板（第二级）。
+     * 播放彻底失败 → 自动停止（v3.8.2）。
      *
-     * <p>★ v3.8.1：去重必须**有上限**。以前 5 秒内的重复报错直接 return，
-     * 什么都不做 —— 自动连播时可能连撞好几集，如果每次都被吞掉，用户看到的
-     * 就是「转圈停了、面板没出来、也没有任何后续动作」，观感等同卡死。
-     * 现在同一窗口内最多吞 2 次，第 3 次强制出提示。
+     * <p>「停止」而不是「停在半截」：转圈必停、图标必复位、native 侧
+     * 播放器释放 + 通知撤下 + 队列清空。进度已在 native onError 里
+     * 落盘，用户想重听随时能从原位开始。
      */
-    function showPlayFail(o, bk, chIdx) {
-        // 无论走哪条分支，转圈都必须停 —— 这是"不留半截状态"的底线
+    function stopForPlayFail(o, bk, chIdx) {
         setBuffering(false);
-
-        var sec = Math.floor(Date.now() / 1000);
-        if (App._playErrAt && sec - App._playErrAt < 5) {
-            App._playErrSwallow = (App._playErrSwallow || 0) + 1;
-            if (App._playErrSwallow <= 2) return;
-        } else {
-            App._playErrSwallow = 0;
-        }
-        App._playErrAt = sec;
-        App.playErrStreak = (App.playErrStreak || 0) + 1;
+        App.playing = false;
+        paintPlayIcon(false);
+        saveSession();
+        // 收摊：自救计数也清掉 —— 用户下次手动点播放时，这一集的第一次
+        // 失败还应再享有一次静默自救（否则会被上次的计数直接判死）
+        App._playRetry = null;
+        // native：进度已在 onError 里保存；stop 负责释放播放器/撤通知/清队列
+        TS.call('stop');
 
         var ch = (App.chapters && chIdx >= 0) ? App.chapters[chIdx] : null;
-        var lines = [];
-        lines.push('「' + ((o && o.title) || (ch && ch.title) ||
-            ('第' + ((ch && ch.index) || (App.chapIdx + 1)) + '集')) + '」没能取到播放地址。');
-        if (bk.title) lines.push('所属书籍：' + bk.title);
-        if (App.playSourceName) lines.push('正在使用的源：' + App.playSourceName);
-        // native 报回来的原因（播放器底层错误）比"取链失败"具体得多，优先展示
-        if (o && o.reason) lines.push('播放器提示：' + o.reason);
-        lines.push('');
-        lines.push('常见原因：源站临时抖动、该集被下架、或直链带时效签名已过期。');
-        if (App.playErrStreak >= 3) {
-            lines.push('这个源已经连续失败 ' + App.playErrStreak + ' 次，建议改用它源。');
-        }
-
-        ui.playFailSheet(lines.join('\n'), !!bk.title);
-    };
-
-    /**
-     * ★ v3.7.13：取链失败的提示弹窗。
-     * @param {string} msg      正文（\n 换行）
-     * @param {boolean} canSwap 是否有可换的对象（没书就不显示动作按钮）
-     */
-    ui.playFailSheet = function (msg, canSwap) {
-        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
-        h += '<div class="sheet" onclick="event.stopPropagation()">';
-        h += '<div class="sheet-hd">播放失败</div>';
-        h += '<div class="cf-msg">' + TS.esc(msg).replace(/\n/g, '<br>') + '</div>';
-
-        if (canSwap) {
-            h += '<div class="sheet-item" onclick="App.ui.playFailNext()">换下一集试试</div>';
-            h += '<div class="sheet-item" onclick="App.ui.playFailSwap()">换一个书源</div>';
-        }
-        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
-        h += '</div></div>';
-        sheet(h);
-    };
-
-    /** 失败了 → 直接跳下一集（还有下一集才给这个按钮） */
-    ui.playFailNext = function () {
-        ui.closeSheet();
-        var n = (App.chapters || []).length;
-        if (App.chapIdx + 1 < n) {
-            App.playErrStreak = 0;
-            ui.playChapter(App.chapIdx + 1);
-        } else {
-            TS.toast('已经是最后一集了');
-        }
-    };
-
-    /** 失败了 → 打开换源菜单（复用历史/收藏那套 openSwap） */
-    ui.playFailSwap = function () {
-        ui.closeSheet();
-        var bk = App.book;
-        if (!bk) { TS.toast('没有可换的书籍信息'); return; }
-        // 换源前先把这个源的取链缓存清掉，否则会自动换回同一个死链
-        App.playErrStreak = 0;
-        if (ui.openSwap) ui.openSwap(bk);
-    };
+        var name = (o && o.title) || (ch && ch.title)
+            || ('第' + ((ch && ch.index) || (chIdx + 1)) + '集');
+        TS.toast('「' + name + '」播放失败，已停止');
+    }
 
     window.onPlayState = function (p) {
         // native 推来的真值，直接采用，不做任何本地推断
         App.playing = !!p;
         // 拿到真值就说明 native 那边已经有结论了（在播 or 已停），
-        // 不管哪种都不该再转圈。true 时顺带收掉加载态。
-        if (App.playing) setBuffering(false);
+        // 不管哪种都不该再转圈。
+        setBuffering(false);
         paintPlayIcon(App.playing);
+        // ★ v3.8.2：native 明确说「没在播」→ 作废在途的失败自救。
+        //   否则用户在自救的 800ms 窗口里从通知栏/小组件点了停止，
+        //   重试定时器到点还会把播放重新拉起来（用户会看到"停了又响"）。
+        //   注意：播放器出错时 native 先推 onStateChanged(false) 再推
+        //   onPlayError，那时定时器还没建，序号会被 onPlayError 重新取，
+        //   不会误杀正在排队的那次自救。
+        if (!p) {
+            App._playErrSeq = (App._playErrSeq || 0) + 1;
+            if (App._playFailTimer) { clearTimeout(App._playFailTimer); App._playFailTimer = null; }
+        }
     };
 
     /**
@@ -3123,6 +3061,8 @@
         TS.call('getGain');
         // ★ v3.8.1：同理，跳过片头也要向原生要一次（菜单里要显示当前值）
         TS.call('getSkipIntro');
+        // ★ v3.8.2：跳过片尾同理
+        TS.call('getSkipOutro');
 
         // 转圈状态跟着真实状态走：进来时若还在取链，转圈继续
         setBuffering(!!App.buffering);
@@ -3953,6 +3893,11 @@
                 // ★ v3.8.1 跳过片头：起播时自动快进掉片头曲
                 label: '跳过片头', icon: '⏭', val: skipIntroLabel(),
                 pick: function () { ui.moreSkipIntro(); }
+            },
+            {
+                // ★ v3.8.2 跳过片尾：放到结尾前自动收尾（片尾曲/结尾广告）
+                label: '跳过片尾', icon: '⏩', val: skipOutroLabel(),
+                pick: function () { ui.moreSkipOutro(); }
             }
         ];
         App._moreOpen = true;
@@ -3997,13 +3942,16 @@
         if (panel && panel.classList.contains('hide')) ui.toggleGain();
     };
 
-    // ==================== ★ v3.8.1 跳过片头 ====================
+    // ==================== ★ v3.8.1/v3.8.2 跳过片头 / 跳过片尾 ====================
     //
-    // 起播时自动快进掉开头若干秒（片头曲/开场白）。规则：
+    // 片头：起播时自动快进掉开头若干秒（片头曲/开场白）。
     //   · 只对「没有续播进度」的集生效 —— 听到一半的集仍然从原位置续听，
     //     否则每次续听都会被再往前推一次，越听越靠后；
-    //   · 0 秒 = 关闭；
-    //   · 0~300 秒可调，给几个常用档 + 5 秒微调。
+    //   · 0 秒 = 关闭；0~300 秒可调。
+    // 片尾：播放到距结尾不足若干秒时自动收尾（片尾曲/结尾广告）。
+    //   · 按播放位置判断，跳过后按播放模式进下一集 / 重播 / 停止；
+    //   · 手动拖动进度到结尾区同样会生效；
+    //   · 0 秒 = 关闭；0~300 秒可调。
 
     /** 「跳过片头」当前设置的人话描述（显示在菜单右侧） */
     function skipIntroLabel() {
@@ -4011,16 +3959,41 @@
         return s > 0 ? (s + ' 秒') : '关';
     }
 
+    /** 「跳过片尾」当前设置的人话描述（显示在菜单右侧） */
+    function skipOutroLabel() {
+        var s = App.skipOutro || 0;
+        return s > 0 ? (s + ' 秒') : '关';
+    }
+
     /** 菜单里选「跳过片头」→ 弹出微调面板 */
     ui.moreSkipIntro = function () {
         ui.closeMore();
-        var cur = App.skipIntro || 0;
+        openSkipSheet('intro', '跳过片头', App.skipIntro || 0,
+            '起播时自动快进开头这段时间（片头曲 / 开场白）。'
+            + '<br><span style="opacity:.7">听到一半的集仍从原位置续听，不会被再推一次。</span>');
+    };
+
+    /** ★ v3.8.2：菜单里选「跳过片尾」→ 弹出微调面板 */
+    ui.moreSkipOutro = function () {
+        ui.closeMore();
+        openSkipSheet('outro', '跳过片尾', App.skipOutro || 0,
+            '播放到距离结尾还有这段时间时自动收尾，按播放模式进下一集（片尾曲 / 结尾广告）。'
+            + '<br><span style="opacity:.7">拖动进度到结尾区同样会生效；单集循环会重播本集。</span>');
+    };
+
+    /**
+     * 跳过片头/片尾共用的微调面板。
+     * @param {string} kind  'intro' | 'outro'
+     * @param {string} title 面板标题
+     * @param {number} cur   当前秒数
+     * @param {string} desc  说明文字（可含 <br>）
+     */
+    function openSkipSheet(kind, title, cur, desc) {
         var presets = [0, 10, 15, 20, 30, 45, 60, 90];
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
         h += '<div class="sheet" onclick="event.stopPropagation()">';
-        h += '<div class="sheet-hd">跳过片头</div>';
-        h += '<div class="cf-msg">起播时自动快进开头这段时间（片头曲 / 开场白）。'
-            + '<br><span style="opacity:.7">听到一半的集仍从原位置续听，不会被再推一次。</span></div>';
+        h += '<div class="sheet-hd">' + title + '</div>';
+        h += '<div class="cf-msg">' + desc + '</div>';
         for (var i = 0; i < presets.length; i++) {
             var v = presets[i];
             h += '<div class="sheet-item' + (v === cur ? ' on' : '') + '" data-skip="' + v + '">'
@@ -4060,7 +4033,7 @@
                 if (isNaN(n) || n < 0) n = 0;
                 if (n > 300) n = 300;
                 ui.closeSheet();
-                applySkipIntro(n);
+                applySkip(kind, n);
             }
         });
 
@@ -4074,19 +4047,31 @@
             if (n > 300) n = 300;
             inp.value = n;
         }
-    };
+    }
 
     /** 把秒数落盘并提示（原生负责持久化，这里同步本地缓存以便菜单立刻显示） */
-    function applySkipIntro(sec) {
-        App.skipIntro = sec;
-        TS.call('setSkipIntro', sec);
-        TS.toast(sec > 0 ? ('已开启跳过片头 ' + sec + ' 秒') : '已关闭跳过片头');
+    function applySkip(kind, sec) {
+        if (kind === 'outro') {
+            App.skipOutro = sec;
+            TS.call('setSkipOutro', sec);
+            TS.toast(sec > 0 ? ('已开启跳过片尾 ' + sec + ' 秒') : '已关闭跳过片尾');
+        } else {
+            App.skipIntro = sec;
+            TS.call('setSkipIntro', sec);
+            TS.toast(sec > 0 ? ('已开启跳过片头 ' + sec + ' 秒') : '已关闭跳过片头');
+        }
     }
 
     /** 原生回调：跳过片头设置已保存 */
     window.onSkipIntro = function (o) {
         o = o || {};
         if (typeof o.sec === 'number') App.skipIntro = o.sec;
+    };
+
+    /** ★ v3.8.2：原生回调：跳过片尾设置已保存 */
+    window.onSkipOutro = function (o) {
+        o = o || {};
+        if (typeof o.sec === 'number') App.skipOutro = o.sec;
     };
 
     /** 倍速面板折叠/展开（默认收起，从「更多」菜单里点开） */
@@ -7351,6 +7336,19 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.8.2',
+            date: '2026-10-13',
+            fixes: [
+                '★★ 播放失败不再弹提示页面，改为自动停止播放：以前失败后弹的那个面板在弱网下频繁弹出，还偶发卡住挡操作。现在同一集先静默自救一次（用户无感知），确实救不回来就自动停止 —— 停转圈、图标复位、播放器释放、通知撤下，进度已保存可从原位续听，只留一行两秒的轻提示',
+                '★ 修正静默自救没有上限的问题（开发中回归时抓出）：同一集只自救一次，救不回来就停止，不会不停自动重试；用户在自救的瞬间从通知栏或小组件点了停止，也不会被重试拉回来重新响起'
+            ],
+            adds: [
+                '★ 新增「跳过片尾」：播放页「更多」菜单里，与「跳过片头」并列。播放到距离结尾还有设定秒数时自动收尾，按播放模式进下一集 / 重播 / 停止；拖动进度到结尾区同样生效。0~300 秒可调，带常用档位与 ±5 秒微调',
+                '★ 新增桌面播放控制小组件：样式参考通知栏控制 —— 封面 + 书名 + 作者集数 + 可点进度条（20 格，每格 5%）+ 四键（上一集 / 播放暂停 / 下一集 / 停止，顺序与通知栏一致）。点击与通知栏走同一条播放服务通路，App 不在前台也能控制；在桌面小组件列表里选「枫兮听书 · 播放控制」即可添加',
+                '★ 更换 App 图标：新的「枫兮听书」书法图标（含自适应图标，各密度与圆形变体齐全）'
+            ]
+        },
         {
             ver: '3.8.1',
             date: '2025-10-12',
