@@ -7887,30 +7887,6 @@
     }
     applyHomeCols();
 
-    /** ★ v3.9.25：小组件背景不透明度（设置 → 外观 → 小组件） */
-    ui.setWgOpacity = function (op) {
-        TS.call('widgetOpacitySet', op);
-    };
-
-    window.onWgOp = function (o) {
-        o = o || {};
-        var op = (o.op === undefined ? 50 : o.op);
-        var ids = { 0: 'wgOp0', 25: 'wgOp25', 50: 'wgOp50', 75: 'wgOp75' };
-        for (var k in ids) {
-            var el = $(ids[k]);
-            if (el) el.className = 'seg-item' + (String(op) === k ? ' on' : '');
-        }
-    };
-
-    // 设置页打开时同步一次小组件不透明度高亮
-    var _oldOpenSet = ui.openSettings;
-    if (_oldOpenSet) {
-        ui.openSettings = function () {
-            _oldOpenSet();
-            TS.call('widgetOpacityGet');
-        };
-    }
-
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
 
     ui.wgDiagClear = function () { TS.call('widgetDiagClear'); };

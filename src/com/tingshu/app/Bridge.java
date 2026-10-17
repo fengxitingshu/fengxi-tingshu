@@ -167,35 +167,6 @@ public class Bridge {
         } catch (Throwable ignored) {}
     }
 
-    /** ★ v3.9.25 读小组件背景不透明度，回传 window.onWgOp({op}) */
-    @JavascriptInterface
-    public void widgetOpacityGet() {
-        JSONObject o = new JSONObject();
-        try {
-            o.put("op", com.tingshu.app.data.Settings.widgetOpacity());
-        } catch (Throwable ignored) {}
-        callback("onWgOp", o);
-    }
-
-    /** ★ v3.9.25 设小组件背景不透明度（0~100，切换后立即强制重绘） */
-    @JavascriptInterface
-    public void widgetOpacitySet(final int op) {
-        com.tingshu.app.core.DiagLog.add("[widget] UI setOpacity=" + op);
-        ui.post(new Runnable() {
-            public void run() {
-                com.tingshu.app.data.Settings.setWidgetOpacity(op);
-                com.tingshu.app.core.DiagLog.add("[widget] savedOpacity="
-                        + com.tingshu.app.data.Settings.widgetOpacity());
-                JSONObject o = new JSONObject();
-                try { o.put("op", com.tingshu.app.data.Settings.widgetOpacity()); }
-                catch (Throwable ignored) {}
-                com.tingshu.app.widget.WidgetState.requestUpdate(
-                        com.tingshu.app.core.App.ctx(), true);
-                callback("onWgOp", o);
-            }
-        });
-    }
-
     // ==================== 账号（接口预留） ====================
     // 本期只做接口占位：前端已经按这套契约写好，
     // 后续接入注册/登录服务时，只要在这里填充实现并回调 onAccount* 即可，

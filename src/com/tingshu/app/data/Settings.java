@@ -240,28 +240,6 @@ public final class Settings {
         SP.edit().putBoolean("float_ball", v).apply();
     }
 
-    // ==================== ★ v3.9.24 小组件外观 ====================
-
-    /**
-     * ★ v3.9.26 小组件背景不透明度（0~100，默认 0=材质造型）。
-     * 仅在「材质」透明底之上叠一层深色纱（veil），数值越大越实：
-     * 0=全透明（originOS/iQOO 毛玻璃）→ 50=半透明玻璃感。
-     * 之前 90/75 档看不出差别，正是因为底色太深——现在默认从材质起步，
-     * 且档位取低值段（0/20/35/50），差异肉眼可辨。
-     */
-    public static int widgetOpacity() {
-        int v = SP.getInt("widget_opacity", 50);
-        // ★ v3.9.27 旧值迁移：v3.9.25 时代可能存过 90/100（近黑无差异）；
-        //   ★ v3.9.30 默认改为 50（浅色玻璃）——「材质」档透出的是 originOS
-        //   桌面底卡，深色模式下呈黑色，不适合做默认
-        if (v < 0 || v > 75) v = 50;
-        return v;
-    }
-
-    public static void setWidgetOpacity(int v) {
-        SP.edit().putInt("widget_opacity", (v < 0 || v > 75) ? 50 : v).apply();
-    }
-
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
     public static int floatBallX() {
         return SP.getInt("float_ball_x", -1);

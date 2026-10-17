@@ -122,9 +122,6 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     /** 上一次托管探针结果（去重防刷屏） */
     private static String lastHostProbe = "";
 
-    /** 上一次记录的生效不透明度（去重防刷屏） */
-    private static String lastOpLine = "";
-
     @Override
     public void onReceive(Context ctx, Intent intent) {
         super.onReceive(ctx, intent);
@@ -184,8 +181,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
      *
      * <p>本版恢复完整功能：
      * <ol>
-     *   <li>背景：wgRoot 边界圈 + wgBody 按「不透明度」设置着色（0%=材质透明）；</li>
-     *   <li>进度：20 格纯色上色（高亮球已按反馈移除）；</li>
+     *   <li>背景：透明底 + 白色半透明柔边描边（唯一样式）；</li>
      *   <li>封面：有则贴图（≤200KB 双保险），无则跳过动作；</li>
      *   <li>进度格：20 透明点击格挂 seek（可拖动跳转）；</li>
      *   <li>四键：上一集/播放暂停/下一集/停止（本包矢量图）；</li>
@@ -214,58 +210,23 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             else sub = playing ? "正在播放" : "已暂停";
         }
 
-        // ---- 背景 ★ v3.9.29 重做配色系统 ----
-        // 诊断证实：alpha 链路全通但用户仍见黑 —— 根因是 originOS 桌面会给
-        // 第三方小组件垫自己的底卡（深色模式下=黑色），深色半透明纱叠在
-        // 黑卡上永远是黑的。因此：
-        //   · 材质（op=0）：透明底 + 白字（垫在桌面底卡上，毛玻璃观感）
-        //   · 25/50/75：浅色玻璃（浅底 + 深字），与材质对比一目了然
-        int op = com.tingshu.app.data.Settings.widgetOpacity();       // 0/25/50/75
-        int a = (int) Math.round(255.0 * op / 100.0);
-        boolean light = op > 0;
-        final int rim, body, tTxt, sTxt, bOn, bOff, tint;
-        if (light) {
-            rim  = 0xFFC9D2E0;   // 边界圈（浅）
-            body = (a << 24) | 0xFFEFF3F9;   // 浅玻璃底
-            tTxt = 0xFF222530;   // 主文字深色
-            sTxt = 0xCC222530;   // 副文字深色
-            bOn  = 0xE639414E;   // 进度已播格（深）
-            bOff = 0x3339414E;   // 进度未播格
-            tint = 0xFF39414E;   // 图标深色
-        } else {
-            // ★ v3.9.31 材质=真透明：root 也必须透明 —— 此前 root 还是
-            //   边界色，内衬透明后露出来的是边界色（灰蓝卡），永远看不到桌面
-            rim  = 0x00000000;
-            body = 0x00000000;
-            tTxt = 0xFFFFFFFF;
-            sTxt = 0xC9FFFFFF;
-            bOn  = 0xF2FFFFFF;
-            bOff = 0x33FFFFFF;
-            tint = 0xFFFFFFFF;
-        }
+        // ---- 背景 ★ v3.9.33 只保留「材质」一种样式 ----
+        // 透明底 + 白字白图标 + 白色半透明柔边（描边 drawable）。
+        // 浅色玻璃/不透明度档位已按用户反馈移除（只留一种，简单直接）。
         try {
-            // ★ v3.9.32 边界改用描边 drawable：材质档=白色半透明柔边，
-            //   浅玻璃档=深色细边，都比纯色边界更「虚化」、更易分辨大小
             v.setInt(R.id.wgRoot, "setBackgroundResource",
-                    light ? R.drawable.wg_frame_light : R.drawable.wg_frame_glass);
-            v.setInt(R.id.wgBody, "setBackgroundColor", body);
-            v.setTextColor(R.id.wgTitle, tTxt);
-            v.setTextColor(R.id.wgSub, sTxt);
-            v.setTextColor(R.id.wgTimeCur, sTxt);
-            v.setTextColor(R.id.wgTimeDur, sTxt);
-            v.setInt(R.id.wgCover, "setBackgroundColor",
-                    light ? 0x3339414E : 0x33FFFFFF);
-            // 四键矢量图标重着色（XML 里是白色 tint，浅玻璃下要变深）
-            v.setInt(R.id.wgPrev, "setColorFilter", tint);
-            v.setInt(R.id.wgToggle, "setColorFilter", tint);
-            v.setInt(R.id.wgNext, "setColorFilter", tint);
-            v.setInt(R.id.wgStop, "setColorFilter", tint);
-            String opLine = "[widget] applyOpacity=" + op
-                    + (light ? " 浅色玻璃" : " 材质");
-            if (!opLine.equals(lastOpLine)) {
-                lastOpLine = opLine;
-                com.tingshu.app.core.DiagLog.add(opLine);
-            }
+                    R.drawable.wg_frame_glass);
+            v.setInt(R.id.wgBody, "setBackgroundColor", 0x00000000);
+            v.setTextColor(R.id.wgTitle, 0xFFFFFFFF);
+            v.setTextColor(R.id.wgSub, 0xC9FFFFFF);
+            v.setTextColor(R.id.wgTimeCur, 0xC9FFFFFF);
+            v.setTextColor(R.id.wgTimeDur, 0xC9FFFFFF);
+            v.setInt(R.id.wgCover, "setBackgroundColor", 0x33FFFFFF);
+            // 四键矢量图标重着色（XML 里是白色 tint，保持一致）
+            v.setInt(R.id.wgPrev, "setColorFilter", 0xFFFFFFFF);
+            v.setInt(R.id.wgToggle, "setColorFilter", 0xFFFFFFFF);
+            v.setInt(R.id.wgNext, "setColorFilter", 0xFFFFFFFF);
+            v.setInt(R.id.wgStop, "setColorFilter", 0xFFFFFFFF);
         } catch (Throwable t) {
             diag(ctx, "build bg FAILED: " + t);
         }
@@ -317,7 +278,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                         "wgBar" + i, "id", ctx.getPackageName());
                 if (viewId == 0) continue;
                 v.setInt(viewId, "setBackgroundColor",
-                        i < filled ? bOn : bOff);
+                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
             }
         } catch (Throwable t) {
             diag(ctx, "build progress FAILED: " + t);
