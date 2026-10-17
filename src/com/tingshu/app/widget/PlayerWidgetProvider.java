@@ -182,7 +182,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
      * <p>本版恢复完整功能：
      * <ol>
      *   <li>背景：wgRoot 边界圈 + wgBody 按「不透明度」设置着色（0%=材质透明）；</li>
-     *   <li>进度：当前格叠加「高亮球」跟随移动；</li>
+     *   <li>进度：20 格纯色上色（高亮球已按反馈移除）；</li>
      *   <li>封面：有则贴图（≤200KB 双保险），无则跳过动作；</li>
      *   <li>进度格：20 透明点击格挂 seek（可拖动跳转）；</li>
      *   <li>四键：上一集/播放暂停/下一集/停止（本包矢量图）；</li>
@@ -256,8 +256,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             diag(ctx, "build time FAILED: " + t);
         }
 
-        // ---- 显示层：wgBar0..19 逐格上色（已播白 / 未播半透明白）；
-        //      当前进度格放「高亮球」（琥珀圆点+白圈，v3.9.25）跟随进度移动 ----
+        // ---- 显示层：wgBar0..19 逐格上色（已播白 / 未播半透明白）。
+        //      ★ v3.9.26：高亮球按用户反馈移除（观感违和） ----
         int filled = 0;
         if (seekable) {
             filled = (int) Math.floor((double) cur * SEEK_SEGMENTS / dur);
@@ -269,14 +269,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                 int viewId = ctx.getResources().getIdentifier(
                         "wgBar" + i, "id", ctx.getPackageName());
                 if (viewId == 0) continue;
-                if (seekable && i == filled) {
-                    // 当前格：清掉底色、贴高亮球
-                    v.setInt(viewId, "setBackgroundColor", 0x00000000);
-                    v.setImageViewResource(viewId, R.drawable.wg_ball);
-                } else {
-                    v.setInt(viewId, "setBackgroundColor",
-                            i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
-                }
+                v.setInt(viewId, "setBackgroundColor",
+                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
             }
         } catch (Throwable t) {
             diag(ctx, "build progress FAILED: " + t);

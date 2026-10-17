@@ -7859,8 +7859,8 @@
 
     window.onWgOp = function (o) {
         o = o || {};
-        var op = (o.op === undefined ? 100 : o.op);
-        var ids = { 100: 'wgOp100', 90: 'wgOp90', 75: 'wgOp75', 50: 'wgOp50', 0: 'wgOp0' };
+        var op = (o.op === undefined ? 0 : o.op);
+        var ids = { 0: 'wgOp0', 20: 'wgOp20', 35: 'wgOp35', 50: 'wgOp50' };
         for (var k in ids) {
             var el = $(ids[k]);
             if (el) el.className = 'seg-item' + (String(op) === k ? ' on' : '');
@@ -8513,6 +8513,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.26',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件观感调整（按反馈）',
+                '   · 移除进度「高亮球」（观感违和），恢复纯色进度格',
+                '   · 默认外观改为「材质」：透明底 + 边界圈（毛玻璃感最好看）',
+                '   · 透明度档位改为 材质/20/35/50：默认材质，数字越大底色越实，',
+                '     差异肉眼可辨（之前 75/90 与实底几乎无差是因为底色太深）'
+            ]
+        },
         {
             ver: '3.9.25',
             date: '2026-10-17',

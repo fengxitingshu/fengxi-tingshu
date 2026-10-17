@@ -243,12 +243,15 @@ public final class Settings {
     // ==================== ★ v3.9.24 小组件外观 ====================
 
     /**
-     * ★ v3.9.25 小组件背景不透明度（0~100，默认 100=实底）。
-     * 0% 即「高级材质」：底色全透明，originOS/iQOO 桌面会套毛玻璃。
+     * ★ v3.9.26 小组件背景不透明度（0~100，默认 0=材质造型）。
+     * 仅在「材质」透明底之上叠一层深色纱（veil），数值越大越实：
+     * 0=全透明（originOS/iQOO 毛玻璃）→ 50=半透明玻璃感。
+     * 之前 90/75 档看不出差别，正是因为底色太深——现在默认从材质起步，
+     * 且档位取低值段（0/20/35/50），差异肉眼可辨。
      */
     public static int widgetOpacity() {
-        int v = SP.getInt("widget_opacity", 100);
-        return (v < 0 || v > 100) ? 100 : v;
+        int v = SP.getInt("widget_opacity", 0);
+        return (v < 0 || v > 100) ? 0 : v;
     }
 
     public static void setWidgetOpacity(int v) {
