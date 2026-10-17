@@ -1534,6 +1534,9 @@ public class MainActivity extends Activity
     @Override
     protected void onPause() {
         super.onPause();
+        // ★ v3.9.19：告知小组件「已退后台」，进度刷新降频到 3s
+        //   （避免秒级后台刷新触发 originOS 等省电策略的冻结 → 小组件白卡）
+        com.tingshu.app.widget.WidgetState.appForeground = false;
         // 退到后台时把进度落库，避免被系统杀掉丢进度
         if (core != null) core.saveProgressNow();
     }
@@ -1552,6 +1555,8 @@ public class MainActivity extends Activity
     @Override
     protected void onResume() {
         super.onResume();
+        // ★ v3.9.19：回前台，小组件恢复 800ms 跟手刷新
+        com.tingshu.app.widget.WidgetState.appForeground = true;
         // ★ v2.8：从系统「悬浮窗授权页」回来后复查一次权限，并回推给前端刷新开关。
         //   用户可能刚授权，也可能把权限关了 —— 两种都要反映到设置页。
         callJs("window.onFloatBallStateRefresh && window.onFloatBallStateRefresh(" +

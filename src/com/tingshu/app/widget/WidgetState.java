@@ -127,17 +127,17 @@ public final class WidgetState {
      * <p>内部走显式广播（带 ids）而不是 {@code notifyAppWidgetViewDataChanged}：
      * 后者是给集合控件（ListView 等）用的，普通面板要用前者。
      *
-     * <p>★ v3.9.14：加 800ms 节流。此前秒级进度 tick 可能与状态变化/其他
-     * 来源叠出每秒 2+ 次全量重绘（40+ 个 RemoteViews 动作/次），部分桌面
-     * 扛不住这种频率会出现白卡。force=true 用于播放/暂停/切集等关键状态
-     * 变化，不受节流限制；被节流掉的只是进度刷新（下一秒 tick 会补上）。
+     * <p>★ v3.9.14：加节流。★ v3.9.19：App 退后台后节流放宽到 3s——
+     * 秒级后台刷新容易触发 originOS 等省电策略的「高耗电」冻结，
+     * 冻结后小组件白卡且点不动；前台仍 800ms 保证跟手。
      *
      * @param force true = 关键状态变化，立即刷新不节流
      */
     public static void requestUpdate(Context ctx, boolean force) {
         if (ctx == null) return;
         long now = android.os.SystemClock.elapsedRealtime();
-        if (!force && now - lastReqMs < 800) return;   // 节流：进度类刷新最低 800ms 一次
+        long minGap = appForeground ? 800 : 3000;
+        if (!force && now - lastReqMs < minGap) return;   // 节流
         lastReqMs = now;
         try {
             AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
@@ -154,4 +154,7 @@ public final class WidgetState {
 
     /** 上次发起刷新的时间（节流用，elapsedRealtime 基准） */
     private static volatile long lastReqMs = 0;
+
+    /** ★ v3.9.19：App 是否在前台（MainActivity.onResume/onPause 维护） */
+    public static volatile boolean appForeground = true;
 }

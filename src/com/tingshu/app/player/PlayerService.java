@@ -210,7 +210,26 @@ public class PlayerService extends Service {
         // 否则 Android 8+ 会抛 ForegroundServiceDidNotStartInTimeException 直接闪退。
         // 这里先挂一个「空闲」通知占位，真正播放时 update() 会替换它。
         postIdle();
+
+        // ★ v3.9.19：进程心跳（每 60s 一条诊断日志）。
+        //   用途：小组件白卡时，看「alive」是否还在走——
+        //   · alive 停了 = 进程被系统冻结/杀（省电限制），与画法无关；
+        //   · alive 还在 = 进程活着而桌面白卡，问题在桌面渲染。
+        hb = new android.os.Handler(android.os.Looper.getMainLooper());
+        hbTick = new Runnable() {
+            public void run() {
+                try {
+                    com.tingshu.app.core.DiagLog.add("[diag] svc alive");
+                } catch (Throwable ignored) {}
+                hb.postDelayed(this, 60000);
+            }
+        };
+        hb.postDelayed(hbTick, 60000);
     }
+
+    /** 心跳 Handler（v3.9.19） */
+    private android.os.Handler hb;
+    private Runnable hbTick;
 
     /** 空闲态的最小通知（服务刚起来、还没开始播放时用） */
     private void postIdle() {
@@ -686,6 +705,9 @@ public class PlayerService extends Service {
 
     @Override
     public void onDestroy() {
+        try {
+            if (hb != null && hbTick != null) hb.removeCallbacks(hbTick);
+        } catch (Throwable ignored) {}
         try {
             if (session != null) {
                 session.setActive(false);
