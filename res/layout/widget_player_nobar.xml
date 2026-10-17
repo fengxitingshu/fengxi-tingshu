@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.3 小组件布局 = v3.8.5 逐字节复刻（用户 iQOO 15 / originOS 7 实测可用）。
+
+  【为什么又回到 3.8.5 结构】
+    v3.9.2 已把 RemoteViews 动作集收回到 3.8.5 实测六类，用户反馈仍是白卡。
+    对比 3.8.5 与 3.9.2 的布局反编译结果，剩下的差异全在结构层：
+      · 3.9.x 封面是 FrameLayout 三层叠（占位符 TextView + 封面 ImageView
+        + 状态点 TextView），3.8.5 只是一个 ImageView；
+      · 3.9.x 进度条只有一层 20 格（每格又上色又挂点击），
+        3.8.5 是两层：wgBar0..19（4dp 显示格，只上色）+
+        wgSeek0..19（全高透明点击层，只挂 PendingIntent）；
+      · 3.9.x 有 wgLive/wgRate/wgSleep 三个额外 TextView 接收
+        setTextViewText/setInt 动作，3.8.5 没有；
+      · 3.9.x 布局引用了 @string 资源、0.5dp 分数边距，3.8.5 全部是
+        字面值。
+    无法远程判定具体哪一条压垮 originOS 桌面，所以全部对齐：
+    v3.9.3 的布局结构与 build() 调用序列 = 3.8.5 原样复刻，
+    代价是放弃角标（倍速/定时）与状态点 —— 可用性优先于花哨。
+
+  ★ ID 契约（PlayerWidgetProvider.build() 按 ID 找视图，一个都不能少）：
+    wgRoot / wgCover / wgInfoTap / wgTitle / wgSub /
+    wgTimeCur / wgTimeDur / wgBar0..19 / wgSeek0..19 /
+    wgPrev / wgToggle / wgNext / wgStop
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wgRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#E6222530"
+    android:paddingLeft="14dp"
+    android:paddingTop="10dp"
+    android:paddingRight="14dp"
+    android:paddingBottom="8dp">
+
+    <!-- 上半：封面 + 书名/副标题（点封面或文字进 App） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/wgCover"
+            android:layout_width="58dp"
+            android:layout_height="58dp"
+            android:background="#33FFFFFF"
+            android:scaleType="centerCrop"/>
+
+        <LinearLayout
+            android:id="@+id/wgInfoTap"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginLeft="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/wgTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:text="枫兮听书"/>
+
+            <TextView
+                android:id="@+id/wgSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textSize="12sp"
+                android:textColor="#C9FFFFFF"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:text="点一下，继续听"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 中部：当前时间 + 进度条 + 总时长。
+         ★ v3.9.16 兼容模式：进度条从「20 显示格 + 20 点击格（两层 40 个
+         ImageView + 20 个 PendingIntent）」简化为单个 ProgressBar。
+         原因：诊断证实 App 侧构建/提交全部成功，白卡发生在桌面渲染环节；
+         部分桌面（originOS 等）对 RemoteViews 里挂大量 PendingIntent 会
+         渲染失败。3.8.2 时代（小组件首次回归、确认可用）正是单 ProgressBar
+         + 7 个左右动作的轻量结构。代价：放弃点格子跳进度（App 内可拖进度）。
+         -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/wgTimeCur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="34dp"
+            android:textSize="11sp"
+            android:textColor="#D9FFFFFF"
+            android:gravity="left"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"/>
+
+        <!-- ★ v3.9.21 无进度条模式：ProgressBar（带 ?android:attr 主题样式）
+             是白卡头号嫌疑——主题属性要靠桌面主题解析。此模式下用静态
+             4dp 文本条占位（无任何动态动作）。 -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="4dp"
+            android:layout_weight="1"
+            android:layout_marginLeft="7dp"
+            android:layout_marginRight="7dp"
+            android:background="#33FFFFFF"/>
+
+        <TextView
+            android:id="@+id/wgTimeDur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="34dp"
+            android:textSize="11sp"
+            android:textColor="#D9FFFFFF"
+            android:gravity="right"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"/>
+    </LinearLayout>
+
+    <!-- 下半：四键控制（本包矢量图 + 白色 tint）。
+         ★ v3.9.14：原来四键用 @android:drawable（框架资源）——与 v3.9.4
+         在 build() 里修过的问题同源：RemoteViews 由桌面渲染，部分桌面
+         解析框架 drawable 失败 → 整块白卡。四个键全部改用本包资源。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:layout_marginTop="3dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/wgPrev"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_prev"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgToggle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_play"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgNext"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_next"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgStop"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_stop"
+            android:tint="#FFFFFF"/>
+    </LinearLayout>
+</LinearLayout>

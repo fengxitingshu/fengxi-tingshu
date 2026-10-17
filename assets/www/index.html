@@ -553,6 +553,13 @@
       </div>
       <button class="mini" id="wgMiniBtn" onclick="App.ui.wgMiniToggle()">读取中…</button>
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,.12);border-radius:10px;">
+      <div style="flex:1;padding-right:10px;">
+        <div style="font-size:14px;">无进度条模式（排查②）</div>
+        <div style="font-size:11px;opacity:.6;margin-top:2px;">保留封面/图标/按钮，仅去掉进度条（头号嫌疑）。请先关掉上面的极简模式再测</div>
+      </div>
+      <button class="mini" id="wgNoBarBtn" onclick="App.ui.wgNoBarToggle()">读取中…</button>
+    </div>
     <pre class="diag-log" id="wgdiagBody">正在读取…</pre>
     <div class="diag-act">
       <button class="mini" onclick="App.ui.wgDiagRefresh()">重新读取</button>

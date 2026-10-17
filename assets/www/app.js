@@ -7851,6 +7851,7 @@
         if (el) el.textContent = '正在读取…';
         TS.call('widgetDiagLog');
         TS.call('widgetMiniGet');
+        TS.call('widgetNoBarGet');
     };
 
     /** ★ v3.9.20：小组件极简模式开关（白卡二分排查） */
@@ -7866,7 +7867,21 @@
         if (!btn) return;
         btn.setAttribute('data-on', o.on ? '1' : '0');
         btn.textContent = o.on ? '极简：开' : '极简：关';
-        if (o.on !== undefined && o._toggled) TS.toast(o.on ? '已切到极简模式' : '已恢复完整模式');
+    };
+
+    /** ★ v3.9.21：小组件无进度条开关（排查 ProgressBar 主题样式嫌疑） */
+    ui.wgNoBarToggle = function () {
+        var btn = $('wgNoBarBtn');
+        var cur = btn && btn.getAttribute('data-on') === '1';
+        TS.call('widgetNoBarSet', !cur);
+    };
+
+    window.onWgNoBar = function (o) {
+        o = o || {};
+        var btn = $('wgNoBarBtn');
+        if (!btn) return;
+        btn.setAttribute('data-on', o.on ? '1' : '0');
+        btn.textContent = o.on ? '无进度条：开' : '无进度条：关';
     };
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
@@ -8506,6 +8521,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.21',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件白卡二分第二轮：「无进度条」开关',
+                '   · 极简模式实测正常 → 桌面无策略性封杀，是完整布局某构件问题',
+                '   · 头号嫌疑=ProgressBar（带 ?android:attr 主题样式，需桌面主题解析）',
+                '   · 「小组件诊断」页新增「无进度条模式」：保留封面/图标/按钮，',
+                '     仅去掉进度条。极简关 + 无进度条开 → 能常驻即锁定进度条'
+            ]
+        },
         {
             ver: '3.9.20',
             date: '2026-10-17',

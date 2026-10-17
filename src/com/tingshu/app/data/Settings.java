@@ -254,6 +254,18 @@ public final class Settings {
         SP.edit().putBoolean("widget_mini", v).apply();
     }
 
+    /**
+     * 小组件无进度条模式：true 时完整布局里的 ProgressBar（带
+     * ?android:attr 主题样式，白卡头号嫌疑）换成静态文本条。
+     */
+    public static boolean widgetNoBar() {
+        return SP.getBoolean("widget_nobar", false);
+    }
+
+    public static void setWidgetNoBar(boolean v) {
+        SP.edit().putBoolean("widget_nobar", v).apply();
+    }
+
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
     public static int floatBallX() {
         return SP.getInt("float_ball_x", -1);

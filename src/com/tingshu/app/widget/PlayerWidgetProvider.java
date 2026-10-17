@@ -191,10 +191,15 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     private RemoteViews build(Context ctx) {
         // ★ v3.9.20：极简模式（设置页开关）——纯文字布局，用于把「桌面白卡」
         //   二分定位：极简也白 = 桌面策略性限制；极简不白 = 完整布局某构件问题。
+        // ★ v3.9.21：无进度条模式——完整布局去掉 ProgressBar（?android:attr
+        //   主题样式是白卡头号嫌疑），其余保留。
         boolean mini = com.tingshu.app.data.Settings.widgetMiniMode();
+        boolean noBar = !mini && com.tingshu.app.data.Settings.widgetNoBar();
         RemoteViews v = mini
                 ? new RemoteViews(ctx.getPackageName(), R.layout.widget_player_mini)
-                : new RemoteViews(ctx.getPackageName(), R.layout.widget_player);
+                : new RemoteViews(ctx.getPackageName(), noBar
+                        ? R.layout.widget_player_nobar
+                        : R.layout.widget_player);
 
         boolean has = WidgetState.hasContent;
         boolean playing = WidgetState.playing;
@@ -281,11 +286,14 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         // ---- 进度条：★ v3.9.16 兼容模式 —— 单个 ProgressBar + setProgressBar。
         //      旧的「20 显示格 + 20 点击格」带 20 个 PendingIntent，部分桌面
         //      （originOS 等）对 RemoteViews 里挂大量 PendingIntent 渲染失败
-        //      → 整块白卡。诊断已证实 App 侧构建/提交全部正常，白卡在桌面环节。 ----
-        try {
-            v.setProgressBar(R.id.wgProgress, 1000, seekable ? pct : 0, false);
-        } catch (Throwable t) {
-            diag(ctx, "build progress FAILED: " + t);
+        //      → 整块白卡。诊断已证实 App 侧构建/提交全部正常，白卡在桌面环节。
+        //      ★ v3.9.21：无进度条模式下布局里没有 wgProgress，跳过。 ----
+        if (!noBar) {
+            try {
+                v.setProgressBar(R.id.wgProgress, 1000, seekable ? pct : 0, false);
+            } catch (Throwable t) {
+                diag(ctx, "build progress FAILED: " + t);
+            }
         }
 
         // ---- 播放/暂停图标 ----

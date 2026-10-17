@@ -195,6 +195,31 @@ public class Bridge {
         });
     }
 
+    /** ★ v3.9.21 读小组件「无进度条」开关，回传 window.onWgNoBar({on}) */
+    @JavascriptInterface
+    public void widgetNoBarGet() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("on", com.tingshu.app.data.Settings.widgetNoBar());
+        } catch (Throwable ignored) {}
+        callback("onWgNoBar", o);
+    }
+
+    /** ★ v3.9.21 设小组件「无进度条」开关（切换后立即强制重绘） */
+    @JavascriptInterface
+    public void widgetNoBarSet(final boolean on) {
+        ui.post(new Runnable() {
+            public void run() {
+                com.tingshu.app.data.Settings.setWidgetNoBar(on);
+                JSONObject o = new JSONObject();
+                try { o.put("on", on); } catch (Throwable ignored) {}
+                com.tingshu.app.widget.WidgetState.requestUpdate(
+                        com.tingshu.app.core.App.ctx(), true);
+                callback("onWgNoBar", o);
+            }
+        });
+    }
+
     // ==================== 账号（接口预留） ====================
     // 本期只做接口占位：前端已经按这套契约写好，
     // 后续接入注册/登录服务时，只要在这里填充实现并回调 onAccount* 即可，
