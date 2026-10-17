@@ -218,7 +218,9 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             int op = com.tingshu.app.data.Settings.widgetOpacity();   // 0~100
             int a = (int) Math.round(255.0 * op / 100.0);
             v.setInt(R.id.wgRoot, "setBackgroundColor", 0xFF4C5866);
-            v.setInt(R.id.wgBody, "setBackgroundColor", (a << 24) | 0x222530);
+            // ★ v3.9.27 纱色调淡：#222530（近黑）→ #39414E（玻璃灰蓝），
+            //   半透明档位不再「一黑到底」
+            v.setInt(R.id.wgBody, "setBackgroundColor", (a << 24) | 0x39414E);
         } catch (Throwable t) {
             diag(ctx, "build bg FAILED: " + t);
         }

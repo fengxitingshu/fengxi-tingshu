@@ -251,11 +251,14 @@ public final class Settings {
      */
     public static int widgetOpacity() {
         int v = SP.getInt("widget_opacity", 0);
-        return (v < 0 || v > 100) ? 0 : v;
+        // ★ v3.9.27 旧值迁移：v3.9.25 时代可能存过 75/90/100（近黑无差异），
+        //   统一迁回「材质」0；新档位上限 75
+        if (v < 0 || v > 75) v = 0;
+        return v;
     }
 
     public static void setWidgetOpacity(int v) {
-        SP.edit().putInt("widget_opacity", (v < 0 || v > 100) ? 100 : v).apply();
+        SP.edit().putInt("widget_opacity", (v < 0 || v > 75) ? 0 : v).apply();
     }
 
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */

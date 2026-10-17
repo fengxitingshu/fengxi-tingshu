@@ -7860,7 +7860,7 @@
     window.onWgOp = function (o) {
         o = o || {};
         var op = (o.op === undefined ? 0 : o.op);
-        var ids = { 0: 'wgOp0', 20: 'wgOp20', 35: 'wgOp35', 50: 'wgOp50' };
+        var ids = { 0: 'wgOp0', 25: 'wgOp25', 50: 'wgOp50', 75: 'wgOp75' };
         for (var k in ids) {
             var el = $(ids[k]);
             if (el) el.className = 'seg-item' + (String(op) === k ? ' on' : '');
@@ -8513,6 +8513,18 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.27',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件透明度修复（按反馈）',
+                '   · 旧版本保存过的高不透明度（90/实底）会残留成黑块 —— 现自动迁移',
+                '     回「材质」；档位：材质 / 25 / 50 / 75',
+                '   · 纱色从近黑调为玻璃灰蓝（#39414E），半透明档位不再一黑到底',
+                '★ WebDAV 401 日志补充密码长度（passLen），用于核对输入法是否',
+                '  动过密码（多空格/缺字符）'
+            ]
+        },
         {
             ver: '3.9.26',
             date: '2026-10-17',

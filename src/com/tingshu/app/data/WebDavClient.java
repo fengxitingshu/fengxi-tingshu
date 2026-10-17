@@ -347,7 +347,8 @@ public final class WebDavClient {
             com.tingshu.app.core.DiagLog.add("[dav] 401 server="
                     + (r.server == null ? "?" : r.server)
                     + " auth=" + (r.wwwAuth == null ? "?" : r.wwwAuth)
-                    + " user=" + (user == null ? "" : user));
+                    + " user=" + (user == null ? "" : user)
+                    + " passLen=" + (pass == null ? 0 : pass.length()));
         }
         return r;
     }
