@@ -194,18 +194,20 @@ public final class WebDavClient {
     public static Result getToFile(String url, String user, String pass, File dest, String authType) {
         String initAuth = AUTH_DIGEST.equals(authType) ? null : basicHeader(user, pass);
         Result r = doGetToFile(url, user, pass, dest, initAuth);
+        boolean triedDigest = false;
         if (r.code == 401 && r.wwwAuth != null && wantsDigest(authType)) {
             java.util.Map<String, String> ch = parseWwwAuth(r.wwwAuth);
             if ("digest".equals(ch.get("scheme"))) {
-                String dig = digestHeader("GET", digestUri(url), user, pass, ch);
+                String dig = digestHeader("GET", digestUri(url), user, pass, ch, null, null);
                 if (dig != null) {
+                    triedDigest = true;
                     Result r2 = doGetToFile(url, user, pass, dest, dig);
-                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType);
+                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType, true);
                     return r2;
                 }
             }
         }
-        if (r.code == 401) r.error = better401(r.wwwAuth, authType);
+        if (r.code == 401) r.error = better401(r.wwwAuth, authType, triedDigest);
         return r;
     }
 
@@ -320,20 +322,23 @@ public final class WebDavClient {
                 wantText, readTimeout, initAuth);
 
         // 401 + 服务端要求 Digest → 应答 Digest 并重试一次（仅当协议选择允许 digest）
+        boolean triedDigest = false;
         if (r.code == 401 && r.wwwAuth != null && wantsDigest(authType)) {
             java.util.Map<String, String> ch = parseWwwAuth(r.wwwAuth);
             if ("digest".equals(ch.get("scheme"))) {
                 String uri = digestUri(url);
-                String dig = digestHeader(method, uri, user, pass, ch);
+                String dig = digestHeader(method, uri, user, pass, ch,
+                        bodyFile, bodyBytes);
                 if (dig != null) {
+                    triedDigest = true;
                     Result r2 = doRequest(method, url, user, pass, bodyFile, bodyBytes, depth,
                             wantText, readTimeout, dig);
-                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType);
+                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType, true);
                     return r2;
                 }
             }
         }
-        if (r.code == 401) r.error = better401(r.wwwAuth, authType);
+        if (r.code == 401) r.error = better401(r.wwwAuth, authType, triedDigest);
         return r;
     }
 
@@ -495,26 +500,37 @@ public final class WebDavClient {
     }
 
     /**
-     * 根据 401 质询算 Digest Authorization 头。优先选 {@code auth}（不做 auth-int，
-     * 后者需对请求体做 hash，WebDAV PUT 不便）。
+     * 根据 401 质询算 Digest Authorization 头。
+     *
+     * <p>★ v3.9.13 修复：qop 选择之前优先 {@code auth-int}，但哈希却按 {@code auth}
+     * 算（HA2 不含 body hash）—— 服务器质询 {@code qop="auth,auth-int"} 时必被拒。
+     * 现改为：<b>优先 {@code auth}</b>；仅当服务器只给 {@code auth-int} 时才用它，
+     * 并按 RFC 2617 对请求体算 {@code H(entity-body)} 拼进 HA2。
+     *
+     * @param bodyFile 请求体文件（PUT 上传时用，可为 null）
+     * @param bodyBytes 请求体字节（可为 null）
      */
     private static String digestHeader(String method, String uri, String user, String pass,
-                                       java.util.Map<String, String> ch) {
+                                       java.util.Map<String, String> ch,
+                                       File bodyFile, byte[] bodyBytes) {
         try {
             String realm = ch.get("realm") == null ? "" : ch.get("realm");
             String nonce = ch.get("nonce") == null ? "" : ch.get("nonce");
             String opaque = ch.get("opaque");
             String qop = ch.get("qop");
 
-            String chosenQop = null;
-            if (qop != null && qop.length() > 0) {
-                String q = qop.toLowerCase(java.util.Locale.ROOT);
-                if (q.contains("auth-int")) chosenQop = "auth-int";
-                else if (q.contains("auth")) chosenQop = "auth";
+            String chosenQop = chooseQop(qop);
+            // auth-int 需要 body hash（HA2 = H(method:uri:H(body))）
+            String bodyHash = null;
+            if ("auth-int".equals(chosenQop)) {
+                bodyHash = bodyMd5(bodyFile, bodyBytes);
+                if (bodyHash == null) chosenQop = "auth";   // 兜底：算不出就退回 auth
             }
 
             String ha1 = md5(user + ":" + realm + ":" + pass);
-            String ha2 = md5(method + ":" + uri);
+            String ha2 = "auth-int".equals(chosenQop)
+                    ? md5(method + ":" + uri + ":" + bodyHash)
+                    : md5(method + ":" + uri);
             String nc = "00000001";
             String cnonce = randomHex(16);
             String response;
@@ -539,13 +555,62 @@ public final class WebDavClient {
             if (opaque != null && opaque.length() > 0) {
                 sb.append(",opaque=\"").append(opaque).append("\"");
             }
-            if (ch.get("algorithm") != null) {
-                sb.append(",algorithm=\"").append(ch.get("algorithm")).append("\"");
+            String alg = ch.get("algorithm");
+            if (alg != null && alg.length() > 0
+                    && alg.toLowerCase(java.util.Locale.ROOT).startsWith("md5")) {
+                sb.append(",algorithm=MD5");
             }
             return sb.toString();
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /** qop 选择：优先 auth（轻量、无需 body hash），其次 auth-int */
+    private static String chooseQop(String qop) {
+        if (qop == null || qop.length() == 0) return null;
+        boolean hasAuth = false, hasAuthInt = false;
+        for (String p : qop.split(",")) {
+            String t = p.trim().toLowerCase(java.util.Locale.ROOT);
+            if ("auth".equals(t)) hasAuth = true;
+            else if ("auth-int".equals(t)) hasAuthInt = true;
+        }
+        if (hasAuth) return "auth";
+        if (hasAuthInt) return "auth-int";
+        return null;
+    }
+
+    /** 算请求体的 MD5 hex（auth-int 用）。文件太大（>8MB）时返回 null 退回 auth */
+    private static String bodyMd5(File f, byte[] bytes) {
+        try {
+            java.security.MessageDigest md =
+                    java.security.MessageDigest.getInstance("MD5");
+            if (bytes != null) {
+                return toHex(md.digest(bytes));
+            }
+            if (f != null && f.isFile()) {
+                if (f.length() > 8L * 1024 * 1024) return null;
+                java.io.FileInputStream fi = new java.io.FileInputStream(f);
+                try {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = fi.read(buf)) > 0) md.update(buf, 0, n);
+                } finally {
+                    closeQuietly(fi);
+                }
+                return toHex(md.digest());
+            }
+            // 无请求体：按 RFC 用空串的哈希
+            return toHex(md.digest(new byte[0]));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String toHex(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) sb.append(String.format("%02x", x));
+        return sb.toString();
     }
 
     /** Digest 用的请求 URI：取 URL 的路径（含 query），不含 host */
@@ -578,21 +643,43 @@ public final class WebDavClient {
     }
 
     /**
-     * ★ 401 的精准文案：区分「协议不匹配」与「真密码错」，不再一律报「密码错误」。
+     * ★ 401 的精准文案：区分「协议不匹配」「Digest 已试仍被拒」「真密码错」，
+     * 并带上服务器质询摘要（v3.9.13），用户截图即可定位问题。
      */
-    private static String better401(String wwwAuth, String authType) {
+    private static String better401(String wwwAuth, String authType, boolean triedDigest) {
+        String ch = challengeBrief(wwwAuth);
+
         if (wwwAuth != null && wwwAuth.toLowerCase(java.util.Locale.ROOT).contains("digest")) {
-            return "认证失败（401）：服务器要求 Digest 认证，但当前协议不匹配。"
-                    + "请在 WebDAV 设置里把「认证协议」改成「Digest」或「自动」后重试。";
+            if (triedDigest) {
+                return "认证失败（401）：已按服务器要求用 Digest 认证应答，仍被拒绝。"
+                        + "说明账号或密码不对（Digest 模式下密码即服务器/应用密码，"
+                        + "多一个空格都不行），请核对后重试。" + ch;
+            }
+            return "认证失败（401）：服务器要求 Digest 认证。"
+                    + "请在 WebDAV 设置里把「认证协议」改成「自动」或「Digest」后重试。" + ch;
         }
-        // 服务端给的是 Basic 质询（或无质询）
-        if (AUTH_DIGEST.equals(authType)) {
-            return "认证失败（401）：当前选了 Digest，但服务器似乎要求 Basic 认证。"
-                    + "请改成「自动」或「Basic」后重试。";
+        if (wwwAuth != null && wwwAuth.toLowerCase(java.util.Locale.ROOT).contains("basic")) {
+            return "认证失败（401）：服务器要求 Basic 认证，App 已按 Basic 发送，"
+                    + "是账号或密码不对。"
+                    + "若用坚果云，请到网页端「安全选项」生成应用密码，不要填登录密码；"
+                    + "账号一般填注册邮箱/手机号。" + ch;
         }
-        return "认证失败（401）：账号或密码不对。"
-                + "若用坚果云，请到网页端「安全选项」生成应用密码，不要填登录密码；"
-                + "若服务器要求 Digest，请把「认证协议」改成「自动」或「Digest」。";
+        if (wwwAuth == null || wwwAuth.length() == 0) {
+            return "认证失败（401）：服务器未说明认证方式。"
+                    + "常见原因是地址不是 WebDAV 入口（被网页页面拦截）。"
+                    + "坚果云应为 https://dav.jianguoyun.com/dav/ ，"
+                    + "飞牛 NAS 应为 http://NAS的IP:5005 。请核对地址。" + ch;
+        }
+        return "认证失败（401）：账号或密码不对，或认证协议不匹配。"
+                + "建议「认证协议」用「自动」，并核对账号密码" + ch;
+    }
+
+    /** 把 WWW-Authenticate 压缩成一句话放进错误里，方便用户截图排查 */
+    private static String challengeBrief(String wwwAuth) {
+        if (wwwAuth == null || wwwAuth.length() == 0) return "";
+        String s = wwwAuth.replaceAll("\\s+", " ").trim();
+        if (s.length() > 90) s = s.substring(0, 90) + "…";
+        return "（服务器要求：" + s + "）";
     }
 
     // ==================== ★ 反射改方法名（多级 fallback） ====================

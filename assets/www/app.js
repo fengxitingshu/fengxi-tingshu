@@ -8490,6 +8490,18 @@
 
     var CHANGELOG = [
         {
+            ver: '3.9.13',
+            date: '2026-10-17',
+            fixes: [
+                '★ 修复：Digest 认证在服务器质询 qop="auth,auth-int" 时必失败',
+                '   · 根因：qop 选择了 auth-int，但哈希却按 auth 计算（HA2 缺 body 摘要）',
+                '   · 现优先选 auth；仅服务器只给 auth-int 时才按 RFC 2617 算入 body 摘要',
+                '★ 401 报错升级为「诊断级」：直接告知服务器要求的认证方式',
+                '   · 区分：服务器要 Basic 但密码错 / 已按 Digest 应答仍被拒 / 地址不是 WebDAV 入口',
+                '   · 错误里附服务器 WWW-Authenticate 质询摘要，截图即可定位'
+            ]
+        },
+        {
             ver: '3.9.12',
             date: '2026-10-17',
             fixes: [
