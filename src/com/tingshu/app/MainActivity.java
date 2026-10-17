@@ -760,19 +760,28 @@ public class MainActivity extends Activity
         return null;
     }
 
-    /** 封面缩放到 128px 见方（RemoteViews Binder 传输安全尺寸） */
+    /**
+     * 封面缩放到小组件安全尺寸（★ v3.9.18：按长边 ≤144px 缩放，任何异常
+     * 一律返回 null——绝不让大图进 RemoteViews。大图走 Binder 轻则
+     * TransactionTooLarge 更新失败、重则桌面解码白卡）。
+     */
     private android.graphics.Bitmap scaleCover(android.graphics.Bitmap src) {
         try {
+            if (src == null || src.isRecycled()) return null;
             int w = src.getWidth(), h = src.getHeight();
-            int side = Math.min(w, h);
-            if (side <= 0) return src;
-            if (side <= 128) return src;
-            float scale = 128f / side;
-            android.graphics.Matrix m = new android.graphics.Matrix();
-            m.setScale(scale, scale);
-            return android.graphics.Bitmap.createBitmap(src, 0, 0, w, h, m, true);
-        } catch (Throwable t) {
+            int longSide = Math.max(w, h);
+            if (longSide <= 0) return null;
+            if (longSide > 144) {
+                float scale = 144f / longSide;
+                android.graphics.Matrix m = new android.graphics.Matrix();
+                m.setScale(scale, scale);
+                src = android.graphics.Bitmap.createBitmap(src, 0, 0, w, h, m, true);
+            }
+            // 最终保险：仍超过 200KB 就不进小组件
+            if (src.getRowBytes() * src.getHeight() > 200 * 1024) return null;
             return src;
+        } catch (Throwable t) {
+            return null;
         }
     }
 

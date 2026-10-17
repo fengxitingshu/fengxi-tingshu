@@ -99,7 +99,11 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                 mgr.updateAppWidget(id, build(ctx));
                 // ★ v3.9.14：提交成功也留痕（带内容态），且只在状态变化时记一条，
                 //   避免秒级刷新刷屏。若桌面渲染失败，从这里能看出 App 侧是否正常。
+                // ★ v3.9.18：带上封面位图字节数——排查「进 App 后白卡」是否与
+                //   封面位图相关（大图走 Binder / 桌面解码失败会整块白卡）。
                 String state = "has=" + WidgetState.hasContent + " playing=" + WidgetState.playing
+                        + " cover=" + (WidgetState.cover == null ? -1
+                                : WidgetState.cover.getRowBytes() * WidgetState.cover.getHeight())
                         + " title=" + (WidgetState.title == null ? "" : WidgetState.title);
                 if (!state.equals(lastOkState)) {
                     lastOkState = state;
@@ -221,10 +225,16 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             diag(ctx, "build text FAILED: " + t);
         }
 
-        // ---- 封面：3.8.5 同款 —— 没封面塞 null（该设备实测安全） ----
+        // ---- 封面：没有/超大一律塞 null（该设备实测安全）。
+        //      ★ v3.9.18：双保险——即使快照里混进大图也不进 RemoteViews ----
         try {
             android.graphics.Bitmap bm = (has && WidgetState.cover != null)
                     ? WidgetState.cover : null;
+            if (bm != null && bm.getRowBytes() * bm.getHeight() > 200 * 1024) {
+                diag(ctx, "cover too large (" + (bm.getRowBytes() * bm.getHeight())
+                        + "B) → drop");
+                bm = null;
+            }
             v.setImageViewBitmap(R.id.wgCover, bm);
         } catch (Throwable t) {
             diag(ctx, "build cover FAILED: " + t);
