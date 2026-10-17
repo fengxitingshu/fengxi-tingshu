@@ -116,18 +116,13 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             com.tingshu.app.core.DiagLog.add("[widget] 最后一个小组件移除");
         }
 
-        // 状态变化广播（由 WidgetState.requestUpdate 发出）；
-        // 另外 APPWIDGET_UPDATE 也会到这里（系统周期刷新 / 用户添加小组件），
-        // 一并重绘，保证快照丢了也能画出占位态而不是空白。
+        // 状态变化广播（由 WidgetState.requestUpdate 发出）。
+        // ★ v3.9.14：不再在这里手动调 onUpdate —— super.onReceive() 对
+        //   ACTION_APPWIDGET_UPDATE 本来就会调一次 onUpdate，此前我们再手动
+        //   调一次，每次刷新都渲染两遍（诊断日志可见每秒 2 条 onUpdate），
+        //   桌面高频收到重复 RemoteViews，部分桌面（originOS 等）会卡住/白卡。
         if (AppWidgetManager.ACTION_APPWIDGET_UPDATE.equals(a)) {
-            int[] ids = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS);
-            if (ids == null) {
-                try {
-                    ids = AppWidgetManager.getInstance(ctx)
-                            .getAppWidgetIds(new ComponentName(ctx, PlayerWidgetProvider.class));
-                } catch (Throwable ignored) {}
-            }
-            onUpdate(ctx, AppWidgetManager.getInstance(ctx), ids == null ? new int[0] : ids);
+            com.tingshu.app.core.DiagLog.add("[widget] onReceive UPDATE（super 已渲染，不再重复）");
         }
     }
 

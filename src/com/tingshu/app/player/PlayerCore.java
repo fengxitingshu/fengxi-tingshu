@@ -616,7 +616,7 @@ public class PlayerCore {
         // ★ v3.9.0：倍速角标同步到桌面小组件（换倍速是低频操作，直接重绘）
         try {
             com.tingshu.app.widget.WidgetState.rate = s;
-            com.tingshu.app.widget.WidgetState.requestUpdate(ctx);
+            com.tingshu.app.widget.WidgetState.requestUpdate(ctx, true);
         } catch (Throwable ignored) {}
     }
 

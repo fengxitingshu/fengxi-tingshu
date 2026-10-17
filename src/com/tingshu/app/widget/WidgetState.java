@@ -115,13 +115,30 @@ public final class WidgetState {
     }
 
     /**
+     * 请求刷新所有小组件实例（节流版，普通进度刷新用）。
+     */
+    public static void requestUpdate(Context ctx) {
+        requestUpdate(ctx, false);
+    }
+
+    /**
      * 请求刷新所有小组件实例。
      *
      * <p>内部走显式广播（带 ids）而不是 {@code notifyAppWidgetViewDataChanged}：
      * 后者是给集合控件（ListView 等）用的，普通面板要用前者。
+     *
+     * <p>★ v3.9.14：加 800ms 节流。此前秒级进度 tick 可能与状态变化/其他
+     * 来源叠出每秒 2+ 次全量重绘（40+ 个 RemoteViews 动作/次），部分桌面
+     * 扛不住这种频率会出现白卡。force=true 用于播放/暂停/切集等关键状态
+     * 变化，不受节流限制；被节流掉的只是进度刷新（下一秒 tick 会补上）。
+     *
+     * @param force true = 关键状态变化，立即刷新不节流
      */
-    public static void requestUpdate(Context ctx) {
+    public static void requestUpdate(Context ctx, boolean force) {
         if (ctx == null) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!force && now - lastReqMs < 800) return;   // 节流：进度类刷新最低 800ms 一次
+        lastReqMs = now;
         try {
             AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
             if (mgr == null) return;
@@ -134,4 +151,7 @@ public final class WidgetState {
             ctx.sendBroadcast(i);
         } catch (Throwable ignored) {}
     }
+
+    /** 上次发起刷新的时间（节流用，elapsedRealtime 基准） */
+    private static volatile long lastReqMs = 0;
 }

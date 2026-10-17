@@ -187,7 +187,7 @@ public class MainActivity extends Activity
                         try {
                             com.tingshu.app.widget.WidgetState.sleepChip =
                                     com.tingshu.app.player.SleepTimer.chipText();
-                            com.tingshu.app.widget.WidgetState.requestUpdate(MainActivity.this);
+                            com.tingshu.app.widget.WidgetState.requestUpdate(MainActivity.this, true);
                         } catch (Throwable ignored) {}
                     }
                 });
@@ -719,7 +719,7 @@ public class MainActivity extends Activity
             com.tingshu.app.data.Models.Book bk = core.book();
             if (bk == null) {
                 com.tingshu.app.widget.WidgetState.clear();
-                com.tingshu.app.widget.WidgetState.requestUpdate(this);
+                com.tingshu.app.widget.WidgetState.requestUpdate(this, true);
                 return;
             }
             List<Chapter> chs = core.chapters();
@@ -738,7 +738,7 @@ public class MainActivity extends Activity
             if (full != null) {
                 com.tingshu.app.widget.WidgetState.cover = scaleCover(full);
             }
-            com.tingshu.app.widget.WidgetState.requestUpdate(this);
+            com.tingshu.app.widget.WidgetState.requestUpdate(this, true);
         } catch (Throwable ignored) {}
     }
 
