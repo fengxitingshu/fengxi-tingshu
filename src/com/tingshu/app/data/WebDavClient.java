@@ -344,11 +344,23 @@ public final class WebDavClient {
             r.error = better401(r.wwwAuth, authType, triedDigest);
             // ★ v3.9.25：401 时把服务器指纹写进诊断日志（「小组件诊断」页可看），
             //   便于定位「密码没错却 401」——到底是哪个服务在拒绝
+            String credB64 = "";
+            try {
+                String token = user + ":" + (pass == null ? "" : pass);
+                byte[] raw = token.getBytes("UTF-8");
+                credB64 = android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP);
+            } catch (Throwable ignored) {
+                try { credB64 = java.util.Base64.getEncoder()
+                        .encodeToString((user + ":" + (pass == null ? "" : pass))
+                                .getBytes("UTF-8")); } catch (Throwable ignored2) {}
+            }
+            // cred=Basic base64(账号:密码) —— 拿到后可离线解码，逐字符核对
+            // 输入法到底发了什么（空格/大小写/全半角）。诊断日志仅存本机。
             com.tingshu.app.core.DiagLog.add("[dav] 401 server="
                     + (r.server == null ? "?" : r.server)
                     + " auth=" + (r.wwwAuth == null ? "?" : r.wwwAuth)
-                    + " user=" + (user == null ? "" : user)
-                    + " passLen=" + (pass == null ? 0 : pass.length()));
+                    + " passLen=" + (pass == null ? 0 : pass.length())
+                    + " cred=" + credB64);
         }
         return r;
     }

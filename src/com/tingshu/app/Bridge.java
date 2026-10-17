@@ -180,9 +180,12 @@ public class Bridge {
     /** ★ v3.9.25 设小组件背景不透明度（0~100，切换后立即强制重绘） */
     @JavascriptInterface
     public void widgetOpacitySet(final int op) {
+        com.tingshu.app.core.DiagLog.add("[widget] UI setOpacity=" + op);
         ui.post(new Runnable() {
             public void run() {
                 com.tingshu.app.data.Settings.setWidgetOpacity(op);
+                com.tingshu.app.core.DiagLog.add("[widget] savedOpacity="
+                        + com.tingshu.app.data.Settings.widgetOpacity());
                 JSONObject o = new JSONObject();
                 try { o.put("op", com.tingshu.app.data.Settings.widgetOpacity()); }
                 catch (Throwable ignored) {}

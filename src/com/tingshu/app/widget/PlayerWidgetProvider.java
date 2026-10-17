@@ -122,6 +122,9 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     /** 上一次托管探针结果（去重防刷屏） */
     private static String lastHostProbe = "";
 
+    /** 上一次记录的生效不透明度（去重防刷屏） */
+    private static String lastOpLine = "";
+
     @Override
     public void onReceive(Context ctx, Intent intent) {
         super.onReceive(ctx, intent);
@@ -221,6 +224,12 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             // ★ v3.9.27 纱色调淡：#222530（近黑）→ #39414E（玻璃灰蓝），
             //   半透明档位不再「一黑到底」
             v.setInt(R.id.wgBody, "setBackgroundColor", (a << 24) | 0x39414E);
+            // ★ v3.9.28 插桩：实际生效的不透明度（与 UI 设置对账用）
+            String opLine = "[widget] applyOpacity=" + op + " alpha=" + a;
+            if (!opLine.equals(lastOpLine)) {
+                lastOpLine = opLine;
+                com.tingshu.app.core.DiagLog.add(opLine);
+            }
         } catch (Throwable t) {
             diag(ctx, "build bg FAILED: " + t);
         }
