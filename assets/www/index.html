@@ -546,6 +546,13 @@
     <div class="btn ghost"></div>
   </div>
   <div class="content">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,.12);border-radius:10px;">
+      <div style="flex:1;padding-right:10px;">
+        <div style="font-size:14px;">极简模式（白卡排查）</div>
+        <div style="font-size:11px;opacity:.6;margin-top:2px;">小组件只显示文字。开=排查布局问题，关=恢复完整界面</div>
+      </div>
+      <button class="mini" id="wgMiniBtn" onclick="App.ui.wgMiniToggle()">读取中…</button>
+    </div>
     <pre class="diag-log" id="wgdiagBody">正在读取…</pre>
     <div class="diag-act">
       <button class="mini" onclick="App.ui.wgDiagRefresh()">重新读取</button>

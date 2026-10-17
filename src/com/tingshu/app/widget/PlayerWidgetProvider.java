@@ -189,10 +189,40 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
      * 四键图标全部用本包资源（v3.9.14 起）。每段独立 try-catch 并写诊断日志。
      */
     private RemoteViews build(Context ctx) {
-        RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_player);
+        // ★ v3.9.20：极简模式（设置页开关）——纯文字布局，用于把「桌面白卡」
+        //   二分定位：极简也白 = 桌面策略性限制；极简不白 = 完整布局某构件问题。
+        boolean mini = com.tingshu.app.data.Settings.widgetMiniMode();
+        RemoteViews v = mini
+                ? new RemoteViews(ctx.getPackageName(), R.layout.widget_player_mini)
+                : new RemoteViews(ctx.getPackageName(), R.layout.widget_player);
 
         boolean has = WidgetState.hasContent;
         boolean playing = WidgetState.playing;
+
+        String title = has && !WidgetState.title.isEmpty()
+                ? WidgetState.title : "枫兮听书";
+        String sub;
+        if (!has) {
+            sub = "点一下，继续听";
+        } else if (!playing && WidgetState.curSec <= 0) {
+            sub = "准备中…";
+        } else {
+            String ep = WidgetState.epText;
+            String ar = WidgetState.artist == null ? "" : WidgetState.artist;
+            if (ep != null && !ep.isEmpty() && ar != null && !ar.isEmpty()) sub = ar + " · " + ep;
+            else if (ep != null && !ep.isEmpty()) sub = "第 " + ep + " 集";
+            else sub = playing ? "正在播放" : "已暂停";
+        }
+
+        if (mini) {
+            try {
+                v.setTextViewText(R.id.wgMiniTitle, title);
+                v.setTextViewText(R.id.wgMiniSub, sub);
+            } catch (Throwable t) {
+                diag(ctx, "mini text FAILED: " + t);
+            }
+            return v;
+        }
 
         // ---- 根背景（3.8.5 在 build 里再设一次，这里照抄） ----
         try {
@@ -203,24 +233,14 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
 
         // ---- 文案（与通知栏同源：书名 / 作者 · 集数） ----
         try {
-            String title = has && !WidgetState.title.isEmpty()
-                    ? WidgetState.title : "枫兮听书";
             v.setTextViewText(R.id.wgTitle, title);
-            String sub;
-            if (!has) {
-                sub = "点一下，继续听";
-            } else if (!playing && WidgetState.curSec <= 0) {
+            if (has && !playing && WidgetState.curSec <= 0) {
                 // 有内容但没进度也没在播 = 取链/缓冲中（native 的 playing 在
                 // prepareAsync 期间还是 false，这个组合正好覆盖转圈阶段）
-                sub = "准备中…";
+                v.setTextViewText(R.id.wgSub, "准备中…");
             } else {
-                String ep = WidgetState.epText;
-                String ar = WidgetState.artist == null ? "" : WidgetState.artist;
-                if (ep != null && !ep.isEmpty() && ar != null && !ar.isEmpty()) sub = ar + " · " + ep;
-                else if (ep != null && !ep.isEmpty()) sub = "第 " + ep + " 集";
-                else sub = playing ? "正在播放" : "已暂停";
+                v.setTextViewText(R.id.wgSub, sub);
             }
-            v.setTextViewText(R.id.wgSub, sub);
         } catch (Throwable t) {
             diag(ctx, "build text FAILED: " + t);
         }

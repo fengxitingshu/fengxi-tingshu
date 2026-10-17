@@ -240,6 +240,20 @@ public final class Settings {
         SP.edit().putBoolean("float_ball", v).apply();
     }
 
+    // ==================== ★ v3.9.20 小组件极简模式（白卡排查） ====================
+
+    /**
+     * 小组件极简模式：true 时小组件用 widget_player_mini（纯文字）渲染。
+     * 用于把「桌面白卡」二分定位到布局构件或桌面策略。
+     */
+    public static boolean widgetMiniMode() {
+        return SP.getBoolean("widget_mini", false);
+    }
+
+    public static void setWidgetMiniMode(boolean v) {
+        SP.edit().putBoolean("widget_mini", v).apply();
+    }
+
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
     public static int floatBallX() {
         return SP.getInt("float_ball_x", -1);

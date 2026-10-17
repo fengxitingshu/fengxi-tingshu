@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.20 小组件「极简模式」布局（白卡二分排查用）。
+
+  与完整版（widget_player.xml）的区别：没有 ImageView / 封面位图 /
+  ProgressBar / 矢量图 / tint / 跑马灯属性 / 阴影，也没有任何
+  PendingIntent——纯 LinearLayout + 两个 TextView。
+  如果极简模式在桌面上能常驻不白卡，就能把白卡原因锁定在完整版布局的
+  某个具体构件上；如果极简模式也白卡，则说明该桌面对该 App 的小组件
+  存在策略性限制（与画法无关）。
+
+  ID：wgMiniTitle / wgMiniSub（build() 极简分支使用）
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wgMiniRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#E6222530"
+    android:gravity="center_vertical"
+    android:paddingLeft="14dp"
+    android:paddingRight="14dp">
+
+    <TextView
+        android:id="@+id/wgMiniTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="15sp"
+        android:textColor="#FFFFFF"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="枫兮听书"/>
+
+    <TextView
+        android:id="@+id/wgMiniSub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textSize="12sp"
+        android:textColor="#C9FFFFFF"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="点一下，继续听"/>
+</LinearLayout>

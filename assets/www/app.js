@@ -7850,6 +7850,23 @@
         var el = $('wgdiagBody');
         if (el) el.textContent = '正在读取…';
         TS.call('widgetDiagLog');
+        TS.call('widgetMiniGet');
+    };
+
+    /** ★ v3.9.20：小组件极简模式开关（白卡二分排查） */
+    ui.wgMiniToggle = function () {
+        var btn = $('wgMiniBtn');
+        var cur = btn && btn.getAttribute('data-on') === '1';
+        TS.call('widgetMiniSet', !cur);
+    };
+
+    window.onWgMini = function (o) {
+        o = o || {};
+        var btn = $('wgMiniBtn');
+        if (!btn) return;
+        btn.setAttribute('data-on', o.on ? '1' : '0');
+        btn.textContent = o.on ? '极简：开' : '极简：关';
+        if (o.on !== undefined && o._toggled) TS.toast(o.on ? '已切到极简模式' : '已恢复完整模式');
     };
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
@@ -8489,6 +8506,19 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.20',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件白卡「二分排查」能力：新增极简模式开关',
+                '   · 「我的 → 设置 → 小组件诊断」页顶部新增「极简模式」开关，',
+                '     开启后小组件只显示纯文字（无图片/进度条/图标）',
+                '   · 已确认：进程活着、每 3 秒成功更新、桌面托管正常时仍白卡，',
+                '     问题锁定在桌面渲染环节 → 用极简/完整两档二分定位',
+                '   · 极简模式也白 = 桌面对本 App 小组件的策略性限制；',
+                '     极简不白 = 完整布局某个构件触发了桌面渲染失败，可精准移除'
+            ]
+        },
         {
             ver: '3.9.19',
             date: '2026-10-17',

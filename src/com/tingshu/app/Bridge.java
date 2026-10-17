@@ -167,6 +167,34 @@ public class Bridge {
         } catch (Throwable ignored) {}
     }
 
+    /** ★ v3.9.20 读小组件极简模式开关，回传 window.onWgMini({on}) */
+    @JavascriptInterface
+    public void widgetMiniGet() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("on", com.tingshu.app.data.Settings.widgetMiniMode());
+        } catch (Throwable ignored) {}
+        callback("onWgMini", o);
+    }
+
+    /**
+     * ★ v3.9.20 设小组件极简模式开关。切换后立即强制重绘一次，
+     * 桌面上的小组件立刻换成对应布局（无需重新添加）。
+     */
+    @JavascriptInterface
+    public void widgetMiniSet(final boolean on) {
+        ui.post(new Runnable() {
+            public void run() {
+                com.tingshu.app.data.Settings.setWidgetMiniMode(on);
+                JSONObject o = new JSONObject();
+                try { o.put("on", on); } catch (Throwable ignored) {}
+                com.tingshu.app.widget.WidgetState.requestUpdate(
+                        com.tingshu.app.core.App.ctx(), true);
+                callback("onWgMini", o);
+            }
+        });
+    }
+
     // ==================== 账号（接口预留） ====================
     // 本期只做接口占位：前端已经按这套契约写好，
     // 后续接入注册/登录服务时，只要在这里填充实现并回调 onAccount* 即可，
