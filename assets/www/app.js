@@ -7859,7 +7859,7 @@
 
     window.onWgOp = function (o) {
         o = o || {};
-        var op = (o.op === undefined ? 0 : o.op);
+        var op = (o.op === undefined ? 50 : o.op);
         var ids = { 0: 'wgOp0', 25: 'wgOp25', 50: 'wgOp50', 75: 'wgOp75' };
         for (var k in ids) {
             var el = $(ids[k]);
