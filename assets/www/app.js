@@ -7850,56 +7850,22 @@
         var el = $('wgdiagBody');
         if (el) el.textContent = '正在读取…';
         TS.call('widgetDiagLog');
-        TS.call('widgetMiniGet');
-        TS.call('widgetNoBarGet');
-        TS.call('widgetStageGet');
+        TS.call('widgetMaterialGet');
     };
 
-    /** ★ v3.9.20：小组件极简模式开关（白卡二分排查） */
-    ui.wgMiniToggle = function () {
-        var btn = $('wgMiniBtn');
+    /** ★ v3.9.24：小组件「高级材质」背景开关 */
+    ui.wgMatToggle = function () {
+        var btn = $('wgMatBtn');
         var cur = btn && btn.getAttribute('data-on') === '1';
-        TS.call('widgetMiniSet', !cur);
+        TS.call('widgetMaterialSet', !cur);
     };
 
-    window.onWgMini = function (o) {
+    window.onWgMat = function (o) {
         o = o || {};
-        var btn = $('wgMiniBtn');
+        var btn = $('wgMatBtn');
         if (!btn) return;
         btn.setAttribute('data-on', o.on ? '1' : '0');
-        btn.textContent = o.on ? '极简：开' : '极简：关';
-    };
-
-    /** ★ v3.9.21：小组件无进度条开关（排查 ProgressBar 主题样式嫌疑） */
-    ui.wgNoBarToggle = function () {
-        var btn = $('wgNoBarBtn');
-        var cur = btn && btn.getAttribute('data-on') === '1';
-        TS.call('widgetNoBarSet', !cur);
-    };
-
-    window.onWgNoBar = function (o) {
-        o = o || {};
-        var btn = $('wgNoBarBtn');
-        if (!btn) return;
-        btn.setAttribute('data-on', o.on ? '1' : '0');
-        btn.textContent = o.on ? '无进度条：开' : '无进度条：关';
-    };
-
-    /** ★ v3.9.23：排查档位循环（0 完整 → 1 去跑马灯 → 2 去图标 → 3 去点击） */
-    var WG_STAGE_LABEL = ['档位 0：完整', '档位 1：去跑马灯', '档位 2：去图标', '档位 3：去点击'];
-    ui.wgStageCycle = function () {
-        var btn = $('wgStageBtn');
-        var cur = btn ? parseInt(btn.getAttribute('data-stage') || '0', 10) : 0;
-        TS.call('widgetStageSet', (cur + 1) % 4);
-    };
-
-    window.onWgStage = function (o) {
-        o = o || {};
-        var btn = $('wgStageBtn');
-        if (!btn) return;
-        var s = o.stage || 0;
-        btn.setAttribute('data-stage', String(s));
-        btn.textContent = WG_STAGE_LABEL[s] || ('档位 ' + s);
+        btn.textContent = o.on ? '材质：开' : '材质：关';
     };
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
@@ -8539,6 +8505,22 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.24',
+            date: '2026-10-17',
+            fixes: [
+                '★ 桌面小组件白卡问题修复收官（元凶：跑马灯滚动）',
+                '   · 四轮二分定位确认：originOS 桌面对小组件内 marquee 滚动',
+                '     （setSelected 动作）兼容性差，触发后整块白卡且点不动',
+                '   · 永久移除跑马灯：超长书名改为省略号截断',
+                '★ 小组件体验升级',
+                '   · 进度条恢复可拖动（20 格点击跳转，每格 5%）',
+                '   · 按钮加大（46dp 行高）、背景改不透明深色',
+                '   · 新增「高级材质背景」开关：透明底可配合 iQOO/originOS 桌面',
+                '     毛玻璃材质（设置 → 小组件诊断页内切换）',
+                '   · 后台进度刷新恢复 3 秒一次'
+            ]
+        },
         {
             ver: '3.9.23',
             date: '2026-10-17',

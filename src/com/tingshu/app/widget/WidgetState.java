@@ -136,10 +136,9 @@ public final class WidgetState {
     public static void requestUpdate(Context ctx, boolean force) {
         if (ctx == null) return;
         long now = android.os.SystemClock.elapsedRealtime();
-        // ★ v3.9.22：后台进度刷新进一步放宽到 30s——极简/完整双布局对照表明
-        //   桌面对「全量布局高频重放」承受力有限（静态布局能渲染、连续更新后
-        //   白卡），频率本身成为嫌疑。后台只在状态变化（force）时立即刷新。
-        long minGap = appForeground ? 800 : 30000;
+        // ★ v3.9.24：白卡元凶（跑马灯动作）已移除，后台恢复 3s 刷新；
+        //   前台 800ms 跟手。状态变化（force）不受节流立即刷新。
+        long minGap = appForeground ? 800 : 3000;
         if (!force && now - lastReqMs < minGap) return;   // 节流
         lastReqMs = now;
         try {

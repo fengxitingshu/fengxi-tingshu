@@ -167,81 +167,27 @@ public class Bridge {
         } catch (Throwable ignored) {}
     }
 
-    /** ★ v3.9.20 读小组件极简模式开关，回传 window.onWgMini({on}) */
+    /** ★ v3.9.24 读小组件「高级材质」背景开关，回传 window.onWgMat({on}) */
     @JavascriptInterface
-    public void widgetMiniGet() {
+    public void widgetMaterialGet() {
         JSONObject o = new JSONObject();
         try {
-            o.put("on", com.tingshu.app.data.Settings.widgetMiniMode());
+            o.put("on", com.tingshu.app.data.Settings.widgetMaterial());
         } catch (Throwable ignored) {}
-        callback("onWgMini", o);
+        callback("onWgMat", o);
     }
 
-    /**
-     * ★ v3.9.20 设小组件极简模式开关。切换后立即强制重绘一次，
-     * 桌面上的小组件立刻换成对应布局（无需重新添加）。
-     */
+    /** ★ v3.9.24 设小组件「高级材质」背景开关（切换后立即强制重绘） */
     @JavascriptInterface
-    public void widgetMiniSet(final boolean on) {
+    public void widgetMaterialSet(final boolean on) {
         ui.post(new Runnable() {
             public void run() {
-                com.tingshu.app.data.Settings.setWidgetMiniMode(on);
+                com.tingshu.app.data.Settings.setWidgetMaterial(on);
                 JSONObject o = new JSONObject();
                 try { o.put("on", on); } catch (Throwable ignored) {}
                 com.tingshu.app.widget.WidgetState.requestUpdate(
                         com.tingshu.app.core.App.ctx(), true);
-                callback("onWgMini", o);
-            }
-        });
-    }
-
-    /** ★ v3.9.21 读小组件「无进度条」开关，回传 window.onWgNoBar({on}) */
-    @JavascriptInterface
-    public void widgetNoBarGet() {
-        JSONObject o = new JSONObject();
-        try {
-            o.put("on", com.tingshu.app.data.Settings.widgetNoBar());
-        } catch (Throwable ignored) {}
-        callback("onWgNoBar", o);
-    }
-
-    /** ★ v3.9.21 设小组件「无进度条」开关（切换后立即强制重绘） */
-    @JavascriptInterface
-    public void widgetNoBarSet(final boolean on) {
-        ui.post(new Runnable() {
-            public void run() {
-                com.tingshu.app.data.Settings.setWidgetNoBar(on);
-                JSONObject o = new JSONObject();
-                try { o.put("on", on); } catch (Throwable ignored) {}
-                com.tingshu.app.widget.WidgetState.requestUpdate(
-                        com.tingshu.app.core.App.ctx(), true);
-                callback("onWgNoBar", o);
-            }
-        });
-    }
-
-    /** ★ v3.9.23 读小组件排查档位，回传 window.onWgStage({stage}) */
-    @JavascriptInterface
-    public void widgetStageGet() {
-        JSONObject o = new JSONObject();
-        try {
-            o.put("stage", com.tingshu.app.data.Settings.widgetStage());
-        } catch (Throwable ignored) {}
-        callback("onWgStage", o);
-    }
-
-    /** ★ v3.9.23 设小组件排查档位（0~3，切换后立即强制重绘） */
-    @JavascriptInterface
-    public void widgetStageSet(final int stage) {
-        ui.post(new Runnable() {
-            public void run() {
-                com.tingshu.app.data.Settings.setWidgetStage(stage);
-                JSONObject o = new JSONObject();
-                try { o.put("stage", com.tingshu.app.data.Settings.widgetStage()); }
-                catch (Throwable ignored) {}
-                com.tingshu.app.widget.WidgetState.requestUpdate(
-                        com.tingshu.app.core.App.ctx(), true);
-                callback("onWgStage", o);
+                callback("onWgMat", o);
             }
         });
     }

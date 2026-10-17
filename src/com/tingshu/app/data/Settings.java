@@ -240,44 +240,19 @@ public final class Settings {
         SP.edit().putBoolean("float_ball", v).apply();
     }
 
-    // ==================== ★ v3.9.20 小组件极简模式（白卡排查） ====================
+    // ==================== ★ v3.9.24 小组件外观 ====================
 
     /**
-     * 小组件极简模式：true 时小组件用 widget_player_mini（纯文字）渲染。
-     * 用于把「桌面白卡」二分定位到布局构件或桌面策略。
+     * 小组件背景「高级材质」模式：true 时小组件根背景透明，
+     * originOS（iQOO/vivo）桌面会为透明小组件套上毛玻璃材质底；
+     * false（默认）为深色实底。
      */
-    public static boolean widgetMiniMode() {
-        return SP.getBoolean("widget_mini", false);
+    public static boolean widgetMaterial() {
+        return SP.getBoolean("widget_material", false);
     }
 
-    public static void setWidgetMiniMode(boolean v) {
-        SP.edit().putBoolean("widget_mini", v).apply();
-    }
-
-    /**
-     * 小组件无进度条模式：true 时完整布局里的 ProgressBar（带
-     * ?android:attr 主题样式，白卡头号嫌疑）换成静态文本条。
-     */
-    public static boolean widgetNoBar() {
-        return SP.getBoolean("widget_nobar", false);
-    }
-
-    public static void setWidgetNoBar(boolean v) {
-        SP.edit().putBoolean("widget_nobar", v).apply();
-    }
-
-    /**
-     * ★ v3.9.23 小组件白卡排查档位（0~3，逐个禁用嫌疑动作）：
-     * 0=完整；1=去跑马灯动作（setSelected）；2=再去图标动作（setImageViewResource）；
-     * 3=再去全部点击动作（PendingIntent）。
-     */
-    public static int widgetStage() {
-        int v = SP.getInt("widget_stage", 0);
-        return (v < 0 || v > 3) ? 0 : v;
-    }
-
-    public static void setWidgetStage(int v) {
-        SP.edit().putInt("widget_stage", (v < 0 || v > 3) ? 0 : v).apply();
+    public static void setWidgetMaterial(boolean v) {
+        SP.edit().putBoolean("widget_material", v).apply();
     }
 
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
