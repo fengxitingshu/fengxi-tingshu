@@ -201,7 +201,10 @@
             android:shadowRadius="2"/>
     </LinearLayout>
 
-    <!-- 下半：四键控制（系统自带位图 + 白色 tint，3.8.5 同款） -->
+    <!-- 下半：四键控制（本包矢量图 + 白色 tint）。
+         ★ v3.9.14：原来四键用 @android:drawable（框架资源）——与 v3.9.4
+         在 build() 里修过的问题同源：RemoteViews 由桌面渲染，部分桌面
+         解析框架 drawable 失败 → 整块白卡。四个键全部改用本包资源。 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="36dp"
@@ -216,7 +219,7 @@
             android:layout_weight="1"
             android:padding="8dp"
             android:scaleType="fitCenter"
-            android:src="@android:drawable/ic_media_previous"
+            android:src="@drawable/ic_notif_prev"
             android:tint="#FFFFFF"/>
 
         <ImageView
@@ -228,7 +231,7 @@
             android:layout_marginRight="10dp"
             android:padding="7dp"
             android:scaleType="fitCenter"
-            android:src="@android:drawable/ic_media_pause"
+            android:src="@drawable/ic_notif_play"
             android:tint="#FFFFFF"/>
 
         <ImageView
@@ -238,7 +241,7 @@
             android:layout_weight="1"
             android:padding="8dp"
             android:scaleType="fitCenter"
-            android:src="@android:drawable/ic_media_next"
+            android:src="@drawable/ic_notif_next"
             android:tint="#FFFFFF"/>
 
         <ImageView
@@ -248,7 +251,7 @@
             android:layout_weight="1"
             android:padding="8dp"
             android:scaleType="fitCenter"
-            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:src="@drawable/ic_notif_stop"
             android:tint="#FFFFFF"/>
     </LinearLayout>
 </LinearLayout>

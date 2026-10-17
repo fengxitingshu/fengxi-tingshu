@@ -82,9 +82,24 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         for (int id : ids) {
             try {
                 mgr.updateAppWidget(id, build(ctx));
-            } catch (Throwable ignored) {}
+                // ★ v3.9.14：提交成功也留痕（带内容态），且只在状态变化时记一条，
+                //   避免秒级刷新刷屏。若桌面渲染失败，从这里能看出 App 侧是否正常。
+                String state = "has=" + WidgetState.hasContent + " playing=" + WidgetState.playing
+                        + " title=" + (WidgetState.title == null ? "" : WidgetState.title);
+                if (!state.equals(lastOkState)) {
+                    lastOkState = state;
+                    com.tingshu.app.core.DiagLog.add("[widget] update OK " + state);
+                }
+            } catch (Throwable t) {
+                // ★ v3.9.14：这里原来是静默 ignored —— Binder 传输失败
+                //  （如 TransactionTooLarge）会被无声吞掉，桌面永远收不到更新。
+                com.tingshu.app.core.DiagLog.add("[widget] updateAppWidget FAILED: " + t);
+            }
         }
     }
+
+    /** 上一次成功提交时的状态摘要（避免秒级刷新刷屏诊断日志） */
+    private static String lastOkState = "";
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
