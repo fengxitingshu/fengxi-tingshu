@@ -233,8 +233,10 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             bOff = 0x3339414E;   // 进度未播格
             tint = 0xFF39414E;   // 图标深色
         } else {
-            rim  = 0xFF4C5866;   // 边界圈（深）
-            body = 0x00000000;   // 材质：全透明
+            // ★ v3.9.31 材质=真透明：root 也必须透明 —— 此前 root 还是
+            //   边界色，内衬透明后露出来的是边界色（灰蓝卡），永远看不到桌面
+            rim  = 0x00000000;
+            body = 0x00000000;
             tTxt = 0xFFFFFFFF;
             sTxt = 0xC9FFFFFF;
             bOn  = 0xF2FFFFFF;
