@@ -266,6 +266,20 @@ public final class Settings {
         SP.edit().putBoolean("widget_nobar", v).apply();
     }
 
+    /**
+     * ★ v3.9.23 小组件白卡排查档位（0~3，逐个禁用嫌疑动作）：
+     * 0=完整；1=去跑马灯动作（setSelected）；2=再去图标动作（setImageViewResource）；
+     * 3=再去全部点击动作（PendingIntent）。
+     */
+    public static int widgetStage() {
+        int v = SP.getInt("widget_stage", 0);
+        return (v < 0 || v > 3) ? 0 : v;
+    }
+
+    public static void setWidgetStage(int v) {
+        SP.edit().putInt("widget_stage", (v < 0 || v > 3) ? 0 : v).apply();
+    }
+
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */
     public static int floatBallX() {
         return SP.getInt("float_ball_x", -1);

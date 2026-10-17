@@ -560,6 +560,13 @@
       </div>
       <button class="mini" id="wgNoBarBtn" onclick="App.ui.wgNoBarToggle()">读取中…</button>
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,.12);border-radius:10px;">
+      <div style="flex:1;padding-right:10px;">
+        <div style="font-size:14px;">排查档位（逐个禁用动作）</div>
+        <div style="font-size:11px;opacity:.6;margin-top:2px;">0=完整；1=去跑马灯；2=再去图标；3=再去点击。每换一档观察桌面 1 分钟</div>
+      </div>
+      <button class="mini" id="wgStageBtn" onclick="App.ui.wgStageCycle()">读取中…</button>
+    </div>
     <pre class="diag-log" id="wgdiagBody">正在读取…</pre>
     <div class="diag-act">
       <button class="mini" onclick="App.ui.wgDiagRefresh()">重新读取</button>

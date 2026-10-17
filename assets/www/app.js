@@ -7852,6 +7852,7 @@
         TS.call('widgetDiagLog');
         TS.call('widgetMiniGet');
         TS.call('widgetNoBarGet');
+        TS.call('widgetStageGet');
     };
 
     /** ★ v3.9.20：小组件极简模式开关（白卡二分排查） */
@@ -7882,6 +7883,23 @@
         if (!btn) return;
         btn.setAttribute('data-on', o.on ? '1' : '0');
         btn.textContent = o.on ? '无进度条：开' : '无进度条：关';
+    };
+
+    /** ★ v3.9.23：排查档位循环（0 完整 → 1 去跑马灯 → 2 去图标 → 3 去点击） */
+    var WG_STAGE_LABEL = ['档位 0：完整', '档位 1：去跑马灯', '档位 2：去图标', '档位 3：去点击'];
+    ui.wgStageCycle = function () {
+        var btn = $('wgStageBtn');
+        var cur = btn ? parseInt(btn.getAttribute('data-stage') || '0', 10) : 0;
+        TS.call('widgetStageSet', (cur + 1) % 4);
+    };
+
+    window.onWgStage = function (o) {
+        o = o || {};
+        var btn = $('wgStageBtn');
+        if (!btn) return;
+        var s = o.stage || 0;
+        btn.setAttribute('data-stage', String(s));
+        btn.textContent = WG_STAGE_LABEL[s] || ('档位 ' + s);
     };
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
@@ -8521,6 +8539,18 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.23',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件白卡二分第四轮：动作级「排查档位」',
+                '   · 频率假设已排除（30s 仍白）；毒源锁定为完整版独有的某个更新动作',
+                '   · 「小组件诊断」页新增档位循环按钮：',
+                '     0=完整 → 1=去跑马灯动作 → 2=再去图标动作 → 3=再去点击动作',
+                '   · 头号嫌疑=跑马灯（marquee 滚动在视图挂载后数秒才启动，',
+                '     与「先显示、几秒后白」的时间特征吻合，且极简版无跑马灯）'
+            ]
+        },
         {
             ver: '3.9.22',
             date: '2026-10-17',

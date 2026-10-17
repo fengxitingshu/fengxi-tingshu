@@ -101,7 +101,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                 //   避免秒级刷新刷屏。若桌面渲染失败，从这里能看出 App 侧是否正常。
                 // ★ v3.9.18：带上封面位图字节数——排查「进 App 后白卡」是否与
                 //   封面位图相关（大图走 Binder / 桌面解码失败会整块白卡）。
-                String state = "has=" + WidgetState.hasContent + " playing=" + WidgetState.playing
+                String state = "stage=" + com.tingshu.app.data.Settings.widgetStage()
+                        + " has=" + WidgetState.hasContent + " playing=" + WidgetState.playing
                         + " cover=" + (WidgetState.cover == null ? -1
                                 : WidgetState.cover.getRowBytes() * WidgetState.cover.getHeight())
                         + " title=" + (WidgetState.title == null ? "" : WidgetState.title);
@@ -292,40 +293,54 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             }
         }
 
-        // ---- 播放/暂停图标 ----
-        try {
-            // ★ v3.9.4：必须用本包资源。RemoteViews 由桌面（另一个 App）
-            //   inflate，框架资源 ID（android.R.drawable.*，包 ID 0x01）
-            //   在桌面的 Resources 里解析不到，会抛 Resources$NotFoundException，
-            //   轻则整块小组件空白、重则拖崩桌面。
-            v.setImageViewResource(R.id.wgToggle, playing
-                    ? R.drawable.ic_notif_pause
-                    : R.drawable.ic_notif_play);
-        } catch (Throwable t) {
-            diag(ctx, "build toggle FAILED: " + t);
+        // ★ v3.9.23 排查档位（设置页循环切换，0~3 逐个禁用嫌疑动作）：
+        //   1=去跑马灯动作（头号嫌疑：marquee 在视图挂载后数秒才启动滚动，
+        //     与「先显示、几秒后白」的时间特征完全吻合）；
+        //   2=再去图标动作（setImageViewResource 加载本包矢量图）；
+        //   3=再去全部点击动作（PendingIntent ×6）。
+        int stage = com.tingshu.app.data.Settings.widgetStage();
+
+        // ---- 播放/暂停图标（档位 ≥2 时跳过，图标固定为布局默认的播放态） ----
+        if (stage < 2) {
+            try {
+                // ★ v3.9.4：必须用本包资源。RemoteViews 由桌面（另一个 App）
+                //   inflate，框架资源 ID（android.R.drawable.*，包 ID 0x01）
+                //   在桌面的 Resources 里解析不到，会抛 Resources$NotFoundException，
+                //   轻则整块小组件空白、重则拖崩桌面。
+                v.setImageViewResource(R.id.wgToggle, playing
+                        ? R.drawable.ic_notif_pause
+                        : R.drawable.ic_notif_play);
+            } catch (Throwable t) {
+                diag(ctx, "build toggle FAILED: " + t);
+            }
         }
 
         // ---- 点击：四键（requestCode 11~14）投 exported 的
         //      WidgetClickReceiver；封面/文字区（15/16）打开 App。
-        //      与 3.8.5 完全一致的挂点：wgCover、wgInfoTap。 ----
-        try {
-            v.setOnClickPendingIntent(R.id.wgPrev, xpi(ctx, WIDGET_PREV, 11));
-            v.setOnClickPendingIntent(R.id.wgToggle, xpi(ctx, WIDGET_TOGGLE, 12));
-            v.setOnClickPendingIntent(R.id.wgNext, xpi(ctx, WIDGET_NEXT, 13));
-            v.setOnClickPendingIntent(R.id.wgStop, xpi(ctx, WIDGET_STOP, 14));
-            v.setOnClickPendingIntent(R.id.wgCover, openApp(ctx, 15));
-            v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 16));
-        } catch (Throwable t) {
-            diag(ctx, "build click FAILED: " + t);
+        //      档位 ≥3 时跳过全部点击（排查 PendingIntent） ----
+        if (stage < 3) {
+            try {
+                v.setOnClickPendingIntent(R.id.wgPrev, xpi(ctx, WIDGET_PREV, 11));
+                v.setOnClickPendingIntent(R.id.wgToggle, xpi(ctx, WIDGET_TOGGLE, 12));
+                v.setOnClickPendingIntent(R.id.wgNext, xpi(ctx, WIDGET_NEXT, 13));
+                v.setOnClickPendingIntent(R.id.wgStop, xpi(ctx, WIDGET_STOP, 14));
+                v.setOnClickPendingIntent(R.id.wgCover, openApp(ctx, 15));
+                v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 16));
+            } catch (Throwable t) {
+                diag(ctx, "build click FAILED: " + t);
+            }
         }
 
         // 跑马灯：RemoteViews 里的 TextView 要真滚动，渲染后必须设为
         // selected —— marquee 只对"被选中且获得焦点"的 TextView 生效。
-        try {
-            v.setBoolean(R.id.wgTitle, "setSelected", true);
-            v.setBoolean(R.id.wgSub, "setSelected", true);
-        } catch (Throwable t) {
-            diag(ctx, "build marquee FAILED: " + t);
+        // ★ 档位 ≥1 时跳过（排查 originOS 桌面对 widget 内 marquee 的兼容性）
+        if (stage < 1) {
+            try {
+                v.setBoolean(R.id.wgTitle, "setSelected", true);
+                v.setBoolean(R.id.wgSub, "setSelected", true);
+            } catch (Throwable t) {
+                diag(ctx, "build marquee FAILED: " + t);
+            }
         }
         return v;
     }
