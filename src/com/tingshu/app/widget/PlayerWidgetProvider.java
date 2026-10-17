@@ -80,6 +80,21 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         // ★ v3.8.4：小组件诊断日志（「设置 → 小组件诊断」可查看）
         com.tingshu.app.core.DiagLog.add("[widget] onUpdate ids=" + ids.length);
         for (int id : ids) {
+            // ★ v3.9.17：托管探针——桌面真正托管实例时会回报尺寸选项；
+            //   若取不到（-1），说明桌面侧绑定就是坏的（与画法无关，
+            //   桌面进程状态问题，重启手机/清除桌面数据可解）。
+            try {
+                android.os.Bundle opt = mgr.getAppWidgetOptions(id);
+                int minW = opt == null ? -1
+                        : opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, -1);
+                int minH = opt == null ? -1
+                        : opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, -1);
+                String probe = "[widget] host id=" + id + " size=" + minW + "x" + minH;
+                if (!probe.equals(lastHostProbe)) {
+                    lastHostProbe = probe;
+                    com.tingshu.app.core.DiagLog.add(probe + (minW < 0 ? "（未托管！）" : ""));
+                }
+            } catch (Throwable ignored) {}
             try {
                 mgr.updateAppWidget(id, build(ctx));
                 // ★ v3.9.14：提交成功也留痕（带内容态），且只在状态变化时记一条，
@@ -100,6 +115,9 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
 
     /** 上一次成功提交时的状态摘要（避免秒级刷新刷屏诊断日志） */
     private static String lastOkState = "";
+
+    /** 上一次托管探针结果（去重防刷屏） */
+    private static String lastHostProbe = "";
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
