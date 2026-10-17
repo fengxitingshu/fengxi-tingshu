@@ -229,12 +229,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             return v;
         }
 
-        // ---- 根背景（3.8.5 在 build 里再设一次，这里照抄） ----
-        try {
-            v.setInt(R.id.wgRoot, "setBackgroundColor", 0xE6222530);
-        } catch (Throwable t) {
-            diag(ctx, "build root FAILED: " + t);
-        }
+        // ---- 根背景：XML 里已是同色，★ v3.9.22 起不再重复下发（少一个动作） ----
 
         // ---- 文案（与通知栏同源：书名 / 作者 · 集数） ----
         try {
@@ -250,8 +245,9 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             diag(ctx, "build text FAILED: " + t);
         }
 
-        // ---- 封面：没有/超大一律塞 null（该设备实测安全）。
-        //      ★ v3.9.18：双保险——即使快照里混进大图也不进 RemoteViews ----
+        // ---- 封面：★ v3.9.22 没有封面时**跳过动作**（原先塞 null 的
+        //      setImageViewBitmap 也是一次桌面端方法调用，能省则省）。
+        //      仍保留 200KB 上限双保险 ----
         try {
             android.graphics.Bitmap bm = (has && WidgetState.cover != null)
                     ? WidgetState.cover : null;
@@ -260,7 +256,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                         + "B) → drop");
                 bm = null;
             }
-            v.setImageViewBitmap(R.id.wgCover, bm);
+            if (bm != null) v.setImageViewBitmap(R.id.wgCover, bm);
         } catch (Throwable t) {
             diag(ctx, "build cover FAILED: " + t);
         }
