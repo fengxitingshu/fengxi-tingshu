@@ -214,18 +214,49 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             else sub = playing ? "正在播放" : "已暂停";
         }
 
-        // ---- 背景：wgRoot 固定为「边界色」（与 wgBody 形成 2dp 清晰分界圈）；
-        //      wgBody 按「不透明度」设置着色（0% = 高级材质透明，originOS 套毛玻璃）。
-        //      ★ v3.9.25 ----
+        // ---- 背景 ★ v3.9.29 重做配色系统 ----
+        // 诊断证实：alpha 链路全通但用户仍见黑 —— 根因是 originOS 桌面会给
+        // 第三方小组件垫自己的底卡（深色模式下=黑色），深色半透明纱叠在
+        // 黑卡上永远是黑的。因此：
+        //   · 材质（op=0）：透明底 + 白字（垫在桌面底卡上，毛玻璃观感）
+        //   · 25/50/75：浅色玻璃（浅底 + 深字），与材质对比一目了然
+        int op = com.tingshu.app.data.Settings.widgetOpacity();       // 0/25/50/75
+        int a = (int) Math.round(255.0 * op / 100.0);
+        boolean light = op > 0;
+        final int rim, body, tTxt, sTxt, bOn, bOff, tint;
+        if (light) {
+            rim  = 0xFFC9D2E0;   // 边界圈（浅）
+            body = (a << 24) | 0xFFEFF3F9;   // 浅玻璃底
+            tTxt = 0xFF222530;   // 主文字深色
+            sTxt = 0xCC222530;   // 副文字深色
+            bOn  = 0xE639414E;   // 进度已播格（深）
+            bOff = 0x3339414E;   // 进度未播格
+            tint = 0xFF39414E;   // 图标深色
+        } else {
+            rim  = 0xFF4C5866;   // 边界圈（深）
+            body = 0x00000000;   // 材质：全透明
+            tTxt = 0xFFFFFFFF;
+            sTxt = 0xC9FFFFFF;
+            bOn  = 0xF2FFFFFF;
+            bOff = 0x33FFFFFF;
+            tint = 0xFFFFFFFF;
+        }
         try {
-            int op = com.tingshu.app.data.Settings.widgetOpacity();   // 0~100
-            int a = (int) Math.round(255.0 * op / 100.0);
-            v.setInt(R.id.wgRoot, "setBackgroundColor", 0xFF4C5866);
-            // ★ v3.9.27 纱色调淡：#222530（近黑）→ #39414E（玻璃灰蓝），
-            //   半透明档位不再「一黑到底」
-            v.setInt(R.id.wgBody, "setBackgroundColor", (a << 24) | 0x39414E);
-            // ★ v3.9.28 插桩：实际生效的不透明度（与 UI 设置对账用）
-            String opLine = "[widget] applyOpacity=" + op + " alpha=" + a;
+            v.setInt(R.id.wgRoot, "setBackgroundColor", rim);
+            v.setInt(R.id.wgBody, "setBackgroundColor", body);
+            v.setTextColor(R.id.wgTitle, tTxt);
+            v.setTextColor(R.id.wgSub, sTxt);
+            v.setTextColor(R.id.wgTimeCur, sTxt);
+            v.setTextColor(R.id.wgTimeDur, sTxt);
+            v.setInt(R.id.wgCover, "setBackgroundColor",
+                    light ? 0x3339414E : 0x33FFFFFF);
+            // 四键矢量图标重着色（XML 里是白色 tint，浅玻璃下要变深）
+            v.setInt(R.id.wgPrev, "setColorFilter", tint);
+            v.setInt(R.id.wgToggle, "setColorFilter", tint);
+            v.setInt(R.id.wgNext, "setColorFilter", tint);
+            v.setInt(R.id.wgStop, "setColorFilter", tint);
+            String opLine = "[widget] applyOpacity=" + op
+                    + (light ? " 浅色玻璃" : " 材质");
             if (!opLine.equals(lastOpLine)) {
                 lastOpLine = opLine;
                 com.tingshu.app.core.DiagLog.add(opLine);
@@ -281,7 +312,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                         "wgBar" + i, "id", ctx.getPackageName());
                 if (viewId == 0) continue;
                 v.setInt(viewId, "setBackgroundColor",
-                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
+                        i < filled ? bOn : bOff);
             }
         } catch (Throwable t) {
             diag(ctx, "build progress FAILED: " + t);
