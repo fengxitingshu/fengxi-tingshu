@@ -167,27 +167,28 @@ public class Bridge {
         } catch (Throwable ignored) {}
     }
 
-    /** ★ v3.9.24 读小组件「高级材质」背景开关，回传 window.onWgMat({on}) */
+    /** ★ v3.9.25 读小组件背景不透明度，回传 window.onWgOp({op}) */
     @JavascriptInterface
-    public void widgetMaterialGet() {
+    public void widgetOpacityGet() {
         JSONObject o = new JSONObject();
         try {
-            o.put("on", com.tingshu.app.data.Settings.widgetMaterial());
+            o.put("op", com.tingshu.app.data.Settings.widgetOpacity());
         } catch (Throwable ignored) {}
-        callback("onWgMat", o);
+        callback("onWgOp", o);
     }
 
-    /** ★ v3.9.24 设小组件「高级材质」背景开关（切换后立即强制重绘） */
+    /** ★ v3.9.25 设小组件背景不透明度（0~100，切换后立即强制重绘） */
     @JavascriptInterface
-    public void widgetMaterialSet(final boolean on) {
+    public void widgetOpacitySet(final int op) {
         ui.post(new Runnable() {
             public void run() {
-                com.tingshu.app.data.Settings.setWidgetMaterial(on);
+                com.tingshu.app.data.Settings.setWidgetOpacity(op);
                 JSONObject o = new JSONObject();
-                try { o.put("on", on); } catch (Throwable ignored) {}
+                try { o.put("op", com.tingshu.app.data.Settings.widgetOpacity()); }
+                catch (Throwable ignored) {}
                 com.tingshu.app.widget.WidgetState.requestUpdate(
                         com.tingshu.app.core.App.ctx(), true);
-                callback("onWgMat", o);
+                callback("onWgOp", o);
             }
         });
     }

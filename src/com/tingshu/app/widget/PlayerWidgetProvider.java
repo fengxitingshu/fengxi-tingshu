@@ -181,9 +181,10 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
      *
      * <p>本版恢复完整功能：
      * <ol>
-     *   <li>背景：默认实底；「高级材质」模式下透明（originOS 会套毛玻璃）；</li>
+     *   <li>背景：wgRoot 边界圈 + wgBody 按「不透明度」设置着色（0%=材质透明）；</li>
+     *   <li>进度：当前格叠加「高亮球」跟随移动；</li>
      *   <li>封面：有则贴图（≤200KB 双保险），无则跳过动作；</li>
-     *   <li>进度：20 显示格上色 + 20 透明点击格挂 seek（可拖动跳转）；</li>
+     *   <li>进度格：20 透明点击格挂 seek（可拖动跳转）；</li>
      *   <li>四键：上一集/播放暂停/下一集/停止（本包矢量图）；</li>
      *   <li>点击：封面/文字区打开 App。</li>
      * </ol>
@@ -210,11 +211,14 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             else sub = playing ? "正在播放" : "已暂停";
         }
 
-        // ---- 根背景：实底（默认）/ 透明（iQOO originOS「高级材质」毛玻璃） ----
+        // ---- 背景：wgRoot 固定为「边界色」（与 wgBody 形成 2dp 清晰分界圈）；
+        //      wgBody 按「不透明度」设置着色（0% = 高级材质透明，originOS 套毛玻璃）。
+        //      ★ v3.9.25 ----
         try {
-            v.setInt(R.id.wgRoot, "setBackgroundColor",
-                    com.tingshu.app.data.Settings.widgetMaterial()
-                            ? 0x00000000 : 0xFF222530);
+            int op = com.tingshu.app.data.Settings.widgetOpacity();   // 0~100
+            int a = (int) Math.round(255.0 * op / 100.0);
+            v.setInt(R.id.wgRoot, "setBackgroundColor", 0xFF4C5866);
+            v.setInt(R.id.wgBody, "setBackgroundColor", (a << 24) | 0x222530);
         } catch (Throwable t) {
             diag(ctx, "build bg FAILED: " + t);
         }
@@ -252,7 +256,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             diag(ctx, "build time FAILED: " + t);
         }
 
-        // ---- 显示层：wgBar0..19 逐格上色（已播白 / 未播半透明白） ----
+        // ---- 显示层：wgBar0..19 逐格上色（已播白 / 未播半透明白）；
+        //      当前进度格放「高亮球」（琥珀圆点+白圈，v3.9.25）跟随进度移动 ----
         int filled = 0;
         if (seekable) {
             filled = (int) Math.floor((double) cur * SEEK_SEGMENTS / dur);
@@ -264,8 +269,14 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
                 int viewId = ctx.getResources().getIdentifier(
                         "wgBar" + i, "id", ctx.getPackageName());
                 if (viewId == 0) continue;
-                v.setInt(viewId, "setBackgroundColor",
-                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
+                if (seekable && i == filled) {
+                    // 当前格：清掉底色、贴高亮球
+                    v.setInt(viewId, "setBackgroundColor", 0x00000000);
+                    v.setImageViewResource(viewId, R.drawable.wg_ball);
+                } else {
+                    v.setInt(viewId, "setBackgroundColor",
+                            i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
+                }
             }
         } catch (Throwable t) {
             diag(ctx, "build progress FAILED: " + t);

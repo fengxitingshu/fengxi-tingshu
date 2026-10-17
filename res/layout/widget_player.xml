@@ -28,11 +28,21 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#FF222530"
-    android:paddingLeft="14dp"
-    android:paddingTop="10dp"
-    android:paddingRight="14dp"
-    android:paddingBottom="8dp">
+    android:background="#FF4C5866">
+
+    <!-- ★ v3.9.25 内衬：与 wgRoot 之间形成 2dp「边界圈」，背景色由
+         build() 按用户设置的不透明度动态着色（0% = 高级材质透明） -->
+    <LinearLayout
+        android:id="@+id/wgBody"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="2dp"
+        android:orientation="vertical"
+        android:background="#FF222530"
+        android:paddingLeft="12dp"
+        android:paddingTop="8dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="6dp">
 
     <!-- 上半：封面 + 书名/副标题（点封面或文字进 App） -->
     <LinearLayout
@@ -124,7 +134,7 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="4dp"
+                android:layout_height="7dp"
                 android:layout_gravity="center_vertical"
                 android:orientation="horizontal"
                 android:background="#33FFFFFF">
@@ -246,5 +256,6 @@
             android:scaleType="fitCenter"
             android:src="@drawable/ic_notif_stop"
             android:tint="#FFFFFF"/>
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

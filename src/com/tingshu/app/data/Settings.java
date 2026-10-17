@@ -243,16 +243,16 @@ public final class Settings {
     // ==================== ★ v3.9.24 小组件外观 ====================
 
     /**
-     * 小组件背景「高级材质」模式：true 时小组件根背景透明，
-     * originOS（iQOO/vivo）桌面会为透明小组件套上毛玻璃材质底；
-     * false（默认）为深色实底。
+     * ★ v3.9.25 小组件背景不透明度（0~100，默认 100=实底）。
+     * 0% 即「高级材质」：底色全透明，originOS/iQOO 桌面会套毛玻璃。
      */
-    public static boolean widgetMaterial() {
-        return SP.getBoolean("widget_material", false);
+    public static int widgetOpacity() {
+        int v = SP.getInt("widget_opacity", 100);
+        return (v < 0 || v > 100) ? 100 : v;
     }
 
-    public static void setWidgetMaterial(boolean v) {
-        SP.edit().putBoolean("widget_material", v).apply();
+    public static void setWidgetOpacity(int v) {
+        SP.edit().putInt("widget_opacity", (v < 0 || v > 100) ? 100 : v).apply();
     }
 
     /** 悬浮球 X 坐标（px）。-1 表示「还没摆过」，显示时取默认右侧位置 */

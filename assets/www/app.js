@@ -7850,23 +7850,31 @@
         var el = $('wgdiagBody');
         if (el) el.textContent = '正在读取…';
         TS.call('widgetDiagLog');
-        TS.call('widgetMaterialGet');
     };
 
-    /** ★ v3.9.24：小组件「高级材质」背景开关 */
-    ui.wgMatToggle = function () {
-        var btn = $('wgMatBtn');
-        var cur = btn && btn.getAttribute('data-on') === '1';
-        TS.call('widgetMaterialSet', !cur);
+    /** ★ v3.9.25：小组件背景不透明度（设置 → 外观 → 小组件） */
+    ui.setWgOpacity = function (op) {
+        TS.call('widgetOpacitySet', op);
     };
 
-    window.onWgMat = function (o) {
+    window.onWgOp = function (o) {
         o = o || {};
-        var btn = $('wgMatBtn');
-        if (!btn) return;
-        btn.setAttribute('data-on', o.on ? '1' : '0');
-        btn.textContent = o.on ? '材质：开' : '材质：关';
+        var op = (o.op === undefined ? 100 : o.op);
+        var ids = { 100: 'wgOp100', 90: 'wgOp90', 75: 'wgOp75', 50: 'wgOp50', 0: 'wgOp0' };
+        for (var k in ids) {
+            var el = $(ids[k]);
+            if (el) el.className = 'seg-item' + (String(op) === k ? ' on' : '');
+        }
     };
+
+    // 设置页打开时同步一次小组件不透明度高亮
+    var _oldOpenSet = ui.openSettings;
+    if (_oldOpenSet) {
+        ui.openSettings = function () {
+            _oldOpenSet();
+            TS.call('widgetOpacityGet');
+        };
+    }
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
 
@@ -8505,6 +8513,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.25',
+            date: '2026-10-17',
+            fixes: [
+                '★ 小组件外观升级（设置 → 外观 → 小组件）',
+                '   · 边缘增加 2dp 灰蓝边界圈，桌面上一眼看清小组件范围',
+                '   · 新增「背景不透明度」：实底 / 90% / 75% / 50% / 材质（透明，',
+                '     配合 iQOO/originOS 毛玻璃），设置页内调整、桌面即时生效',
+                '   · 进度条改为「高亮小球」跟随进度移动（琥珀圆点+白圈）',
+                '   · 小组件外观设置从「小组件诊断」页移到「设置 → 外观」',
+                '★ WebDAV 401 诊断增强',
+                '   · 401 时把服务器指纹（Server 头 / 认证质询 / 账号）写入诊断日志，',
+                '     用于定位「密码没错却 401」到底是哪个服务在拒绝'
+            ]
+        },
         {
             ver: '3.9.24',
             date: '2026-10-17',

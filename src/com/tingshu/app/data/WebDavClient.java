@@ -79,6 +79,8 @@ public final class WebDavClient {
         public boolean reflectFailed;
         /** 401 时服务端返回的 WWW-Authenticate 头（用于判断 Basic/Digest） */
         public String wwwAuth;
+        /** ★ v3.9.25 服务端响应头 Server（识别到底连到了什么服务） */
+        public String server;
     }
 
     // ==================== 对外接口 ====================
@@ -338,7 +340,15 @@ public final class WebDavClient {
                 }
             }
         }
-        if (r.code == 401) r.error = better401(r.wwwAuth, authType, triedDigest);
+        if (r.code == 401) {
+            r.error = better401(r.wwwAuth, authType, triedDigest);
+            // ★ v3.9.25：401 时把服务器指纹写进诊断日志（「小组件诊断」页可看），
+            //   便于定位「密码没错却 401」——到底是哪个服务在拒绝
+            com.tingshu.app.core.DiagLog.add("[dav] 401 server="
+                    + (r.server == null ? "?" : r.server)
+                    + " auth=" + (r.wwwAuth == null ? "?" : r.wwwAuth)
+                    + " user=" + (user == null ? "" : user));
+        }
         return r;
     }
 
@@ -390,6 +400,8 @@ public final class WebDavClient {
             r.code = conn.getResponseCode();
             // 401 时务必读取服务端返回的 WWW-Authenticate，用于判断 Basic/Digest
             try { r.wwwAuth = conn.getHeaderField("WWW-Authenticate"); } catch (Throwable ignored) {}
+            // ★ v3.9.25 记录 Server 头：识别连接到的真实服务（飞牛/nginx/Go 等）
+            try { r.server = conn.getHeaderField("Server"); } catch (Throwable ignored) {}
 
             // 读响应体（PROPFIND 是 207，仍属成功）
             InputStream is;
@@ -976,6 +988,9 @@ public final class WebDavClient {
             o.put("ok", r.ok);
             o.put("code", r.code);
             o.put("error", r.error == null ? "" : r.error);
+            // ★ v3.9.25：服务器指纹（前端可显示，也便于截图定位）
+            if (r.server != null && r.server.length() > 0) o.put("server", r.server);
+            if (r.wwwAuth != null && r.wwwAuth.length() > 0) o.put("auth", r.wwwAuth);
             if (r.reflectFailed) o.put("reflectFailed", true);
         } catch (Throwable ignored) {}
         return o;
