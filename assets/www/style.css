@@ -1004,21 +1004,22 @@ body.full-show .player { opacity: 0 !important; pointer-events: none !important;
 }
 .fbg-blur.fail { opacity: 0; }
 /* 叠一层半透明主题色，保证正文可读
-   ★ v3.7.4：整体加厚（原来 .62/.80/.94 太薄）。背景是封面虚化图，
-   遇到浅色封面时叠色不够，裸漏在背景上的文字（时长、标题等）会糊掉。 */
+   ★ v3.9.32：整体调淡（v3.7.4 的 .70/.85/.96 把封面颜色盖没了，
+   用户反馈「很多颜色看不出和封面有啥关系」）—— 让封面色调透出来，
+   可读性靠文字阴影兜底。 */
 .fbg-tint {
     position: absolute; inset: 0;
     background: linear-gradient(180deg,
-        rgba(255, 255, 255, .70) 0%,
-        rgba(255, 255, 255, .85) 46%,
-        rgba(255, 255, 255, .96) 100%);
+        rgba(255, 255, 255, .45) 0%,
+        rgba(255, 255, 255, .62) 46%,
+        rgba(255, 255, 255, .82) 100%);
 }
-html.dark .fbg-blur { opacity: .68; filter: blur(42px) saturate(150%) brightness(.7); }
+html.dark .fbg-blur { opacity: .78; filter: blur(42px) saturate(170%) brightness(.7); }
 html.dark .fbg-tint {
     background: linear-gradient(180deg,
-        rgba(0, 0, 0, .66) 0%,
-        rgba(0, 0, 0, .80) 46%,
-        rgba(0, 0, 0, .92) 100%);
+        rgba(0, 0, 0, .40) 0%,
+        rgba(0, 0, 0, .56) 46%,
+        rgba(0, 0, 0, .78) 100%);
 }
 /* 内容必须在背景之上 */
 .page.full > .fnav,
@@ -2758,3 +2759,30 @@ body.multi-on .chk { display: block; }
 .srcbatchbar .mini.danger {
     background: #ff3b30; border-color: #ff3b30; color: #fff;
 }
+
+/* ============================================================
+   ★ v3.9.32 首页 1/2/3 列布局（首页导航「N列」按钮切换）
+   1 列 = 默认横排卡片列表；2/3 列 = 封面朝上的竖排网格
+   ============================================================ */
+.home-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; padding: 0 8px; }
+.home-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; padding: 0 8px; }
+/* 网格里非书卡的内容（加载更多/页码/续听提示）横跨整行 */
+.home-grid-2 > :not(.bookcard),
+.home-grid-3 > :not(.bookcard) { grid-column: 1 / -1; }
+.home-grid-2 .bookcard,
+.home-grid-3 .bookcard {
+    display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+    padding: 8px; margin: 0; border-radius: 12px; overflow: hidden;
+}
+.home-grid-2 .bookcard img,
+.home-grid-3 .bookcard img {
+    width: 100%; height: auto; aspect-ratio: 1 / 1;
+    object-fit: cover; border-radius: 8px; flex-shrink: 0;
+}
+.home-grid-2 .bookcard .info,
+.home-grid-3 .bookcard .info { padding: 0; min-width: 0; }
+.home-grid-2 .bookcard .s,
+.home-grid-3 .bookcard .s { display: none; }
+.home-grid-3 .bookcard .tagline { display: none; }
+.home-grid-2 .bookcard .t,
+.home-grid-3 .bookcard .t { font-size: 13px; }

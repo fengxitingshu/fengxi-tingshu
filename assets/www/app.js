@@ -3121,18 +3121,32 @@
         // 收摊：自救计数也清掉 —— 用户下次手动点播放时，这一集的第一次
         // 失败还应再享有一次静默自救（否则会被上次的计数直接判死）
         App._playRetry = null;
-        // native：进度已在 onError 里保存；stop 负责释放播放器/撤通知/清队列
-        TS.call('stop');
 
         var ch = (App.chapters && chIdx >= 0) ? App.chapters[chIdx] : null;
         var name = (o && o.title) || (ch && ch.title)
             || ('第' + ((ch && ch.index) || (chIdx + 1)) + '集');
-        TS.toast('「' + name + '」播放失败，已停止');
+
+        // ★ v3.9.32：失败不再立即停止 —— 15 秒兜底窗口：
+        //   期间若恢复播放（迟到的自救成功 / 用户手动点播成功）则取消停止；
+        //   15 秒仍无法播放才真正 stop（释放播放器/撤通知/清队列）。
+        if (App._graceStopTimer) { clearTimeout(App._graceStopTimer); App._graceStopTimer = null; }
+        TS.toast('「' + name + '」播放失败，15 秒后自动停止');
+        App._graceStopTimer = setTimeout(function () {
+            App._graceStopTimer = null;
+            if (App.playing) return;   // 已恢复播放 → 取消停止
+            TS.call('stop');
+            TS.toast('「' + name + '」无法播放，已停止');
+        }, 15000);
     }
 
     window.onPlayState = function (p) {
         // native 推来的真值，直接采用，不做任何本地推断
         App.playing = !!p;
+        // ★ v3.9.32：播放恢复 → 取消 15 秒兜底停止
+        if (p && App._graceStopTimer) {
+            clearTimeout(App._graceStopTimer);
+            App._graceStopTimer = null;
+        }
         // 拿到真值就说明 native 那边已经有结论了（在播 or 已停），
         // 不管哪种都不该再转圈。
         setBuffering(false);
@@ -7852,6 +7866,27 @@
         TS.call('widgetDiagLog');
     };
 
+    /** ★ v3.9.32：首页 1/2/3 列布局（导航栏「N列」按钮循环切换） */
+    App.homeCols = parseInt(localStorage.getItem('homeCols') || '1', 10);
+    if (App.homeCols < 1 || App.homeCols > 3) App.homeCols = 1;
+    ui.cycleHomeCols = function () {
+        App.homeCols = App.homeCols % 3 + 1;
+        localStorage.setItem('homeCols', String(App.homeCols));
+        applyHomeCols();
+        TS.toast('首页：' + App.homeCols + ' 列布局');
+    };
+    function applyHomeCols() {
+        var el = $('homeContent');
+        if (el) {
+            el.classList.remove('home-grid-2', 'home-grid-3');
+            if (App.homeCols === 2) el.classList.add('home-grid-2');
+            if (App.homeCols === 3) el.classList.add('home-grid-3');
+        }
+        var btn = $('homeColsBtn');
+        if (btn) btn.textContent = App.homeCols + '列';
+    }
+    applyHomeCols();
+
     /** ★ v3.9.25：小组件背景不透明度（设置 → 外观 → 小组件） */
     ui.setWgOpacity = function (op) {
         TS.call('widgetOpacitySet', op);
@@ -8513,6 +8548,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.32',
+            date: '2026-10-18',
+            fixes: [
+                '★ 首页新增布局切换（导航栏「N列」按钮）',
+                '   · 1/2/3 列循环：2/3 列为封面朝上的网格，选择自动记忆',
+                '★ 播放页背景蒙版调淡',
+                '   · 封面虚化的颜色能透出来了，不再「看不出和封面有啥关系」',
+                '★ 播放失败兜底改为 15 秒',
+                '   · 失败后先给 15 秒缓冲：期间恢复播放（自救成功/手动点播）',
+                '     则取消停止；15 秒仍无法播放才真正停止',
+                '★ 小组件透明形态加虚化边界',
+                '   · 材质档=白色半透明柔边+圆角，透明下也能看清小组件范围'
+            ]
+        },
         {
             ver: '3.9.28',
             date: '2026-10-17',

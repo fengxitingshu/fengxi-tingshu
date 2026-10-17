@@ -244,7 +244,10 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             tint = 0xFFFFFFFF;
         }
         try {
-            v.setInt(R.id.wgRoot, "setBackgroundColor", rim);
+            // ★ v3.9.32 边界改用描边 drawable：材质档=白色半透明柔边，
+            //   浅玻璃档=深色细边，都比纯色边界更「虚化」、更易分辨大小
+            v.setInt(R.id.wgRoot, "setBackgroundResource",
+                    light ? R.drawable.wg_frame_light : R.drawable.wg_frame_glass);
             v.setInt(R.id.wgBody, "setBackgroundColor", body);
             v.setTextColor(R.id.wgTitle, tTxt);
             v.setTextColor(R.id.wgSub, sTxt);
