@@ -398,7 +398,16 @@ public final class BackupCodec {
         if (ck != null) {
             String want = ck.optString("value", "");
             if (want != null && want.length() > 0) {
-                String got = contentChecksum(p.blobs);
+                // ★ v3.9.2 修复「合法备份也提示文件损坏」：
+                //   打包侧 contentChecksum(blobs) 的 blobs **不含** manifest.json
+                //   （manifest 是 writeZip 的独立参数）；而 readZip 会把
+                //   manifest.json 也放进 p.blobs（它也是文本条目）。
+                //   直接拿 p.blobs 算，两边永远差一个 manifest.json 的摘要，
+                //   于是每个备份包都校验失败 —— 用户看到的就是"文件损坏"。
+                //   这里算之前先把 manifest.json 摘掉，与打包侧口径一致。
+                Map<String, byte[]> forCk = new LinkedHashMap<String, byte[]>(p.blobs);
+                forCk.remove(ENTRY_MANIFEST);
+                String got = contentChecksum(forCk);
                 if (got.length() > 0 && !want.equalsIgnoreCase(got)) {
                     return "备份包内容校验失败（文件可能已损坏）";
                 }

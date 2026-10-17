@@ -148,7 +148,49 @@ public class MainActivity extends Activity
 
         core = new PlayerCore(this);
         core.setCallback(this);
+        // ★ P0-1/P0-2：播放失败自动换源/重试时，给前端书源标签与轻提示
+        core.setHealListener(new PlayerCore.HealListener() {
+            @Override
+            public void onHeal(int kind, String source, String sourceName) {
+                if (kind == 1) {
+                    // 换到新音源：刷新播放条/全屏页右上角「书源胶囊」+ 轻提示
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("source", source == null ? "" : source);
+                        o.put("sourceName", sourceName == null ? "" : sourceName);
+                        callJs("window.onSourceSwitched(" + o.toString() + ")");
+                    } catch (Throwable ignored) {}
+                } else {
+                    // 网络波动：轻提示，不打断播放态
+                    callJs("window.onPlayRetry()");
+                }
+            }
+        });
         core.setSpeed(com.tingshu.app.data.Settings.speed());
+
+        // ★ v3.9.0：定时关闭 —— 到点暂停钩子绑到本 Activity 持有的 PlayerCore；
+        //   状态变化（设置/停表/到点）实时推给前端播放页与桌面小组件。
+        com.tingshu.app.player.SleepTimer.bindTarget(
+                new com.tingshu.app.player.SleepTimer.PauseTarget() {
+                    public void onSleepPause() {
+                        try { if (core != null) core.pause(); } catch (Throwable ignored) {}
+                    }
+                });
+        com.tingshu.app.player.SleepTimer.setListener(
+                new com.tingshu.app.player.SleepTimer.Listener() {
+                    public void onSleepState(int min, int remain, int ws, int we, boolean holding) {
+                        try {
+                            callJs("window.onSleep("
+                                    + com.tingshu.app.player.SleepTimer.stateJson().toString() + ")");
+                        } catch (Throwable ignored) {}
+                        // 小组件只更新定时角标（轻量：不重取封面、不缩放位图）
+                        try {
+                            com.tingshu.app.widget.WidgetState.sleepChip =
+                                    com.tingshu.app.player.SleepTimer.chipText();
+                            com.tingshu.app.widget.WidgetState.requestUpdate(MainActivity.this);
+                        } catch (Throwable ignored) {}
+                    }
+                });
 
         // 前台播放服务：锁屏/通知栏控制 + 防杀
         PlayerService.bindCtl(this);
@@ -318,6 +360,44 @@ public class MainActivity extends Activity
                 }
             }
         } catch (Throwable ignored) {}
+    }
+
+    /**
+     * ★ v3.9.0：申请存储读取权限（本地书源扫描本机音频用）。
+     *
+     * <p>API 33+ 申请 READ_MEDIA_AUDIO；以下申请 READ_EXTERNAL_STORAGE。
+     * 结果通过 {@code window.onLocalPerm} 告诉前端，前端批了再扫一次。
+     * 用户选了「拒绝」时回 ok:false，前端引导去系统设置（不反复弹窗惹人烦）。
+     */
+    public void requestStoragePermission() {
+        try {
+            String perm = Build.VERSION.SDK_INT >= 33
+                    ? "android.permission.READ_MEDIA_AUDIO"
+                    : "android.permission.READ_EXTERNAL_STORAGE";
+            if (checkSelfPermission(perm)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{perm}, 1002);
+            } else {
+                callJs("window.onLocalPerm({ok:true})");
+            }
+        } catch (Throwable t) {
+            callJs("window.onLocalPerm({ok:false,error:'fail'})");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        // ★ v3.9.0：存储权限（本地书源扫描）
+        if (req == 1002) {
+            boolean ok = false;
+            try {
+                ok = res != null && res.length > 0
+                        && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            } catch (Throwable ignored) {}
+            callJs("window.onLocalPerm({ok:" + ok + "})");
+            return;
+        }
+        super.onRequestPermissionsResult(req, perms, res);
     }
 
     // ==================== PlayerService.Ctl ====================
@@ -646,6 +726,10 @@ public class MainActivity extends Activity
             int idx = core.index();
             com.tingshu.app.widget.WidgetState.sync(bk, chs, idx,
                     core.isPlaying(), false, core.curSec(), core.durSec());
+            // ★ v3.9.0：倍速 + 定时角标（小组件右上两个小胶囊）
+            com.tingshu.app.widget.WidgetState.rate = core.speed();
+            com.tingshu.app.widget.WidgetState.sleepChip =
+                    com.tingshu.app.player.SleepTimer.chipText();
             // 封面：复用通知栏已下好的位图，缩到 128px 再进快照。
             // ★ 必须缩放：RemoteViews 走 Binder 传输，整张封面（常见
             //   500~1000px，解码后 1~4MB）直接塞有 TransactionTooLarge
@@ -757,6 +841,12 @@ public class MainActivity extends Activity
 
     @Override
     public void onEnded() {
+        // ★ v3.9.7 按集停止：定时选了「播完 N 集」且已到数 → 暂停且不再连播。
+        //   必须在自动连播判断之前，否则永远轮不到它。
+        if (com.tingshu.app.player.SleepTimer.onEpisodeEnd()) {
+            core.pause();   // 复用暂停：落盘进度 + 推状态给前端/小组件
+            return;
+        }
         // ★ 自动连播：只要还有下一集就接着放，**不**向 JS 发 onEnded，
         //   否则前端会把图标切成"播放"并在那里停住。
         final java.util.List<com.tingshu.app.data.Models.Chapter> chs = core.chapters();
@@ -853,6 +943,8 @@ public class MainActivity extends Activity
     private static final int REQ_PICK_BACKUP_DIR = 2003;
     /** ★ v3.8.0：选一个 .fxbak 备份包来恢复 */
     private static final int REQ_PICK_BACKUP_FILE = 2004;
+    /** ★ v3.9.1：本地书源自定义目录（SAF 目录树） */
+    private static final int REQ_PICK_LOCAL_DIR = 2005;
 
     /**
      * ★ v2.9：打开系统文件夹选择器，挑一个「下载存放目录」。
@@ -930,6 +1022,48 @@ public class MainActivity extends Activity
     }
 
     /**
+     * ★ v3.9.1：打开系统目录选择器，给本地书源自选一个扫描根目录。
+     *
+     * <p>与备份目录同一套范式（SAF 目录树 + 持久授权），差别是这里需要的是
+     * <b>真实文件路径</b>而不是 content URI —— 本地书源走 MediaStore 按路径前缀
+     * 过滤，拿不到路径就没法筛。好在绝大多数 ROM 的 tree documentId 形如
+     * {@code primary:Music/有声书}，可以还原成 /storage/emulated/0/Music/有声书；
+     * 少数 ROM 用了私有 id，还原失败时前端会让用户直接粘贴路径。
+     */
+    public void pickLocalDir() {
+        try {
+            Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(it, REQ_PICK_LOCAL_DIR);
+        } catch (Throwable t) {
+            callJs("window.onLocalDir({ok:false,cancel:false,error:'no-picker'})");
+        }
+    }
+
+    /** tree URI → 真实路径；拿不到返回 "" */
+    private static String treeDocPath(android.net.Uri tree) {
+        if (tree == null) return "";
+        try {
+            String docId = android.provider.DocumentsContract.getTreeDocumentId(tree);
+            if (docId == null) return "";
+            if (docId.startsWith("primary:")) {
+                String ext = android.os.Environment.getExternalStorageDirectory()
+                        .getAbsolutePath();
+                return ext + "/" + docId.substring("primary:".length());
+            }
+            // 外置 SD / U 盘：形如 "ABCD-1234:Music/有声书"
+            int colon = docId.indexOf(':');
+            if (colon > 0) {
+                String vol = docId.substring(0, colon);
+                String rest = docId.substring(colon + 1);
+                return "/storage/" + vol + (rest.length() > 0 ? ("/" + rest) : "");
+            }
+        } catch (Throwable ignored) {}
+        return "";
+    }
+
+    /**
      * ★ v3.8.0：打开系统文件选择器，挑一个 {@code .fxbak} 备份包来恢复。
      *
      * <p>用 {@code ACTION_OPEN_DOCUMENT}，返回可读的 {@code content://} URI。
@@ -946,6 +1080,14 @@ public class MainActivity extends Activity
             it.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                     "application/octet-stream", "application/zip",
                     "application/x-zip-compressed", "*/*"});
+            // ★ v3.9.1：要给 URI 申请**可持久**的读授权。
+            //   用户选完文件后会先看确认框再点恢复，这中间 Activity 完全可能被
+            //   系统回收重建（后台内存紧张、切出去再回来、横竖屏切换）。
+            //   临时授权随 Activity 一起没了，于是 restoreLocal 里的
+            //   openInputStream 直接抛 SecurityException —— 表现就是
+            //   「点了恢复，提示失败」，而且用户怎么重试都一样。
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
             startActivityForResult(it, REQ_PICK_BACKUP_FILE);
         } catch (Throwable t) {
             callJs("window.onBackupFilePicked({ok:false,cancel:false,error:'no-picker'})");
@@ -983,6 +1125,33 @@ public class MainActivity extends Activity
             return;
         }
 
+        // ★ v3.9.1：本地书源自定义目录
+        if (requestCode == REQ_PICK_LOCAL_DIR) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                callJs("window.onLocalDir({ok:false,cancel:true})");
+                return;
+            }
+            android.net.Uri tree = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Throwable ignored) {
+                // 不支持持久授权也不影响本次使用
+            }
+            String path = treeDocPath(tree);
+            String name = com.tingshu.app.core.SafOut.displayName(this, tree);
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", true);
+                o.put("cancel", false);
+                o.put("path", path);
+                o.put("uri", tree.toString());
+                o.put("name", name == null ? "" : name);
+            } catch (Throwable ignored) {}
+            callJs("window.onLocalDir(" + o.toString() + ")");
+            return;
+        }
+
         // ★ v3.8.0：选一个备份包（.fxbak）来恢复
         if (requestCode == REQ_PICK_BACKUP_FILE) {
             if (resultCode != RESULT_OK || data == null || data.getData() == null) {
@@ -990,6 +1159,15 @@ public class MainActivity extends Activity
                 return;
             }
             android.net.Uri uri = data.getData();
+            // ★ v3.9.1：持久化读取授权（与下载目录同一个道理）。
+            //   不调这句，用户点确认框这段时间里 Activity 一旦被重建，
+            //   content:// 就读不出来了 —— 恢复必然失败。
+            try {
+                getContentResolver().takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Throwable ignored) {
+                // 个别 ROM 不支持持久授权：仍能在本会话内使用，不阻断
+            }
             String name = fileNameOf(uri);
             JSONObject o = new JSONObject();
             try {

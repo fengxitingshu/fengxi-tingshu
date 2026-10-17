@@ -61,6 +61,17 @@ public final class BackupRestore {
     private static final String DIR_PY = "sources/py/";
     private static final String DIR_JAR = "sources/jar/";
 
+    /**
+     * ★ v3.9.6：必须以 float 存回 SharedPreferences 的设置项。
+     *
+     * <p>原因见 {@link Settings#speed()} —— 这些键一旦被写成 int，
+     * 读取端一旦用 getFloat 就会 ClassCastException（App 一打开就闪退）。
+     * 恢复备份时按此名单强制按 float 写回，从源头杜绝坏值。
+     */
+    private static final Set<String> FLOAT_KEYS = new HashSet<String>(Arrays.asList(
+            "speed_global"
+    ));
+
     /** 恢复主流程。返回 {ok, counts, autoBackupName, error, warn, localStorage} */
     public static JSONObject restore(File pkg) throws Exception {
         final JSONObject r = new JSONObject();
@@ -85,15 +96,19 @@ public final class BackupRestore {
             return r;
         }
 
-        // ================= 2) ★ 恢复前自动备份（失败即中止） =================
+        // ================= 2) ★ 恢复前自动备份 =================
+        // ★ v3.9.1：失败**不再中止恢复**。
+        //   原来的逻辑是"自动备份失败 → 直接取消恢复"，而自动备份只是个安全网：
+        //   它一挂（磁盘满 / 某个插件文件读不到 / 打包中途异常），用户明明拿着
+        //   一个好好的备份包却永远恢复不了，还看不到真正的原因在哪一步。
+        //   现在降级为告警：照样恢复，但把"没留底"这件事如实告诉用户。
         String autoName = "";
+        List<String> preWarns = new ArrayList<String>();
         try {
             File auto = BackupRepo.autoBackupBeforeRestore();
             autoName = auto == null ? "" : auto.getName();
         } catch (Throwable t) {
-            r.put("ok", false);
-            r.put("error", "恢复前自动备份失败，已取消恢复以保护现有数据：" + msg(t));
-            return r;
+            preWarns.add("恢复前未能自动留存当前数据（" + msg(t) + "）");
         }
 
         // ================= 3) DB 写入（单个事务） =================
@@ -116,6 +131,7 @@ public final class BackupRestore {
 
         // ================= 4) 文件面（失败只告警，不回滚 DB） =================
         List<String> warns = new ArrayList<String>();
+        warns.addAll(preWarns);
         restoreJsPlugins(p, c, warns);
         restorePySources(p, c, warns);
         restoreJars(p, c, warns);
@@ -394,6 +410,18 @@ public final class BackupRestore {
                 if (!s.has(k)) continue;
                 Object v = s.opt(k);
                 if (v == null || v == JSONObject.NULL) continue;
+                // ★★ v3.9.6 修复：浮点型设置项（如 speed_global）必须按 float 写回。
+                //   原来对 Integer/Long 一律 putInt，于是 speed_global 被写成 int，
+                //   再被 Settings.speed() 的 getFloat() 一读就 ClassCastException → 闪退。
+                if (FLOAT_KEYS.contains(k)) {
+                    if (v instanceof Number) {
+                        e.putFloat(k, ((Number) v).floatValue());
+                    } else if (v instanceof String) {
+                        try { e.putFloat(k, Float.parseFloat(((String) v).trim())); }
+                        catch (Throwable ignored) { e.putFloat(k, 1.0f); }
+                    }
+                    continue;
+                }
                 if (v instanceof Integer) {
                     e.putInt(k, ((Number) v).intValue());
                 } else if (v instanceof Long) {

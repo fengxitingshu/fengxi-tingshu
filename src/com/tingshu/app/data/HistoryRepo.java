@@ -147,6 +147,31 @@ public final class HistoryRepo {
         Db.get().delete("progress", "book_key=?", new String[]{bookKey});
     }
 
+    /**
+     * ★ v3.9.0：某本书已收听过（有进度记录）的全部集号，1 基升序。
+     *
+     * <p>progress 表按 (book_key, chapter_idx) 记录每一集的偏移 —— 只要
+     * 听过（哪怕只听了几秒）就会落一行。选集页/详情页据此画「已收听」
+     * 绿色小对勾。上限 5000 集防呆。
+     */
+    public static java.util.List<Integer> listenedIdx(String bookKey) {
+        java.util.List<Integer> out = new java.util.ArrayList<Integer>();
+        if (bookKey == null || bookKey.length() < 2) return out;
+        Cursor c = null;
+        try {
+            c = Db.get().rawQuery(
+                    "SELECT chapter_idx FROM progress WHERE book_key=? ORDER BY chapter_idx",
+                    new String[]{bookKey});
+            while (c != null && c.moveToNext() && out.size() < 5000) {
+                out.add(c.getInt(0));
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            Db.close(c);
+        }
+        return out;
+    }
+
     // ==================== 工具 ====================
 
     private static History read(Cursor c) {

@@ -84,6 +84,20 @@ public final class BridgeSource {
                     }
                 }
                 o.put("origin", origin);
+                // ★ v3.9.0：本地书源 / 网盘接口 —— 前端归入「自定义源」组。
+                //   这两类源不在用户数据库里、删不掉（同内置源语义），
+                //   但网盘源的「启用」看 Cookie 是否已配置。
+                if (s instanceof com.tingshu.app.source.impl.LocalSource) {
+                    o.put("origin", "local");
+                    o.put("builtin", true);
+                } else if (s instanceof com.tingshu.app.pan.PanSource) {
+                    String pid = s.id();
+                    o.put("origin", "pan");
+                    o.put("builtin", true);
+                    o.put("enabled", SourceRepo.isEnabled(pid)
+                            && com.tingshu.app.pan.PanResolver.configured(pid));
+                    o.put("panReady", com.tingshu.app.pan.PanResolver.configured(pid));
+                }
                 // JS 源额外的能力位：需要站点验证 / 搜索间隔（前端用来提示用户）
                 if (s instanceof com.tingshu.app.source.JsSourceAdapter) {
                     com.tingshu.app.source.JsSourceAdapter ja =

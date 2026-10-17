@@ -2,13 +2,16 @@
 <resources>
     <string name="app_name">枫兮听书</string>
 
-    <!-- ★ v3.7.11：桌面播放控制小组件（★ v3.8.2 重新加入，样式参考通知栏） -->
+    <!-- ★ v3.7.11：桌面播放控制小组件（★ v3.8.2 重新加入，样式参考通知栏；
+         ★ v3.9.0 白板重写：深色渐变卡 + 圆形键 + 倍速/定时角标） -->
     <string name="wg_name">枫兮听书 · 播放控制</string>
-    <string name="wg_desc">在桌面直接控制播放：上一集 / 播放暂停 / 下一集 / 停止，并显示进度</string>
+    <string name="wg_desc">桌面直接控制播放：上一集 / 播放暂停 / 下一集 / 停止，进度条可点跳转，并显示倍速与定时关闭状态</string>
     <string name="wg_idle">点一下，继续听</string>
     <string name="wg_cover">封面</string>
     <string name="wg_prev">上一集</string>
     <string name="wg_toggle">播放暂停</string>
     <string name="wg_next">下一集</string>
     <string name="wg_stop">停止</string>
+    <string name="wg_rate">倍速</string>
+    <string name="wg_sleep">定时关闭</string>
 </resources>

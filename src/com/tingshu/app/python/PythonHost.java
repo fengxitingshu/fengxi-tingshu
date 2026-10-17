@@ -49,6 +49,9 @@ public final class PythonHost {
      */
     private static volatile boolean starting = false;
 
+    /** ★ v3.9.1：启动失败后的重试次数上限（避免一次偶发失败就把 Python 永久判死） */
+    private static int startRetries = 0;
+
     private PythonHost() {}
 
     /**
@@ -115,9 +118,13 @@ public final class PythonHost {
      */
     public static void setReadyListener(ReadyListener l) {
         readyListener = l;
-        // 注册时若已经就绪（比如热重载、或上个进程留下的状态），立刻补一次通知，
+        // 注册时若**已经启动结束**（成功或失败都算），立刻补一次通知，
         // 避免"注册晚了一步，回调永远不来"。
-        if (l != null && TRIED.get()) {
+        // ★ v3.9.1：条件从 TRIED 收紧为「已启动结束」——
+        //   TRIED 在 kickStart 一开始就被置上，而那时解释器还在解压；
+        //   拿这个当判据会拿着 ok=false 空跑一次 onReady，
+        //   上层的补登记逻辑因此被"以为已经通知过"而错过真正的就绪回调。
+        if (l != null && TRIED.get() && !starting) {
             try { l.onReady(ok); } catch (Throwable ignored) {}
         }
     }
@@ -141,7 +148,11 @@ public final class PythonHost {
             com.tingshu.app.source.Aggregator.singlePool().execute(new Runnable() {
                 public void run() {
                     startNow(ctx);
-                    starting = false;
+                    synchronized (PythonHost.class) {
+                        starting = false;
+                        // ★ v3.9.1：唤醒可能在等这次启动的 ensureStarted
+                        PythonHost.class.notifyAll();
+                    }
                     ReadyListener l = readyListener;
                     if (l != null) {
                         try { l.onReady(ok); } catch (Throwable ignored) {}
@@ -151,7 +162,10 @@ public final class PythonHost {
         } catch (Throwable t) {
             // 线程池都不可用（极端情况）：退回同步启动，总比整个不可用强
             startNow(ctx);
-            starting = false;
+            synchronized (PythonHost.class) {
+                starting = false;
+                PythonHost.class.notifyAll();
+            }
         }
     }
 
@@ -165,8 +179,31 @@ public final class PythonHost {
      * @param ctx Application 上下文；为 null 时若未启动过则立即返回 false
      */
     public static synchronized boolean ensureStarted(Context ctx) {
-        if (TRIED.get() && !starting) return ok;
+        if (ok) return true;
         if (ctx == null) return false;
+
+        // ★ v3.9.1：后台正在启动 —— 必须等它结束，**绝不能**再进一次 startNow。
+        //   Chaquopy 的 Python.start() 不是幂等的：两个线程同时进会抛异常或把
+        //   解释器状态搅乱，而导入流程看到的就是"Python 运行时不可用"
+        //   （真正原因被吞在异常里）。这里用监视器等待，启动完由 kickStart 唤醒。
+        if (starting) {
+            long deadline = System.currentTimeMillis() + 120000L;   // 最多等 2 分钟
+            while (starting && !ok && System.currentTimeMillis() < deadline) {
+                try {
+                    PythonHost.class.wait(300);
+                } catch (InterruptedException e) {
+                    return ok;
+                }
+            }
+            return ok;
+        }
+
+        // 启动过但失败了：允许有限次重试（原来一次失败就永久 false，
+        // 整个进程内再也不会有 Python 源，连重启 App 之前都是死的）
+        if (TRIED.get()) {
+            if (startRetries >= 3) return false;
+            startRetries++;
+        }
         return startNow(ctx);
     }
 
@@ -191,7 +228,47 @@ public final class PythonHost {
             lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
             Log.e(TAG, "Python 运行时启动失败", t);
         }
+        // ★ v3.9.1：唤醒正在等这次启动结果的线程（见 ensureStarted）
+        PythonHost.class.notifyAll();
         return ok;
+    }
+
+    /**
+     * ★ v3.9.1：跑一次 Python 侧自检，把「为什么源用不了」讲清楚。
+     *
+     * <p>以前 .py 源不工作时，前端只能看到一句"Python 运行时不可用"，
+     * 到底是解释器没起来、还是缺 lxml / Crypto 这类三方模块，完全看不出来。
+     * 这里把 self_test 的结果原样回传（Python 版本、sys.path、每个关键模块的
+     * 导入结果），诊断页一看就知道卡在哪。
+     */
+    public static JSONObject selfTest(Context ctx) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("ok", false);
+            o.put("available", available());
+            o.put("starting", starting());
+            o.put("lastError", lastError == null ? "" : lastError);
+            if (!ensureStarted(ctx)) {
+                o.put("error", "Python 运行时不可用"
+                        + (lastError == null || lastError.isEmpty()
+                            ? "" : ("：" + lastError)));
+                return o;
+            }
+            try {
+                String st = module.callAttr("self_test").toString();
+                JSONObject inner = new JSONObject(st);
+                o.put("ok", true);
+                o.put("detail", inner.opt("data"));
+            } catch (Throwable t) {
+                o.put("error", "自检调用失败：" + (t.getMessage() == null
+                        ? t.getClass().getSimpleName() : t.getMessage()));
+            }
+        } catch (Throwable t) {
+            try {
+                o.put("error", String.valueOf(t.getMessage()));
+            } catch (Throwable ignored) {}
+        }
+        return o;
     }
 
     /** 最近一次失败原因（诊断用） */

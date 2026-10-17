@@ -84,6 +84,14 @@ public final class JarLoader {
         }
         if (!optDir.exists()) optDir.mkdirs();
 
+        // ★ v3.9.9：用户可能把「外层 zip」直接导入（源作者常把 jar 再包一层 zip）。
+        //   zip 里没有 classes*.dex 时尝试解出内层 jar；有 dex 则原样使用。
+        String unwrapped = unwrapZipIfNested(f, optDir);
+        if (unwrapped != null) {
+            jarPath = unwrapped;
+            f = new File(jarPath);
+        }
+
         ClassLoader parent = JarLoader.class.getClassLoader();
         DexClassLoader cl;
         try {
@@ -106,6 +114,13 @@ public final class JarLoader {
 
         // ---- 策略 2：原版 eprendre 格式（SourceEntry.getSources() -> List<TingShu>）----
         List<String> classNames = dexClassNames(cl);
+        // ★ v3.9.9：Android 10+ 之后 BaseDexClassLoader 的 Element 不再持有 DexFile
+        //   字段（改为 cookie），上面的反射枚举会静默返回空表 —— eprendre 插件
+        //   全部找不到 SourceEntry，报「jar 里没有找到可用的书源」。
+        //   兜底：直接解析 jar 里 classes*.dex 的字符串池提取类名（纯 Java，零系统依赖）。
+        if (classNames.isEmpty()) {
+            classNames = jarClassNames(jarPath);
+        }
 
         // 2a. 首选：找 SourceEntry（原版约定入口，一个 jar 通常只有一个）
         //     ★ v3.3：不再要求包名前缀，只看类名后缀 —— 不同插件的包名结构
@@ -434,6 +449,165 @@ public final class JarLoader {
             }
         } catch (Throwable ignored) {}
         return out;
+    }
+
+    /**
+     * ★ v3.9.9：导入文件是「zip 套 jar」时解出内层 jar。
+     *
+     * <p>判定：zip 里有 classes*.dex → 本身就是插件包，原样返回 null（用原文件）；
+     * 没有.dex 但存在 .jar 条目 → 解出第一个 .jar 到 optDir，返回新路径。
+     * 任何异常都返回 null，不影响主流程。
+     */
+    private static String unwrapZipIfNested(File f, File optDir) {
+        java.util.zip.ZipFile zf = null;
+        try {
+            zf = new java.util.zip.ZipFile(f);
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            String nested = null;
+            while (en != null && en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                String nm = e.getName();
+                if (nm.startsWith("classes") && nm.endsWith(".dex")) {
+                    return null;   // 本身就是 dex 插件包
+                }
+                if (nested == null && nm.endsWith(".jar") && !nm.contains("/")
+                        && !nm.startsWith("META-INF/")) {
+                    nested = nm;
+                }
+            }
+            if (nested == null) return null;
+            java.io.InputStream in = zf.getInputStream(zf.getEntry(nested));
+            File out = new File(optDir, "unwrapped_" + System.currentTimeMillis() + ".jar");
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+            try {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+            } finally {
+                try { fo.close(); } catch (Throwable ignored) {}
+                try { in.close(); } catch (Throwable ignored) {}
+            }
+            return out.getAbsolutePath();
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (zf != null) try { zf.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /**
+     * ★ v3.9.9：不依赖系统内部 API 的类名枚举 —— 直接解析 jar 里
+     * classes.dex / classes2.dex ... 的类型表。
+     *
+     * <p>背景见 load() 里的注释：Android 10+ 拿不到 DexPathList.Element.dexFile，
+     * {@link #dexClassNames} 静默失效。这里读取 dex 自身结构：
+     * header 的 string_ids 指向 uleb128 长度前缀 + MUTF-8 描述符，
+     * type_ids 是 string 索引 —— 只取形如 {@code Lcom/x/Y;} 的类描述符。
+     *
+     * <p> dex 格式参考 AOSP 《Dalvik Executable format》；只读不写，
+     * 解析失败返回已解析到的部分（或空表），绝不抛出。
+     */
+    private static List<String> jarClassNames(String jarPath) {
+        List<String> out = new ArrayList<String>();
+        java.util.zip.ZipFile zf = null;
+        try {
+            zf = new java.util.zip.ZipFile(jarPath);
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            List<byte[]> dexList = new ArrayList<byte[]>();
+            while (en != null && en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                String nm = e.getName();
+                if (!nm.startsWith("classes") || !nm.endsWith(".dex")) continue;
+                java.io.InputStream in = zf.getInputStream(e);
+                try {
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+                    dexList.add(bo.toByteArray());
+                } finally {
+                    try { in.close(); } catch (Throwable ignored) {}
+                }
+            }
+            for (int d = 0; d < dexList.size(); d++) {
+                parseDexClassNames(dexList.get(d), out);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (zf != null) try { zf.close(); } catch (Throwable ignored) {}
+        }
+        return out;
+    }
+
+    /** 解析单个 dex 字节块，把类描述符（L 开头 ; 结尾）转成点分名加进 out */
+    private static void parseDexClassNames(byte[] dex, List<String> out) {
+        if (dex == null || dex.length < 0x48) return;
+        try {
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(dex)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            int stringIdsSize = b.getInt(0x38);
+            int stringIdsOff = b.getInt(0x3C);
+            int typeIdsSize = b.getInt(0x40);
+            int typeIdsOff = b.getInt(0x44);
+            if (stringIdsSize <= 0 || stringIdsOff <= 0 || typeIdsSize <= 0 || typeIdsOff <= 0) return;
+            if ((long) stringIdsOff + stringIdsSize * 4L > dex.length) return;
+            if ((long) typeIdsOff + typeIdsSize * 4L > dex.length) return;
+
+            // string_ids[i] = string data offset
+            int[] strOff = new int[stringIdsSize];
+            for (int i = 0; i < stringIdsSize; i++) {
+                strOff[i] = b.getInt(stringIdsOff + i * 4);
+            }
+            // type_ids[i] = descriptor string index
+            for (int i = 0; i < typeIdsSize; i++) {
+                int sIdx = b.getInt(typeIdsOff + i * 4);
+                if (sIdx < 0 || sIdx >= stringIdsSize) continue;
+                String desc = readDexString(dex, strOff[sIdx]);
+                if (desc == null || desc.length() < 3) continue;
+                if (desc.charAt(0) != 'L' || desc.charAt(desc.length() - 1) != ';') continue;
+                out.add(desc.substring(1, desc.length() - 1).replace('/', '.'));
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /** 读 dex 字符串：uleb128 长度 + MUTF-8 字节（只关心可打印 ASCII 描述符） */
+    private static String readDexString(byte[] dex, int offset) {
+        try {
+            int p = offset;
+            int len = 0;          // uleb128（实际字符数，这里只取低 28 位足够）
+            int shift = 0;
+            while (p < dex.length) {
+                int one = dex[p++] & 0xFF;
+                len |= (one & 0x7F) << shift;
+                if ((one & 0x80) == 0) break;
+                shift += 7;
+                if (shift > 21) return null;
+            }
+            if (len <= 0 || p + len > dex.length) return null;
+            // MUTF-8：对类描述符（ASCII）可直接按字节取，遇 0 结束
+            StringBuilder sb = new StringBuilder(len);
+            int consumed = 0;
+            while (p < dex.length && consumed < len) {
+                int c = dex[p++] & 0xFF;
+                if (c == 0) break;
+                if (c < 0x80) {
+                    sb.append((char) c);
+                    consumed++;
+                } else if ((c & 0xE0) == 0xC0 && p < dex.length) {
+                    sb.append((char) (((c & 0x1F) << 6) | (dex[p++] & 0x3F)));
+                    consumed++;
+                } else if ((c & 0xF0) == 0xE0 && p + 1 < dex.length) {
+                    sb.append((char) (((c & 0x0F) << 12)
+                            | ((dex[p++] & 0x3F) << 6) | (dex[p++] & 0x3F)));
+                    consumed++;
+                } else {
+                    return null;  // 非法序列
+                }
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** 沿类层级向上找字段声明 */

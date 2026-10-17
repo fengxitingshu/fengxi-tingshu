@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ★ v3.9.1 通知控制按钮：上一集。矢量按密度实时渲染，比 android.R.drawable
+     的低分辨率框架位图清晰得多（原图只有 mdpi 一张，在 xxhdpi 上拉伸发糊）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,6h2.2v12H7zM20,6.6v10.8L10.6,12z"/>
+</vector>

@@ -7,7 +7,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
-import android.view.View;
 import android.widget.RemoteViews;
 
 import com.tingshu.app.MainActivity;
@@ -16,6 +15,9 @@ import com.tingshu.app.player.PlayerService;
 
 /**
  * ★ v3.8.2：桌面播放控制小组件（样式参考通知栏播放控制）。
+ * ★ v3.9.3：白卡终极修复 —— 布局结构与 build() 调用序列 = v3.8.5 逐字节复刻
+ *   （v3.9.2 只收敛动作集没用，问题出在 v3.9.0 重写布局的结构差异，见
+ *   {@link #build} 与 widget_player.xml 头注释）。
  *
  * <h3>功能</h3>
  * 在系统桌面放置一块面板，直接控制正在播放的有声书：
@@ -40,7 +42,7 @@ import com.tingshu.app.player.PlayerService;
  *       {@code com.tingshu.app.widget.**}，build.sh 有保名闸门兜底；</li>
  *   <li><b>RemoteViews 白名单</b>（v3.7.15）：布局里用 {@code <View>} 做
  *       点击分区，桌面 inflate 失败 → 整块空白。本版 20 格全是
- *       {@code <ImageView>}；</li>
+ *       {@code <ImageView>}；背景一律字面颜色，不用 CardView；</li>
  *   <li><b>exported 投递</b>（v3.7.16）：桌面是另一个 App，把 PendingIntent
  *       投给 exported="false" 的组件会被静默丢弃 → "点了没反应"。
  *       控制类点击全部走 exported 的 {@link WidgetClickReceiver}。</li>
@@ -69,12 +71,14 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String WIDGET_ACTION =
             "com.tingshu.app.widget.ACTION";
 
-    /** 进度条点击分区数（每格 5%），与布局里 wgSeek0..19 一一对应 */
+    /** 进度条点击分区数（每格 5%），与布局里 wgBar0..19/wgSeek0..19 一一对应 */
     static final int SEEK_SEGMENTS = 20;
 
     @Override
     public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
         if (ids == null) return;
+        // ★ v3.8.4：小组件诊断日志（「设置 → 小组件诊断」可查看）
+        com.tingshu.app.core.DiagLog.add("[widget] onUpdate ids=" + ids.length);
         for (int id : ids) {
             try {
                 mgr.updateAppWidget(id, build(ctx));
@@ -87,6 +91,15 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         super.onReceive(ctx, intent);
         String a = intent == null ? null : intent.getAction();
         if (a == null) return;
+
+        // ★ v3.8.4：小组件生命周期写入诊断日志
+        if (AppWidgetManager.ACTION_APPWIDGET_ENABLED.equals(a)) {
+            com.tingshu.app.core.DiagLog.add("[widget] 首个小组件添加/启用");
+        } else if (AppWidgetManager.ACTION_APPWIDGET_DELETED.equals(a)) {
+            com.tingshu.app.core.DiagLog.add("[widget] 移除一个小组件");
+        } else if (AppWidgetManager.ACTION_APPWIDGET_DISABLED.equals(a)) {
+            com.tingshu.app.core.DiagLog.add("[widget] 最后一个小组件移除");
+        }
 
         // 状态变化广播（由 WidgetState.requestUpdate 发出）；
         // 另外 APPWIDGET_UPDATE 也会到这里（系统周期刷新 / 用户添加小组件），
@@ -124,116 +137,166 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
         } catch (Throwable ignored) {}
     }
 
-    /** 组装一块小组件的视图（读 WidgetState 快照） */
+    /**
+     * 组装一块小组件的视图（读 WidgetState 快照）。
+     *
+     * <p>★ v3.9.3 = v3.8.5 <b>逐字节复刻</b>。v3.9.2 把动作集收回六类后用户
+     * 仍报白卡，说明 originOS 桌面对 v3.9.0 重写布局的结构本身过敏（封面
+     * FrameLayout 三层叠 / 单层 seek 格 / 额外 TextView 动作 / @string 引用 /
+     * 0.5dp 分数边距——无法远程判定具体是哪条）。本版布局与调用序列照抄
+     * 3.8.5 反编译结果，一步不多一步不少：
+     * <ol>
+     *   <li>{@code setInt(wgRoot,"setBackgroundColor",背景)}</li>
+     *   <li>{@code setTextViewText} × 书名/副标题/两个时间</li>
+     *   <li>{@code setImageViewBitmap(wgCover, 封面或 null)}（null 已实测安全）</li>
+     *   <li>循环 {@code setInt(wgBar_i,"setBackgroundColor",…)}——只上色</li>
+     *   <li>循环 {@code setOnClickPendingIntent(wgSeek_i,…)}——只点击</li>
+     *   <li>{@code setImageViewResource(wgToggle,播放/暂停)}</li>
+     *   <li>{@code setOnClickPendingIntent} × 六处（四键 + 封面 + 文字区）</li>
+     *   <li>{@code setBoolean(…,"setSelected",true)} × 2（跑马灯）</li>
+     * </ol>
+     * 放弃 v3.9.0 的角标（倍速/定时）与状态点 —— 可用性优先。
+     * 每段独立 try-catch 并写诊断日志（3.8.5 同款）。
+     */
     private RemoteViews build(Context ctx) {
         RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_player);
 
         boolean has = WidgetState.hasContent;
         boolean playing = WidgetState.playing;
-        boolean buffering = WidgetState.buffering;
+
+        // ---- 根背景（3.8.5 在 build 里再设一次，这里照抄） ----
+        try {
+            v.setInt(R.id.wgRoot, "setBackgroundColor", 0xE6222530);
+        } catch (Throwable t) {
+            diag(ctx, "build root FAILED: " + t);
+        }
 
         // ---- 文案（与通知栏同源：书名 / 作者 · 集数） ----
-        String title = has && !WidgetState.title.isEmpty()
-                ? WidgetState.title : "枫兮听书";
-        v.setTextViewText(R.id.wgTitle, title);
-        String sub;
-        if (!has) {
-            sub = "点一下，继续听";
-        } else if (!playing && WidgetState.curSec <= 0) {
-            // 有内容但没进度也没在播 = 取链/缓冲中（native 的 playing 在
-            // prepareAsync 期间还是 false，这个组合正好覆盖转圈阶段）
-            sub = "准备中…";
-        } else {
-            String ep = WidgetState.epText;
-            String ar = WidgetState.artist == null ? "" : WidgetState.artist;
-            if (ep != null && !ep.isEmpty() && ar != null && !ar.isEmpty()) sub = ar + " · " + ep;
-            else if (ep != null && !ep.isEmpty()) sub = "第 " + ep + " 集";
-            else sub = playing ? "正在播放" : "已暂停";
-        }
-        v.setTextViewText(R.id.wgSub, sub);
-
-        // ---- 封面（128px 缩略图常驻快照，秒级刷新不丢图） ----
-        if (has && WidgetState.cover != null) {
-            try {
-                v.setImageViewBitmap(R.id.wgCover, WidgetState.cover);
-                v.setViewVisibility(R.id.wgCover, View.VISIBLE);
-                v.setViewVisibility(R.id.wgCoverPh, View.GONE);
-            } catch (Throwable t) {
-                v.setViewVisibility(R.id.wgCover, View.GONE);
-                v.setViewVisibility(R.id.wgCoverPh, View.VISIBLE);
+        try {
+            String title = has && !WidgetState.title.isEmpty()
+                    ? WidgetState.title : "枫兮听书";
+            v.setTextViewText(R.id.wgTitle, title);
+            String sub;
+            if (!has) {
+                sub = "点一下，继续听";
+            } else if (!playing && WidgetState.curSec <= 0) {
+                // 有内容但没进度也没在播 = 取链/缓冲中（native 的 playing 在
+                // prepareAsync 期间还是 false，这个组合正好覆盖转圈阶段）
+                sub = "准备中…";
+            } else {
+                String ep = WidgetState.epText;
+                String ar = WidgetState.artist == null ? "" : WidgetState.artist;
+                if (ep != null && !ep.isEmpty() && ar != null && !ar.isEmpty()) sub = ar + " · " + ep;
+                else if (ep != null && !ep.isEmpty()) sub = "第 " + ep + " 集";
+                else sub = playing ? "正在播放" : "已暂停";
             }
-        } else {
-            v.setViewVisibility(R.id.wgCover, View.GONE);
-            v.setViewVisibility(R.id.wgCoverPh, View.VISIBLE);
+            v.setTextViewText(R.id.wgSub, sub);
+        } catch (Throwable t) {
+            diag(ctx, "build text FAILED: " + t);
         }
 
-        // ---- 进度 ----
+        // ---- 封面：3.8.5 同款 —— 没封面塞 null（该设备实测安全） ----
+        try {
+            android.graphics.Bitmap bm = (has && WidgetState.cover != null)
+                    ? WidgetState.cover : null;
+            v.setImageViewBitmap(R.id.wgCover, bm);
+        } catch (Throwable t) {
+            diag(ctx, "build cover FAILED: " + t);
+        }
+
+        // ---- 时间文案 ----
         int dur = WidgetState.durSec;
         int cur = WidgetState.curSec;
-        if (has && dur > 0) {
-            v.setProgressBar(R.id.wgBar, 1000,
-                    Math.max(0, Math.min(1000, (int) ((long) cur * 1000 / dur))), false);
-            v.setTextViewText(R.id.wgTimeCur, fmt(cur));
-            v.setTextViewText(R.id.wgTimeDur, fmt(dur));
-        } else {
-            v.setProgressBar(R.id.wgBar, 1000, 0, false);
-            v.setTextViewText(R.id.wgTimeCur, "");
-            v.setTextViewText(R.id.wgTimeDur, "");
+        boolean seekable = has && dur > 0;
+        try {
+            v.setTextViewText(R.id.wgTimeCur, seekable ? fmt(cur) : "");
+            v.setTextViewText(R.id.wgTimeDur, seekable ? fmt(dur) : "");
+        } catch (Throwable t) {
+            diag(ctx, "build time FAILED: " + t);
         }
 
-        // ---- 可点进度条：20 格，点第 i 格 seek 到 (i+0.5)/20 ----
-        //
-        //  RemoteViews 判定两个 PendingIntent "是否相同"只看 requestCode +
-        //  Intent 的 action/data/component/categories，**不看 extras**。
-        //  所以 20 格必须配 20 个**不同 requestCode**（100+i），
-        //  否则 FLAG_UPDATE_CURRENT 会让最后注册的那个覆盖全部，
-        //  点哪一格都跳同一个位置。
-        //  秒数直接算进 PendingIntent；没有播放内容（dur<=0）不挂点击。
-        boolean seekable = has && dur > 0;
-        for (int i = 0; i < SEEK_SEGMENTS; i++) {
-            int viewId = ctx.getResources().getIdentifier(
-                    "wgSeek" + i, "id", ctx.getPackageName());
-            if (viewId == 0) continue;
-            if (!seekable) continue;   // 未设置的点击本就是空的，不用显式清
-            int target = (int) ((i + 0.5) * dur / SEEK_SEGMENTS);
-            v.setOnClickPendingIntent(viewId, seekPi(ctx, target, 100 + i));
+        int filled = 0;
+        if (seekable) {
+            filled = (int) Math.floor((double) cur * SEEK_SEGMENTS / dur);
+            if (filled < 0) filled = 0;
+            if (filled > SEEK_SEGMENTS) filled = SEEK_SEGMENTS;
+        }
+
+        // ---- 显示层：wgBar0..19 逐格上色（3.8.5 同款配色：
+        //      已播 #F2FFFFFF，未播 #33FFFFFF） ----
+        try {
+            for (int i = 0; i < SEEK_SEGMENTS; i++) {
+                int viewId = ctx.getResources().getIdentifier(
+                        "wgBar" + i, "id", ctx.getPackageName());
+                if (viewId == 0) continue;
+                v.setInt(viewId, "setBackgroundColor",
+                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
+            }
+        } catch (Throwable t) {
+            diag(ctx, "build progress FAILED: " + t);
+        }
+
+        // ---- 点击层：wgSeek0..19 挂 seek PendingIntent（独立 try，3.8.5 同款）。
+        //     RemoteViews 判定 PendingIntent 是否相同不看 extras，
+        //     所以 20 格必须各配一个 requestCode（100+i），
+        //     否则 FLAG_UPDATE_CURRENT 会让最后一个覆盖全部。 ----
+        try {
+            for (int i = 0; i < SEEK_SEGMENTS; i++) {
+                int viewId = ctx.getResources().getIdentifier(
+                        "wgSeek" + i, "id", ctx.getPackageName());
+                if (viewId == 0) continue;
+                if (seekable) {
+                    int target = (int) ((i + 0.5) * dur / SEEK_SEGMENTS);
+                    v.setOnClickPendingIntent(viewId, seekPi(ctx, target, 100 + i));
+                }
+            }
+        } catch (Throwable t) {
+            diag(ctx, "build seek FAILED: " + t);
         }
 
         // ---- 播放/暂停图标 ----
-        v.setImageViewResource(R.id.wgToggle, playing
-                ? android.R.drawable.ic_media_pause
-                : android.R.drawable.ic_media_play);
+        try {
+            // ★ v3.9.4：必须用本包资源。RemoteViews 由桌面（另一个 App）
+            //   inflate，框架资源 ID（android.R.drawable.*，包 ID 0x01）
+            //   在桌面的 Resources 里解析不到，会抛 Resources$NotFoundException，
+            //   轻则整块小组件空白、重则拖崩桌面。
+            v.setImageViewResource(R.id.wgToggle, playing
+                    ? R.drawable.ic_notif_pause
+                    : R.drawable.ic_notif_play);
+        } catch (Throwable t) {
+            diag(ctx, "build toggle FAILED: " + t);
+        }
 
-        // ---- 点击 ----
-        // 四键全部投给 exported 的 WidgetClickReceiver（requestCode 11~14）；
-        // 封面/书名才挂"打开 App"（MainActivity 是 exported 的，15/16）。
-        v.setOnClickPendingIntent(R.id.wgPrev, xpi(ctx, WIDGET_PREV, 11));
-        v.setOnClickPendingIntent(R.id.wgToggle, xpi(ctx, WIDGET_TOGGLE, 12));
-        v.setOnClickPendingIntent(R.id.wgNext, xpi(ctx, WIDGET_NEXT, 13));
-        v.setOnClickPendingIntent(R.id.wgStop, xpi(ctx, WIDGET_STOP, 14));
-        v.setOnClickPendingIntent(R.id.wgCoverTap, openApp(ctx, 15));
-        v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 16));
+        // ---- 点击：四键（requestCode 11~14）投 exported 的
+        //      WidgetClickReceiver；封面/文字区（15/16）打开 App。
+        //      与 3.8.5 完全一致的挂点：wgCover、wgInfoTap。 ----
+        try {
+            v.setOnClickPendingIntent(R.id.wgPrev, xpi(ctx, WIDGET_PREV, 11));
+            v.setOnClickPendingIntent(R.id.wgToggle, xpi(ctx, WIDGET_TOGGLE, 12));
+            v.setOnClickPendingIntent(R.id.wgNext, xpi(ctx, WIDGET_NEXT, 13));
+            v.setOnClickPendingIntent(R.id.wgStop, xpi(ctx, WIDGET_STOP, 14));
+            v.setOnClickPendingIntent(R.id.wgCover, openApp(ctx, 15));
+            v.setOnClickPendingIntent(R.id.wgInfoTap, openApp(ctx, 16));
+        } catch (Throwable t) {
+            diag(ctx, "build click FAILED: " + t);
+        }
 
         // 跑马灯：RemoteViews 里的 TextView 要真滚动，渲染后必须设为
         // selected —— marquee 只对"被选中且获得焦点"的 TextView 生效。
         try {
             v.setBoolean(R.id.wgTitle, "setSelected", true);
             v.setBoolean(R.id.wgSub, "setSelected", true);
-        } catch (Throwable ignored) {}
-
-        // 四键在"没有内容"时置灰（用 alpha 表示），避免点了没反应。
-        // ★ setFloat 是 API 31 才有的，低版本调用会抛异常 ——
-        //   所以只在支持的系统上淡化，否则保持原样（宁可不淡也别崩）。
-        if (Build.VERSION.SDK_INT >= 31) {
-            try {
-                float al = has ? 1f : 0.4f;
-                v.setFloat(R.id.wgPrev, "setAlpha", al);
-                v.setFloat(R.id.wgToggle, "setAlpha", has ? 1f : 0.6f);
-                v.setFloat(R.id.wgNext, "setAlpha", al);
-                v.setFloat(R.id.wgStop, "setAlpha", al);
-            } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            diag(ctx, "build marquee FAILED: " + t);
         }
         return v;
+    }
+
+    /** 写一条小组件构建诊断（v3.8.5 同款，出白卡时看这里） */
+    private static void diag(Context ctx, String msg) {
+        try {
+            com.tingshu.app.core.DiagLog.add("[widget] " + msg);
+        } catch (Throwable ignored) {}
     }
 
     /** 控制类 PendingIntent（投 exported 的 WidgetClickReceiver） */

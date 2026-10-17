@@ -550,21 +550,39 @@ public final class Aggregator {
     }
 
     /**
+     * 纯网络取链（不跳过任何源）。见带 skipSources 的重载。
+     */
+    public static String audioWithFallbackNetwork(Book book, int chapterIdx, BookDetail detail,
+                                                  String[] outUsed,
+                                                  Map<String, String>[] outHeaders) {
+        return audioWithFallbackNetwork(book, chapterIdx, detail, outUsed, outHeaders, null);
+    }
+
+    /**
      * 纯网络取链，带自动换源 + 播放请求头（不做任何本地命中检查）。
      *
      * <p>headers 由「实际取链成功的那个源」在返回前现场计算，
      * 因此自动换源后拿到的 headers 一定是换到的新源的（不会张冠李戴）。
      *
+     * <p>★ P0-1 播放失败自动换源：本重载在取链层支持「跳过已失败源」。
+     * 播放器发现当前直链失效（403 / 过期）时，把刚失败的源 id 传入
+     * skipSources，这里会按 Book.variants/sources 顺序直接取下一个可用源的
+     * 直链，避免换源时又撞回同一条死链。
+     *
+     * @param skipSources 已尝试失败、需跳过的源 id 列表；可为 null
      * @param outHeaders 输出参数：长度 ≥1 的数组，outHeaders[0] 回填音频请求头（可为 null）
      */
     public static String audioWithFallbackNetwork(Book book, int chapterIdx, BookDetail detail,
                                                   String[] outUsed,
-                                                  Map<String, String>[] outHeaders) {
+                                                  Map<String, String>[] outHeaders,
+                                                  List<String> skipSources) {
         // ★ v2.2 播放提速：命中取链缓存直接返回，一次网络都不走。
         //   这是预加载能生效的关键——预加载线程提前算好放进缓存，
         //   用户点「下一集」时在这里秒回，播放器立刻进入 prepare。
         AudioSource hit = audioCacheGet(book, chapterIdx);
-        if (hit != null) {
+        // ★ P0-1：跳过列表非空时，若缓存命中恰好是已失败源的死链则不用它；
+        //   其它好源的缓存仍可直接复用，省一次网络往返。
+        if (hit != null && (skipSources == null || !skipSources.contains(hit.source))) {
             if (outUsed != null && outUsed.length >= 2) {
                 outUsed[0] = hit.source;
                 outUsed[1] = "";
@@ -574,6 +592,15 @@ public final class Aggregator {
         }
 
         List<Book> tryList = candidates(book);
+        // ★ P0-1：剔除已失败源，避免换源时又取回同一条死链
+        if (skipSources != null && !skipSources.isEmpty()) {
+            List<Book> filtered = new ArrayList<Book>();
+            for (Book cand : tryList) {
+                if (cand.source != null && skipSources.contains(cand.source)) continue;
+                filtered.add(cand);
+            }
+            tryList = filtered;
+        }
 
         // 先试主源（如果 detail 已经给出了对应章节，省一次详情请求）
         for (int i = 0; i < tryList.size(); i++) {

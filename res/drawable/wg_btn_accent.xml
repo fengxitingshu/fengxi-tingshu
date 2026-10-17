@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.0 播放/暂停主键：主色渐变圆。
+
+  取 App 主题色 #E8503A → #FF7A5C 的 45° 渐变（与顶栏导航同色系），
+  整块小组件里唯一的暖色实心块 —— 视觉焦点即主功能，符合
+  "最常用的键最大最亮"的媒体控件惯例。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:angle="45"
+        android:startColor="#E8503A"
+        android:endColor="#FF7A5C"
+        android:type="linear"/>
+</shape>

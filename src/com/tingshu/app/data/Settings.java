@@ -29,13 +29,51 @@ public final class Settings {
 
     // ---------- 播放 ----------
 
-    /** 全局默认倍速 */
+    /**
+     * 全局默认倍速。
+     *
+     * <p>★★ v3.9.6 关键修复：**绝不能用 {@code SP.getFloat()}**！
+     *
+     * <p>{@code SharedPreferencesImpl.getFloat()} 内部是
+     * {@code (Float) map.get(key)} 的硬转型 —— 只要这个键存的是
+     * Integer/Long/String，就会抛
+     * {@code ClassCastException: java.lang.Integer cannot be cast to java.lang.Float}，
+     * 而它在 {@code MainActivity.onCreate} 里被调用（{@code core.setSpeed(...)}），
+     * 异常直接把 Activity 启动带崩 → **App 一打开就闪退**。
+     *
+     * <p>这个坏值从哪来：备份恢复（{@code BackupRestore.restoreSettings}）时，
+     * 若包内 {@code speed_global} 是 JSON 整数，就会写成 int；之后再读 float 必炸。
+     * 旧机型/旧版本升级上来也可能遗留 int 值。
+     *
+     * <p>现在改为「读原始对象 + 宽容地转成 float」：不管历史存的是
+     * Integer / Long / Float / Double / String，都能读出正确倍速，
+     * 并顺手把清洗后的 float 值写回去（自愈）。
+     */
     public static float speed() {
-        return SP.getFloat("speed_global", 1.0f);
+        float v = 1.0f;
+        try {
+            Object raw = SP.getAll().get("speed_global");
+            if (raw instanceof Number) {
+                v = ((Number) raw).floatValue();
+            } else if (raw instanceof String) {
+                try { v = Float.parseFloat(((String) raw).trim()); } catch (Throwable ignored) {}
+            }
+            // 顺手自愈：把非 float 的历史值改写成本类型，避免下次再踩
+            if (!(raw instanceof Float)) {
+                setSpeed(v);
+            }
+        } catch (Throwable t) {
+            v = 1.0f;
+        }
+        // 兜底：倍速必须落在合法区间，坏值（0/负数/超大）一律回落 1.0
+        if (!(v >= 0.5f && v <= 3.0f)) v = 1.0f;
+        return v;
     }
 
     public static void setSpeed(float v) {
-        SP.edit().putFloat("speed_global", v).apply();
+        try {
+            SP.edit().putFloat("speed_global", v).apply();
+        } catch (Throwable ignored) {}
     }
 
     /** 快进快退步长（秒） */
@@ -68,21 +106,22 @@ public final class Settings {
     // ---------- ★ v3.1 音量增益 ----------
 
     /**
-     * 音量增益百分比：100 = 原始音量（默认），范围 50~300。
+     * 音量增益百分比：100 = 原始音量（默认），范围 50~200。
      *
-     * <p>100 以下靠 MediaPlayer 音量衰减，100 以上靠 LoudnessEnhancer 响度增强。
+     * <p>★ v3.9.7：上限 300 → 200 —— 原来的高档位实际听感是削波爆音而非"更响"。
+     * 100 以下靠 MediaPlayer 音量衰减，100 以上靠 LoudnessEnhancer 响度增强。
      * 见 {@code PlayerCore.applyGainInternal}。
      */
     public static int gain() {
         int v = SP.getInt("gain_pct", 100);
         if (v < 50) return 50;
-        if (v > 300) return 300;
+        if (v > 200) return 200;
         return v;
     }
 
     public static void setGain(int v) {
         if (v < 50) v = 50;
-        if (v > 300) v = 300;
+        if (v > 200) v = 200;
         SP.edit().putInt("gain_pct", v).apply();
     }
 

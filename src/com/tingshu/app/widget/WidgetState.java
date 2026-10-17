@@ -48,6 +48,10 @@ public final class WidgetState {
     public static volatile int durSec = 0;
     /** 封面缩略图（128px，常驻持有，保证秒级刷新不丢图） */
     public static volatile Bitmap cover = null;
+    /** ★ v3.9.0：当前倍速（小组件角标，如 2.0） */
+    public static volatile float rate = 1.0f;
+    /** ★ v3.9.0：定时关闭角标文案（"" = 未设置；"⏱ 23分" / "⏱ 停表"） */
+    public static volatile String sleepChip = "";
 
     private WidgetState() {}
 
@@ -106,6 +110,8 @@ public final class WidgetState {
         curSec = 0;
         durSec = 0;
         cover = null;
+        // ★ v3.9.0：倍速/定时角标随播放态一起清（定时是全局的，不随书清 ——
+        //   见 syncSleepChip，由 SleepTimer 监听单独维护）
     }
 
     /**

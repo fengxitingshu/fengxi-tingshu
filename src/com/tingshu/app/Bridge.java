@@ -17,6 +17,7 @@ import com.tingshu.app.source.SourceRegistry;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -131,6 +132,39 @@ public class Bridge {
     /** 回调 JS 函数，参数是裸布尔（供 onPlayState(true/false) 这类接口用） */
     private void callbackBool(String fn, boolean arg) {
         js("window." + fn + "(" + arg + ")");
+    }
+
+    // ==================== 小组件诊断日志（★ v3.8.4） ====================
+
+    /** 读取小组件诊断日志，回传 window.onWgDiagLog({log, empty}) */
+    @JavascriptInterface
+    public void widgetDiagLog() {
+        try {
+            String log = com.tingshu.app.core.DiagLog.dump();
+            JSONObject o = new JSONObject();
+            o.put("log", log == null ? "" : log);
+            o.put("empty", com.tingshu.app.core.DiagLog.size() == 0);
+            callback("onWgDiagLog", o);
+        } catch (Throwable t) {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("log", "");
+                o.put("empty", true);
+                callback("onWgDiagLog", o);
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    /** 清空小组件诊断日志 */
+    @JavascriptInterface
+    public void widgetDiagClear() {
+        com.tingshu.app.core.DiagLog.clear();
+        try {
+            JSONObject o = new JSONObject();
+            o.put("log", "");
+            o.put("empty", true);
+            callback("onWgDiagLog", o);
+        } catch (Throwable ignored) {}
     }
 
     // ==================== 账号（接口预留） ====================
@@ -825,6 +859,50 @@ public class Bridge {
         ui.post(new Runnable() {
             public void run() { player.stop(); }
         });
+    }
+
+    // ==================== ★ v3.9.0 定时关闭（含可选时段） ====================
+
+    /**
+     * 设置定时关闭。
+     *
+     * @param min       倒计时分钟数，&lt;=0 关闭
+     * @param winStart  时段开始（一天之内的分钟数 0~1439），-1 不设时段
+     * @param winEnd    时段结束（分钟数），-1 不设时段；start &gt; end 为跨午夜
+     */
+    @JavascriptInterface
+    public void setSleep(final int min, final int winStart, final int winEnd) {
+        ui.post(new Runnable() {
+            public void run() {
+                com.tingshu.app.player.SleepTimer.set(min, winStart, winEnd);
+            }
+        });
+    }
+
+    /**
+     * ★ v3.9.7：按集停止。n &gt; 0 = 播完 n 集后暂停（1 = 播完本集）；
+     * n &lt;= 0 = 取消按集停止。与分钟倒计时相互独立。
+     */
+    @JavascriptInterface
+    public void setSleepEpisodes(final int n) {
+        ui.post(new Runnable() {
+            public void run() {
+                com.tingshu.app.player.SleepTimer.setEpisodes(n);
+            }
+        });
+    }
+
+    /** 读取当前定时状态（打开播放页时同步一次） */
+    @JavascriptInterface
+    public void getSleep() {
+        ui.post(new Runnable() {
+            public void run() { pushSleep(); }
+        });
+    }
+
+    /** 把 SleepTimer 当前状态推给前端（本 Bridge 实例持有的 WebView） */
+    public void pushSleep() {
+        js("window.onSleep(" + com.tingshu.app.player.SleepTimer.stateJson().toString() + ")");
     }
 
     @JavascriptInterface
@@ -1548,6 +1626,19 @@ public class Bridge {
     public void historyGet(final String bookKey) {
         bg(new Runnable() {
             public void run() { BridgeData.historyGet(web, ui, bookKey); }
+        });
+    }
+
+    /**
+     * ★ v3.9.0：查询某本书「已收听」的集号列表（1 基）。
+     *
+     * <p>选集弹层 / 详情页章节列表据此画绿色小对勾。数据源是 progress 表
+     * （每听过一集就落一行），不另建存储。
+     */
+    @JavascriptInterface
+    public void listenedMarks(final String bookKey) {
+        bg(new Runnable() {
+            public void run() { BridgeData.listenedMarks(web, ui, bookKey); }
         });
     }
 
@@ -2725,8 +2816,21 @@ public class Bridge {
                     android.net.Uri uri = android.net.Uri.parse(uriStr);
 
                     // ★ 用流式读取，**不能用 MainActivity.readTextFromUri**（它有 2MB 上限）
-                    java.io.InputStream in = c.getContentResolver().openInputStream(uri);
-                    if (in == null) throw new IllegalStateException("无法打开该文件");
+                    java.io.InputStream in;
+                    try {
+                        in = c.getContentResolver().openInputStream(uri);
+                    } catch (SecurityException se) {
+                        // ★ v3.9.1：绝大多数"恢复失败"其实是这一步 ——
+                        //   选文件时拿到的 content:// 授权是临时的，Activity 一被
+                        //   重建就没了。这里不再丢一句干巴巴的"失败"，
+                        //   而是明确告诉用户重新选一次文件。
+                        throw new IllegalStateException(
+                                "没有该备份文件的读取权限了，请重新选择一次备份文件再恢复");
+                    }
+                    if (in == null) {
+                        throw new IllegalStateException(
+                                "打不开这个备份文件，请重新选择一次（若文件已被移动或删除，请改为从新位置选择）");
+                    }
 
                     java.io.File work = new java.io.File(c.getFilesDir(), "incoming");
                     if (!work.exists()) work.mkdirs();
@@ -2809,8 +2913,11 @@ public class Bridge {
                         o.put("error", "还没有配置服务器地址");
                     } else {
                         long t0 = System.currentTimeMillis();
+                        // ★ v3.9.11 兼容坚果云：根目录 403 时自动降级
+                        //   测备份目录 → 再不行做一次真实写入探测
                         com.tingshu.app.data.WebDavClient.Result r =
-                                com.tingshu.app.data.WebDavClient.test(url, user, pass);
+                                com.tingshu.app.data.WebDavClient.smartTest(url, user, pass,
+                                        com.tingshu.app.data.BackupCred.dir());
                         long ms = System.currentTimeMillis() - t0;
                         o = com.tingshu.app.data.WebDavClient.toJson(r);
                         o.put("latencyMs", ms);
@@ -3127,5 +3234,370 @@ public class Bridge {
             js("window.onRestoreLocalStorage(" + ls.toString() + ")");
         }
         callback(finalFn, result);
+    }
+
+    // ==================== ★ v3.9.0 自定义源：本地书源 + 网盘接口 ====================
+
+    /**
+     * 扫描本机音频（MediaStore），按文件夹分书。
+     *
+     * <p>没有存储读取权限时回传 {@code needPermission:true}，前端据此
+     * 调 {@link #requestStoragePerm()} 申请，批了再扫一次。
+     */
+    @JavascriptInterface
+    public void localScan() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    List<Book> books =
+                            com.tingshu.app.source.impl.LocalSource.scan(true);
+                    String err = com.tingshu.app.source.impl.LocalSource.lastError();
+                    o.put("ok", true);
+                    o.put("count", books.size());
+                    o.put("needPermission", "no-permission".equals(err));
+                    o.put("error", err == null ? "" : err);
+                    // ★ v3.9.1：顺带回传当前生效的扫描目录（"" = 全机）
+                    o.put("root", com.tingshu.app.source.impl.LocalSource.rootDir());
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                callback("onLocalScan", o);
+            }
+        });
+    }
+
+    /**
+     * ★ v3.9.1：Python 源自检（解释器版本 / sys.path / 关键模块导入结果）。
+     *
+     * <p>.py 源用不了时，光看一句"Python 运行时不可用"根本没法定位：
+     * 到底是解释器没起来、还是缺 lxml / Crypto 这类三方模块。这个接口把
+     * Python 侧 self_test 的结果原样回传，诊断页一看就知道卡在哪一步。
+     */
+    @JavascriptInterface
+    public void pySelfTest() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = com.tingshu.app.python.PythonHost.selfTest(
+                        com.tingshu.app.core.App.ctx());
+                callback("onPySelfTest", o == null ? new JSONObject() : o);
+            }
+        });
+    }
+
+    /**
+     * ★ v3.9.1：重新加载所有 .py 源。
+     *
+     * <p>用于「源管理 → Python 源」分组里的「重新加载」：解释器起来得比
+     * 源表登记晚时，手工催一次补登记（正常情况下这个补登记是自动的）。
+     */
+    @JavascriptInterface
+    public void pyReload() {
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    com.tingshu.app.source.SourceRegistry.reload();
+                } catch (Throwable ignored) {}
+                ui.post(new Runnable() {
+                    public void run() { listSources(); }
+                });
+            }
+        });
+    }
+
+    /**
+     * 打开系统目录选择器，给本地书源自选扫描根目录。
+     *
+     * <p>结果经 {@code window.onLocalDir({ok,path,name,cancel})} 回传：
+     * path 为空说明这台机器的 ROM 用了私有 documentId、还原不出真实路径，
+     * 前端会退化成"手动粘贴路径"（走 {@link #localSetDir}）。
+     */
+    @JavascriptInterface
+    public void localPickDir() {
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    if (activity instanceof com.tingshu.app.MainActivity) {
+                        ((com.tingshu.app.MainActivity) activity).pickLocalDir();
+                    } else {
+                        js("window.onLocalDir({ok:false,cancel:false,error:'no-activity'})");
+                    }
+                } catch (Throwable t) {
+                    js("window.onLocalDir({ok:false,cancel:false,error:'fail'})");
+                }
+            }
+        });
+    }
+
+    /**
+     * 设置本地书源的扫描根目录。
+     *
+     * @param dir 绝对路径；空串 = 扫全机（恢复默认）
+     */
+    @JavascriptInterface
+    public void localSetDir(final String dir) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    String v = com.tingshu.app.source.impl.LocalSource.setRootDir(dir);
+                    o.put("ok", true);
+                    o.put("root", v);
+                    // 换了目录就重扫一次，让用户立刻看到结果
+                    try {
+                        com.tingshu.app.source.impl.LocalSource.scan(true);
+                    } catch (Throwable ignored) {}
+                    o.put("count", com.tingshu.app.source.impl.LocalSource.cached().size());
+                    o.put("needPermission", "no-permission".equals(
+                            com.tingshu.app.source.impl.LocalSource.lastError()));
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                callback("onLocalDir", o);
+            }
+        });
+    }
+
+    /** 本地书列表（用扫描缓存，不触发重扫；自定义源页展示用） */
+    @JavascriptInterface
+    public void localBooks() {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    JSONArray arr = new JSONArray();
+                    for (Book b : com.tingshu.app.source.impl.LocalSource.cached()) {
+                        arr.put(b.toJson());
+                    }
+                    o.put("ok", true);
+                    o.put("books", arr);
+                    // ★ v3.9.1：当前生效的扫描目录（"" = 全机）
+                    o.put("root", com.tingshu.app.source.impl.LocalSource.rootDir());
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onLocalBooks", o);
+            }
+        });
+    }
+
+    /** 申请存储读取权限（本地书源扫描用；API 33+ 用 READ_MEDIA_AUDIO） */
+    @JavascriptInterface
+    public void requestStoragePerm() {
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    if (activity instanceof com.tingshu.app.MainActivity) {
+                        ((com.tingshu.app.MainActivity) activity).requestStoragePermission();
+                    } else {
+                        js("window.onLocalPerm({ok:false,error:'no-activity'})");
+                    }
+                } catch (Throwable t) {
+                    js("window.onLocalPerm({ok:false,error:'fail'})");
+                }
+            }
+        });
+    }
+
+    /** 保存网盘 Cookie（platform = pan_ali / pan_baidu / …） */
+    @JavascriptInterface
+    public void panSave(final String platform, final String cookie) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    com.tingshu.app.pan.PanResolver.saveCookie(platform, cookie);
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                    o.put("ready", com.tingshu.app.pan.PanResolver.configured(platform));
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                callback("onPanSaved", o);
+            }
+        });
+    }
+
+    /** 清除网盘 Cookie */
+    @JavascriptInterface
+    public void panClear(final String platform) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    com.tingshu.app.pan.PanResolver.saveCookie(platform, "");
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                } catch (Throwable t) {
+                    try { o.put("ok", false); } catch (Throwable ignored) {}
+                }
+                callback("onPanSaved", o);
+            }
+        });
+    }
+
+    /**
+     * 解析网盘分享链接 → 文件清单。
+     *
+     * <p>失败时回传 {@code ok:false + error}（Cookie 失效 / 接口改版 /
+     * 链接无效，错误信息由 PanResolver 按平台给出，不糊弄）。
+     */
+    @JavascriptInterface
+    public void panParse(final String platform, final String shareUrl) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                    o.put("shareUrl", shareUrl == null ? "" : shareUrl);
+                    JSONArray files = new JSONArray();
+                    for (com.tingshu.app.pan.PanResolver.PanFile f :
+                            com.tingshu.app.pan.PanResolver.parseShare(platform, shareUrl)) {
+                        JSONObject fj = new JSONObject();
+                        fj.put("id", f.id);
+                        fj.put("name", f.name);
+                        fj.put("size", f.size);
+                        fj.put("dir", f.dir);
+                        // ★ token 必须原样带回：115 的 pickcode、夸克的 share_fid_token
+                        //   都在这里，下载时 panPlay 要用（阿里是全局 share_token，
+                        //   下载时现取，不依赖这个字段）
+                        fj.put("token", f.token == null ? "" : f.token);
+                        files.put(fj);
+                    }
+                    o.put("files", files);
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("platform", platform);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                callback("onPanFiles", o);
+            }
+        });
+    }
+
+    /**
+     * 播放网盘文件（勾选的 filesJson 走既有播放管线）。
+     *
+     * <p>与 {@link #playQueue} 同构：先 setQueue（写历史/自动下一集/
+     * 通知栏都靠它），再经 Aggregator 取链播放。直链每次现取、不落库
+     * （网盘直链有时效），换源自愈对网盘源同样生效。
+     */
+    @JavascriptInterface
+    public void panPlay(final String platform, final String shareUrl, final String filesJson) {
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    List<com.tingshu.app.pan.PanResolver.PanFile> picked =
+                            new ArrayList<com.tingshu.app.pan.PanResolver.PanFile>();
+                    JSONArray arr = new JSONArray(filesJson == null ? "[]" : filesJson);
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject fj = arr.optJSONObject(i);
+                        if (fj == null) continue;
+                        com.tingshu.app.pan.PanResolver.PanFile f =
+                                new com.tingshu.app.pan.PanResolver.PanFile();
+                        f.id = fj.optString("id", "");
+                        f.name = fj.optString("name", "");
+                        f.size = fj.optLong("size", 0);
+                        f.dir = fj.optBoolean("dir", false);
+                        f.token = fj.optString("token", "");
+                        if (!f.dir) picked.add(f);
+                    }
+                    if (picked.isEmpty()) {
+                        callback("onPlayError", new JSONObject());
+                        return;
+                    }
+                    // 书：id 用分享标识（同一分享 = 同一本书，历史/续播才认得出）
+                    String shareId = shareUrl == null ? "" : shareUrl.replaceAll(".*/", "");
+                    final Book b = new Book(platform, "share_" + shareId,
+                            com.tingshu.app.pan.PanResolver.nameOf(platform) + " · 分享");
+                    b.url = com.tingshu.app.pan.PanSource.PREFIX + shareUrl;
+                    b.intro = shareUrl == null ? "" : shareUrl;
+
+                    final List<com.tingshu.app.data.Models.Chapter> chs =
+                            new ArrayList<com.tingshu.app.data.Models.Chapter>();
+                    int i = 1;
+                    for (com.tingshu.app.pan.PanResolver.PanFile f : picked) {
+                        com.tingshu.app.data.Models.Chapter ch =
+                                new com.tingshu.app.data.Models.Chapter();
+                        ch.title = f.name;
+                        ch.url = com.tingshu.app.pan.PanSource.encChapter(
+                                platform, shareUrl, f.id, f.token);
+                        ch.index = i++;
+                        chs.add(ch);
+                    }
+                    final BookDetail d = new BookDetail(b);
+                    d.chapters = chs;
+                    d.total = chs.size();
+
+                    ui.post(new Runnable() {
+                        public void run() { player.setQueue(b, chs, 0); }
+                    });
+
+                    final String[] out = new String[2];
+                    @SuppressWarnings("unchecked")
+                    final Map<String, String>[] outHdr = new Map[1];
+                    String url = Aggregator.audioWithFallback(b, 1, d, out, outHdr);
+                    if (url == null) {
+                        callback("onPlayError", new JSONObject());
+                        return;
+                    }
+                    final String usedSrc = out[0] != null ? out[0] : platform;
+                    final Map<String, String> hdr = outHdr[0];
+                    final String title = chs.get(0).title;
+                    ui.post(new Runnable() {
+                        public void run() {
+                            player.play(usedSrc, null, title, url, hdr);
+                            JSONObject o = new JSONObject();
+                            try {
+                                o.put("url", url);
+                                o.put("title", title);
+                                o.put("source", usedSrc);
+                                o.put("sourceName", BridgeSource.sourceNameOf(usedSrc));
+                                o.put("index", 1);
+                                o.put("total", chs.size());
+                                o.put("playing", true);
+                            } catch (Throwable ignored) {}
+                            callback("onPlaying", o);
+                        }
+                    });
+                } catch (Throwable t) {
+                    callback("onPlayError", new JSONObject());
+                }
+            }
+        });
+    }
+
+    /**
+     * ★ v3.9.1：退出 App（首页返回确认框点「确定」/ 连按两次返回时调用）。
+     *
+     * <p>只 finish 界面，<b>不杀进程</b>：正在后台播放的话，通知栏与播放服务
+     * 应该继续（用户关的是界面，不是"停止播放"）。要停播放请走通知栏的「停止」。
+     */
+    @JavascriptInterface
+    public void exitApp() {
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    if (activity == null) return;
+                    try {
+                        activity.finishAffinity();
+                    } catch (Throwable t) {
+                        activity.finish();
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
     }
 }

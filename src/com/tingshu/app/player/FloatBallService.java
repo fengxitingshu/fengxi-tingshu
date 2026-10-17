@@ -20,6 +20,7 @@ import android.view.WindowManager;
 import android.widget.ImageView;
 
 import com.tingshu.app.MainActivity;
+import com.tingshu.app.R;
 // 注意：本文件里「Settings」一律写全限定名，因为 android.provider.Settings 与
 // com.tingshu.app.data.Settings 同简单名，一旦 import 其中一个就会出现歧义编译错误。
 
@@ -385,7 +386,7 @@ public class FloatBallService extends Service {
                     : new Notification.Builder(this);
             b.setContentTitle("枫兮听书")
                     .setContentText("悬浮窗已开启")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    .setSmallIcon(R.drawable.ic_notif)
                     .setContentIntent(content)
                     .setOngoing(true)
                     .setOnlyAlertOnce(true)

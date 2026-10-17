@@ -60,6 +60,10 @@
 -keep class com.google.gson.** { *; }
 -keep class org.jsoup.** { *; }
 -keep class com.chaquo.python.** { *; }
+# ★ v3.9.9：eprendre 聚合源插件直接按名链接 okhttp3 内部 API 与 Fuel 兼容层
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class com.github.kittinunf.** { *; }
 
 # ---------- 通用 ----------
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,Exceptions,SourceFile,LineNumberTable

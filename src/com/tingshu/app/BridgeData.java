@@ -171,6 +171,18 @@ public final class BridgeData {
         reply(web, ui, "onHistoryGet", o);
     }
 
+    /** ★ v3.9.0：已收听集号 → onListenedMarks {key, idx:[1,2,3...]} */
+    public static void listenedMarks(WebView web, Handler ui, String bookKey) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("key", bookKey == null ? "" : bookKey);
+            JSONArray arr = new JSONArray();
+            for (Integer i : HistoryRepo.listenedIdx(bookKey)) arr.put(i.intValue());
+            o.put("idx", arr);
+        } catch (Throwable ignored) {}
+        reply(web, ui, "onListenedMarks", o);
+    }
+
     /** 首页聚合信息：继续收听 + 最近收藏 + 计数 */
     public static void homeInfo(WebView web, Handler ui) {
         JSONObject o = new JSONObject();

@@ -82,6 +82,61 @@ public final class WebDavClient {
     }
 
     /**
+     * ★ v3.9.11 兼容坚果云的连接测试（三级降级）。
+     *
+     * <p>坚果云对 {@code /dav/} <b>根目录</b>的限制很特别：浏览器 GET 根目录会回
+     * {@code OperationNotAllowed}，部分账号对根目录 PROPFIND 也会回 403，
+     * 但对<b>子目录</b>的列目录 / 建目录 / 上传完全正常（Notability、Zotero
+     * 等官方接入方式都是直接在根下建子目录用）。之前 {@link #test} 打到根目录
+     * 一把梭，会把「根目录不可列」误报成连接失败。
+     *
+     * <ol>
+     *   <li>PROPFIND 根目录 Depth:0 → 207 即成功；</li>
+     *   <li>失败且配置了备份目录 → PROPFIND 备份目录 Depth:0 → 207 即成功
+     *       （根不可列，但备份目录正常）；</li>
+     *   <li>仍失败 → 向备份目录 PUT 一个极小探测文件并随即 DELETE，
+     *       写入成功说明认证与读写权限全部正常。</li>
+     * </ol>
+     */
+    public static Result smartTest(String baseUrl, String user, String pass, String dir) {
+        Result r = test(baseUrl, user, pass);
+        if (r.ok || r.code == 207) return r;
+
+        String base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+        String d = dir == null ? "" : dir.trim();
+        while (d.startsWith("/")) d = d.substring(1);
+        while (d.endsWith("/")) d = d.substring(0, d.length() - 1);
+
+        if (d.length() > 0) {
+            // 2) 先确保备份子目录存在（坚果云要求目标文件夹已存在/现建），
+            //    再列它、再真实写入探测，三级全部贴近真实备份动作
+            ensureDir(base, user, pass, d);   // 失败不阻断，下面用探针兜底
+
+            // 2a) 备份目录本身可列即可用
+            Result r2 = request("PROPFIND", base + d + "/", user, pass,
+                    null, null, "0", false, CONNECT_TIMEOUT);
+            if (r2.ok || r2.code == 207) {
+                r2.ok = true;
+                r2.error = "";
+                return r2;
+            }
+            // 3) 写入探测：PUT + DELETE（最接近真实备份路径的动作）
+            byte[] probe = "fengxi-probe".getBytes();
+            Result r3 = request("PUT", base + d + "/.fx-probe.txt", user, pass,
+                    null, probe, null, false, READ_TIMEOUT);
+            if (r3.ok) {
+                request("DELETE", base + d + "/.fx-probe.txt", user, pass,
+                        null, null, null, false, READ_TIMEOUT);
+                r3.code = 207;   // 对上层表示「连接与读写全部正常」
+                r3.error = "";
+                return r3;
+            }
+            return r3;   // 写入失败 → 返回更具体的错误（403/507 等）
+        }
+        return r;
+    }
+
+    /**
      * 确保远端子目录存在。逐级 MKCOL（WebDAV 不允许一次建多级）。
      * <b>405 / 301 视为「已存在」，按成功处理。</b>
      */
@@ -533,11 +588,20 @@ public final class WebDavClient {
 
     private static String httpError(int code) {
         switch (code) {
+            case 400:
+                return "请求格式错误（400）：常见原因是用 http:// 访问了 HTTPS 端口。"
+                        + "飞牛 NAS 默认 HTTP 端口 5005、HTTPS 端口 5006："
+                        + "要么把地址开头的 http:// 改成 https://，"
+                        + "要么把端口改成 5005";
             case 401:
                 return "认证失败（401）：账号或密码不对。"
                         + "若用坚果云，请到网页端「安全选项」生成应用密码，不要填登录密码";
             case 403:
-                return "没有权限（403）：所选目录不可写";
+                return "没有权限（403）：服务器拒绝该操作。"
+                        + "坚果云用户建议：①在坚果云里先建一个文件夹（如 backup），"
+                        + "地址改填 https://dav.jianguoyun.com/dav/backup/ ；"
+                        + "②检查网页端本月流量是否用超；"
+                        + "③触发频率限制时等 30 分钟再试（免费版每 30 分钟 600 次）";
             case 404:
                 return "目录不存在（404）：请检查地址与备份目录";
             case 405:
@@ -565,6 +629,12 @@ public final class WebDavClient {
         }
         if (cls.contains("UnknownHostException")) {
             return "找不到服务器地址，请检查网络与地址拼写";
+        }
+        if (m != null && m.toLowerCase(java.util.Locale.ROOT)
+                .contains("unexpected end of stream")) {
+            return "连接被服务器中途断开：常见原因是 http/https 端口不匹配"
+                    + "（如用 http:// 访问了 5006 这类 HTTPS 端口），"
+                    + "或服务端拒绝了该请求。请核对地址的协议与端口";
         }
         if (cls.contains("SocketTimeoutException")) {
             return "连接超时，请检查网络或服务器状态";

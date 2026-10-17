@@ -1,35 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ★ v3.8.2 小组件布局：样式参考通知栏播放控制（Notification.MediaStyle）。
+  ★ v3.9.3 小组件布局 = v3.8.5 逐字节复刻（用户 iQOO 15 / originOS 7 实测可用）。
 
-  与通知栏的对应关系：
-   · 封面 = 通知大图标位（62dp 方形圆角，居左）
-   · 书名/副标题（作者 · 源 · 集名）= 通知 title/contentText
-   · 进度条 + 时间 = 通知进度段
-   · 四键（上一集/播放暂停/下一集/停止）与通知栏动作**顺序一致**
+  【为什么又回到 3.8.5 结构】
+    v3.9.2 已把 RemoteViews 动作集收回到 3.8.5 实测六类，用户反馈仍是白卡。
+    对比 3.8.5 与 3.9.2 的布局反编译结果，剩下的差异全在结构层：
+      · 3.9.x 封面是 FrameLayout 三层叠（占位符 TextView + 封面 ImageView
+        + 状态点 TextView），3.8.5 只是一个 ImageView；
+      · 3.9.x 进度条只有一层 20 格（每格又上色又挂点击），
+        3.8.5 是两层：wgBar0..19（4dp 显示格，只上色）+
+        wgSeek0..19（全高透明点击层，只挂 PendingIntent）；
+      · 3.9.x 有 wgLive/wgRate/wgSleep 三个额外 TextView 接收
+        setTextViewText/setInt 动作，3.8.5 没有；
+      · 3.9.x 布局引用了 @string 资源、0.5dp 分数边距，3.8.5 全部是
+        字面值。
+    无法远程判定具体哪一条压垮 originOS 桌面，所以全部对齐：
+    v3.9.3 的布局结构与 build() 调用序列 = 3.8.5 原样复刻，
+    代价是放弃角标（倍速/定时）与状态点 —— 可用性优先于花哨。
 
-  ★ RemoteViews 白名单（v3.7.15 踩过的坑）：
-   进度条上的 20 格点击区必须用 <ImageView>，不能用 <View> ——
-   View 标签不在 RemoteViews 白名单里，桌面启动器 inflate 失败
-   会导致整块小组件渲染空白。这里 20 格全部是 ImageView。
-
-  ★ 可点进度条：
-   RemoteViews 不支持 SeekBar（AbsSeekBar 不在白名单），无法真拖动。
-   替代方案：进度条上盖 20 格透明点击区，点第 i 格 = seek 到
-   (i+0.5)/20。粒度 5%，听书（单章 20~60 分钟）足够。
+  ★ ID 契约（PlayerWidgetProvider.build() 按 ID 找视图，一个都不能少）：
+    wgRoot / wgCover / wgInfoTap / wgTitle / wgSub /
+    wgTimeCur / wgTimeDur / wgBar0..19 / wgSeek0..19 /
+    wgPrev / wgToggle / wgNext / wgStop
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/wgRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@drawable/wg_bg"
+    android:background="#E6222530"
     android:paddingLeft="14dp"
+    android:paddingTop="10dp"
     android:paddingRight="14dp"
-    android:paddingTop="12dp"
-    android:paddingBottom="10dp">
+    android:paddingBottom="8dp">
 
-    <!-- 上半：封面 + 书名/副标题（点这里打开 App） -->
+    <!-- 上半：封面 + 书名/副标题（点封面或文字进 App） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -37,84 +42,69 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <FrameLayout
-            android:id="@+id/wgCoverTap"
-            android:layout_width="62dp"
-            android:layout_height="62dp">
-
-            <ImageView
-                android:id="@+id/wgCover"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:background="@drawable/wg_cover_bg"
-                android:contentDescription="@string/wg_cover"/>
-
-            <TextView
-                android:id="@+id/wgCoverPh"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@drawable/wg_cover_bg"
-                android:gravity="center"
-                android:text="♪"
-                android:textColor="#FFFFFF"
-                android:textSize="24sp"
-                android:visibility="gone"/>
-        </FrameLayout>
+        <ImageView
+            android:id="@+id/wgCover"
+            android:layout_width="58dp"
+            android:layout_height="58dp"
+            android:background="#33FFFFFF"
+            android:scaleType="centerCrop"/>
 
         <LinearLayout
             android:id="@+id/wgInfoTap"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginLeft="13dp"
+            android:layout_marginLeft="12dp"
             android:orientation="vertical">
 
             <TextView
                 android:id="@+id/wgTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:singleLine="true"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
                 android:ellipsize="marquee"
                 android:marqueeRepeatLimit="marquee_forever"
                 android:focusable="true"
                 android:focusableInTouchMode="true"
                 android:scrollHorizontally="true"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:shadowColor="#80000000"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
                 android:shadowDx="0"
                 android:shadowDy="1"
                 android:shadowRadius="2"
-                android:text="@string/app_name"/>
+                android:text="枫兮听书"/>
 
             <TextView
                 android:id="@+id/wgSub"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
-                android:singleLine="true"
+                android:textSize="12sp"
+                android:textColor="#C9FFFFFF"
                 android:ellipsize="marquee"
                 android:marqueeRepeatLimit="marquee_forever"
                 android:focusable="true"
                 android:focusableInTouchMode="true"
                 android:scrollHorizontally="true"
-                android:textColor="#C9FFFFFF"
-                android:textSize="12.5sp"
-                android:shadowColor="#80000000"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
                 android:shadowDx="0"
                 android:shadowDy="1"
                 android:shadowRadius="2"
-                android:text="@string/wg_idle"/>
+                android:text="点一下，继续听"/>
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 中部：当前时间 + 可点进度条 + 总时长 -->
+    <!-- 中部：当前时间 + 20 格进度 + 总时长。
+         显示与点击分两层（3.8.5 同款）：
+         wgBar0..19 = 4dp 显示格，颜色由 build() setInt 逐格上色；
+         wgSeek0..19 = 全高透明点击层，build() 只挂 PendingIntent。 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="5dp"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
@@ -123,34 +113,51 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="34dp"
-            android:singleLine="true"
-            android:gravity="left"
+            android:textSize="11sp"
             android:textColor="#D9FFFFFF"
-            android:textSize="10.5sp"
-            android:shadowColor="#80000000"
+            android:gravity="left"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
             android:shadowDx="0"
             android:shadowDy="1"
             android:shadowRadius="2"/>
 
         <FrameLayout
             android:layout_width="0dp"
-            android:layout_height="22dp"
+            android:layout_height="24dp"
             android:layout_weight="1"
             android:layout_marginLeft="7dp"
             android:layout_marginRight="7dp">
 
-            <ProgressBar
-                android:id="@+id/wgBar"
-                style="?android:attr/progressBarStyleHorizontal"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="4dp"
                 android:layout_gravity="center_vertical"
-                android:max="1000"
-                android:progress="0"
-                android:progressDrawable="@drawable/wg_progress"/>
+                android:orientation="horizontal"
+                android:background="#33FFFFFF">
 
-            <!-- 20 格透明点击层：点第 i 格 seek 到 (i+0.5)/20。
-                 ★ 必须是 ImageView（RemoteViews 白名单），不能用 View。 -->
+                <ImageView android:id="@+id/wgBar0"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar1"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar2"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar3"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar4"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar5"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar6"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar7"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar8"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar9"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar10" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar11" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar12" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar13" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar14" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar15" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar16" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar17" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar18" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar19" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+            </LinearLayout>
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
@@ -184,21 +191,21 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="34dp"
-            android:singleLine="true"
-            android:gravity="right"
+            android:textSize="11sp"
             android:textColor="#D9FFFFFF"
-            android:textSize="10.5sp"
-            android:shadowColor="#80000000"
+            android:gravity="right"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
             android:shadowDx="0"
             android:shadowDy="1"
             android:shadowRadius="2"/>
     </LinearLayout>
 
-    <!-- 下半：四键控制（顺序与通知栏一致：上一集/播放暂停/下一集/停止，无背板） -->
+    <!-- 下半：四键控制（系统自带位图 + 白色 tint，3.8.5 同款） -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="38dp"
-        android:layout_marginTop="4dp"
+        android:layout_height="36dp"
+        android:layout_marginTop="3dp"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
@@ -210,8 +217,7 @@
             android:padding="8dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_media_previous"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/wg_prev"/>
+            android:tint="#FFFFFF"/>
 
         <ImageView
             android:id="@+id/wgToggle"
@@ -222,9 +228,8 @@
             android:layout_marginRight="10dp"
             android:padding="7dp"
             android:scaleType="fitCenter"
-            android:src="@android:drawable/ic_media_play"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/wg_toggle"/>
+            android:src="@android:drawable/ic_media_pause"
+            android:tint="#FFFFFF"/>
 
         <ImageView
             android:id="@+id/wgNext"
@@ -234,8 +239,7 @@
             android:padding="8dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_media_next"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/wg_next"/>
+            android:tint="#FFFFFF"/>
 
         <ImageView
             android:id="@+id/wgStop"
@@ -245,7 +249,6 @@
             android:padding="8dp"
             android:scaleType="fitCenter"
             android:src="@android:drawable/ic_menu_close_clear_cancel"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/wg_stop"/>
+            android:tint="#FFFFFF"/>
     </LinearLayout>
 </LinearLayout>

@@ -56,12 +56,35 @@ public final class SourceRegistry {
         loadPlugins();
         loadJsPlugins();
         loadPythonSources();
+        // ★ v3.9.0：本地书源 + 网盘接口（自定义源，不依赖任何用户导入）
+        loadLocalAndPan();
         // ★ v3.7.7：源集合有变动（导入/删除/启停都走 reload），
         //   分类缓存必须一起失效 —— 否则新导入的源在首页"看不见分类"，
         //   或已删除的源还留在缓存里。
         try {
             com.tingshu.app.Bridge.invalidateCatCache();
         } catch (Throwable ignored) {}
+    }
+
+    /**
+     * ★ v3.9.0：注册本地书源与 6 个网盘接口源。
+     *
+     * <p>这两类源没有用户导入这一步，永远在场：
+     * <ul>
+     *   <li>本地书源默认启用（扫不到文件也只是空列表，不碍事）；</li>
+     *   <li>网盘源在场但「未配置 Cookie」时对前端显示为停用态，
+     *       且 canSearch=false 不参与搜索，配了 Cookie 即在自定义源页可用。</li>
+     * </ul>
+     */
+    private static void loadLocalAndPan() {
+        try {
+            register(new com.tingshu.app.source.impl.LocalSource());
+        } catch (Throwable ignored) {}
+        for (String pid : com.tingshu.app.pan.PanResolver.ALL) {
+            try {
+                register(new com.tingshu.app.pan.PanSource(pid));
+            } catch (Throwable ignored) {}
+        }
     }
 
     /**

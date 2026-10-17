@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.IBinder;
 
 import com.tingshu.app.MainActivity;
+import com.tingshu.app.R;
 import com.tingshu.app.data.Models.Book;
 import com.tingshu.app.data.Models.Chapter;
 
@@ -166,7 +167,7 @@ public class PlayerService extends Service {
                 | PlaybackState.ACTION_PLAY_FROM_MEDIA_ID
                 | PlaybackState.ACTION_PLAY_FROM_SEARCH;
         if (Build.VERSION.SDK_INT >= 31) {
-            a |= (1L << 16);   // PlaybackState.ACTION_SET_RATE = 1 << 16
+            a |= (1L << 30);   // PlaybackState.ACTION_SET_RATE = 1 << 30（★ v3.8.4 修正：原来误写 1<<16）
         }
         return a;
     }
@@ -221,7 +222,12 @@ public class PlayerService extends Service {
             Notification.Builder b = newBuilder()
                     .setContentTitle("枫兮听书")
                     .setContentText("准备就绪")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    // ★ v3.9.4 修复闪退：小图标必须是本 App 自己的资源。
+                    //   用 android.R.drawable.*（框架资源，包 ID 0x01）时，
+                    //   startForeground() 会因"小图标不属于本包"抛
+                    //   RemoteServiceException/IllegalArgumentException，
+                    //   表现为"一打开就闪退"。ic_notif = 品牌"翻开的书"单色剪影。
+                    .setSmallIcon(R.drawable.ic_notif)
                     .setContentIntent(content)
                     .setOngoing(false)
                     .setOnlyAlertOnce(true)
@@ -273,7 +279,8 @@ public class PlayerService extends Service {
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setShowWhen(false)
-                .setSmallIcon(android.R.drawable.ic_media_play);
+                // ★ v3.9.4：同 postIdle —— 小图标必须用本包资源，否则闪退
+                .setSmallIcon(R.drawable.ic_notif);
 
         applyActions(b, lastPlaying);
         if (coverBmp != null) {
@@ -309,15 +316,19 @@ public class PlayerService extends Service {
      * 抽出来供 update 与 updateProgress 共用，避免两处顺序写歪。
      */
     private void applyActions(Notification.Builder b, boolean playing) {
+        // ★ v3.9.1：控制按钮改用自绘矢量图标。
+        //   原来是 android.R.drawable.ic_media_* —— 系统框架位图只有 mdpi 一张，
+        //   在 xxhdpi/xxxhdpi 手机上被拉伸，边缘发糊带锯齿。矢量按屏幕密度
+        //   实时光栅化，任何密度下都是锐利的实心轮廓。
         b.addAction(new Notification.Action(
-                android.R.drawable.ic_media_previous, "上一集", pi(ACT_PREV, 1)));
+                R.drawable.ic_notif_prev, "上一集", pi(ACT_PREV, 1)));
         b.addAction(new Notification.Action(
-                playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                playing ? R.drawable.ic_notif_pause : R.drawable.ic_notif_play,
                 playing ? "暂停" : "播放", pi(ACT_TOGGLE, 3)));
         b.addAction(new Notification.Action(
-                android.R.drawable.ic_media_next, "下一集", pi(ACT_NEXT, 2)));
+                R.drawable.ic_notif_next, "下一集", pi(ACT_NEXT, 2)));
         b.addAction(new Notification.Action(
-                android.R.drawable.ic_menu_close_clear_cancel, "停止", pi(ACT_STOP, 4)));
+                R.drawable.ic_notif_stop, "停止", pi(ACT_STOP, 4)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             Notification.MediaStyle style = new Notification.MediaStyle()
                     .setMediaSession(session.getSessionToken())
@@ -375,7 +386,8 @@ public class PlayerService extends Service {
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setShowWhen(false)
-                .setSmallIcon(android.R.drawable.ic_media_play);
+                // ★ v3.9.4：同 postIdle —— 小图标必须用本包资源，否则闪退
+                .setSmallIcon(R.drawable.ic_notif);
 
         // ★ v2.2：动作**按最终展示顺序**依次添加 —— 顺序就是下面的字面顺序，
         //   紧凑视图用下标 0/1/2 引用，两者必须严格对应，否则会出现"点了上一集却变下一集"。

@@ -184,7 +184,7 @@
       <div class="eicon">&#8505;</div>
       <div class="einfo">
         <div class="et">关于</div>
-        <div class="es" id="aboutEntrySub">版本 3.8.2 · 更新与交流</div>
+        <div class="es" id="aboutEntrySub">版本 3.9.10 · 更新与交流</div>
       </div>
       <div class="setval">&#8250;</div>
     </div>
@@ -330,13 +330,16 @@
   </div>
   <div class="content">
     <div class="ab-hero">
-      <div class="ab-logo">&#127925;</div>
+      <!-- ★ v3.9.1：原来这里是一个 🎵 emoji，跟桌面上看到的 App 图标毫无关系。
+           现在直接用真实的应用图标位图（assets/www/appicon.png，
+           与 mipmap/ic_launcher 同一张图），关于页与桌面图标一致。 -->
+      <img class="ab-logo" src="appicon.png" alt="枫兮听书">
       <div class="ab-name">枫兮听书</div>
-      <div class="ab-ver">版本 <span id="aboutVer">3.8.2</span></div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.9.10</span></div>
     </div>
 
     <div class="chapter-hd"><span>信息</span></div>
-    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.8.2</div></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.9.10</div></div>
     <div class="setrow" onclick="App.ui.openChangelog()">
       <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
       <div class="setval">&#8250;</div>
@@ -385,6 +388,10 @@
     </div>
     <div class="setrow" onclick="App.ui.openCrashLog()">
       <div class="setlabel">崩溃日志<span class="setdesc">闪退记录，反馈时请附上</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openWgDiag()">
+      <div class="setlabel">小组件诊断<span class="setdesc">桌面小组件异常时看这里</span></div>
       <div class="setval">&#8250;</div>
     </div>
 
@@ -531,6 +538,26 @@
   </div>
 </div>
 
+<!-- ==================== 小组件诊断（二级页） ★ v3.8.4 ==================== -->
+<div id="pageWgDiag" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">小组件诊断</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <pre class="diag-log" id="wgdiagBody">正在读取…</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.wgDiagRefresh()">重新读取</button>
+      <button class="mini ghost" onclick="App.ui.wgDiagCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.wgDiagClear()">清空日志</button>
+    </div>
+    <div class="tip">
+      记录桌面小组件的添加 / 刷新 / 移除事件。若小组件显示异常，添加一次小组件后把这里的日志截图反馈。
+    </div>
+  </div>
+</div>
+
 <!-- ==================== 更新公告（二级页） ★ v3.7.3 ==================== -->
 <div id="pageChangelog" class="page hide">
   <div class="nav">
@@ -625,6 +652,26 @@
     <div class="btn ghost srcnav-acts" id="srcGroupNavActs"></div>
   </div>
   <div id="srcGroupContent" class="content"></div>
+</div>
+
+<!-- ==================== 自定义源页（二级）★ v3.9.0 ==================== -->
+<div id="pageCustom" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="customTitle" class="nav-left">自定义源</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="customPageContent" class="content"></div>
+</div>
+
+<!-- ==================== 自定义源页（二级）★ v3.9.0 ==================== -->
+<div id="pageCustom" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="customTitle" class="nav-left">自定义源</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="customPageContent" class="content"></div>
 </div>
 
 <!-- ==================== 详情页 ==================== -->

@@ -11,11 +11,13 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
+import com.tingshu.app.BridgeSource;
 import com.tingshu.app.core.Net;
 import com.tingshu.app.data.HistoryRepo;
 import com.tingshu.app.data.Models.Book;
 import com.tingshu.app.data.Models.Chapter;
 import com.tingshu.app.data.Settings;
+import com.tingshu.app.source.Aggregator;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,6 +52,19 @@ public class PlayerCore {
         void onError(String msg);
     }
 
+    /**
+     * 播放失败自愈的状态回调（自动重试 / 自动换源时）。
+     * 不设置则自愈静默进行（不打扰用户）。
+     */
+    public interface HealListener {
+        /**
+         * @param kind       0 = 网络波动自动重试；1 = 已自动切换到新音源
+         * @param source     换源后的新源 id（kind=1 时有值）
+         * @param sourceName 新源名称（kind=1 时有值）
+         */
+        void onHeal(int kind, String source, String sourceName);
+    }
+
     private final Context ctx;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Callback cb;
@@ -80,6 +95,8 @@ public class PlayerCore {
     // ---------- ★ v3.1 音频焦点（其他媒体声音打断） ----------
     private AudioManager audioManager;
     private AudioFocusRequest focusRequest;      // API 26+
+    /** ★ v3.9.7：focusRequest 建立时的策略值，策略变化则重建 */
+    private int focusReqMode = -1;
     private Object legacyFocusListener;          // API 21-25 用的 OnAudioFocusChangeListener
     /** 当前是否处于「被别的应用短暂压制」的降音量状态 */
     private boolean ducking;
@@ -95,6 +112,27 @@ public class PlayerCore {
     private String audioUrl;
     private String usedSource;           // 实际取链成功的源
     private String chapterUrl;
+
+    // ---------- ★ P0-1 自动换源 / P0-2 网络重试（播放失败自愈） ----------
+    /** 网络类错误已重试次数（同一集内，成功起播后清零） */
+    private int netRetries = 0;
+    /** 本集已尝试失败、需跳过的源 id（换源用），跨重试累积 */
+    private List<String> triedSources = new ArrayList<String>();
+    /** 上次取链用的请求头，重试同一直链时原样复用（带 Referer 的源必须） */
+    private Map<String, String> lastHeaders;
+    /** 最近一次上报的播放秒数，出错时据此在原位续播 */
+    private int lastCurSec = 0;
+    /** 自愈代际：stop / 切集 / 起播会自增，过期的延迟重试据此作废 */
+    private int healGen = 0;
+    /** ★ v3.9.7：上一轮自愈失败时的位置（秒）；同一位置二次失败则从头自愈 */
+    private int lastFailPos = -1;
+    /** P0-2 网络重试上限与间隔基数（实际间隔 1s / 2s / 4s，最多 3 次） */
+    private static final int MAX_NET_RETRIES = 3;
+    private static final long NET_RETRY_BASE_MS = 1000L;
+    /** 自愈状态回调（可空） */
+    private HealListener healCb;
+
+    public void setHealListener(HealListener l) { this.healCb = l; }
 
     // ---------- 进度上报 ----------
     private boolean progressRunning = false;
@@ -115,6 +153,11 @@ public class PlayerCore {
         this.ctx = c.getApplicationContext();
         // ★ v3.1：增益与音频焦点设置跟着 App 全局走，构造时就恢复
         this.gainPct = Settings.gain();
+        // ★ v3.9.7：注册「第三方媒体播放」兜底监听（API 26+）
+        try {
+            audioManager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        } catch (Throwable ignored) {}
+        registerPlaybackWatcher();
     }
 
     public void setCallback(Callback c) {
@@ -180,6 +223,8 @@ public class PlayerCore {
      * 设置当前播放上下文。切书/切集前调用。
      */
     public void setQueue(Book b, List<Chapter> chs, int idx) {
+        // ★ P0-1/P0-2：切集重开自愈代际，作废在途的延迟重试
+        healGen++;
         this.book = b;
         this.chapters = chs == null ? new ArrayList<Chapter>() : chs;
         this.index = Math.max(0, idx);
@@ -207,9 +252,30 @@ public class PlayerCore {
      */
     public void playUrl(String source, String chapterUrl, String audio, long startMs,
                         Map<String, String> extraHeaders) {
+        // ★ P0-1/P0-2：这是「全新的一集」，清掉上一集的自愈上下文、重开代际
+        playUrlInternal(source, chapterUrl, audio, startMs, extraHeaders, true);
+    }
+
+    /**
+     * 内部起播。
+     *
+     * <p>resetState=true 表示这是一次「全新的一集」（用户点播 / 自动连播 /
+     * 手动切集），清掉自愈计数并重开自愈代际；false 表示这是自愈过程中的
+     * 重试 / 换源，必须<b>保留</b> triedSources 等上下文，否则会反复撞同一条死链。
+     */
+    private void playUrlInternal(String source, String chapterUrl, String audio, long startMs,
+                                 Map<String, String> extraHeaders, boolean resetState) {
+        if (resetState) {
+            netRetries = 0;
+            triedSources = new ArrayList<String>();
+            lastCurSec = 0;
+            lastFailPos = -1;   // ★ v3.9.7：新的一集，重置「同位置二次失败」标记
+            healGen++;
+        }
         this.usedSource = source;
         this.chapterUrl = chapterUrl;
         this.audioUrl = audio;
+        this.lastHeaders = extraHeaders;
 
         try {
             release();
@@ -243,6 +309,10 @@ public class PlayerCore {
 
             player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 public void onPrepared(MediaPlayer mp) {
+                    // ★ P0-2：成功起播即清零网络重试计数，
+                    //   后续若再出错会重新获得完整的重试额度。
+                    netRetries = 0;
+                    if (start > 0) lastCurSec = (int) (start / 1000);
                     applySpeedInternal(mp, speed);
                     // ★ v3.1：这里必须重新套用增益。mp 是刚 new 出来的，
                     //   audioSessionId 跟上一集不同，旧的 LoudnessEnhancer 已经无效了。
@@ -255,6 +325,16 @@ public class PlayerCore {
                     //   playUrl 覆盖了首次起播 / 自动下一集 / 手动切集 / 自动换源
                     //   四条路径，所以改这一处即可，不用分别改。
                     long seekTo = start;
+                    // ★ v3.9.7 修复「已播过的章节再点无法播放」：
+                    //   听完/跳过片尾的一集会把续播位置记到 ≈ 时长，直链实际时长
+                    //   往往和记录对不上（换源重解析、码率差异）。拿着超界位置
+                    //   seek，部分 ROM 会直接进 error，自愈又带着同一坏位置反复
+                    //   失败 → 所有源"全部失败"。这里兜底：位置贴着或超出时长
+                    //   就视为「听完了」，从头播。
+                    if (seekTo > 0 && mp.getDuration() > 0
+                            && seekTo >= mp.getDuration() - 800) {
+                        seekTo = 0;
+                    }
                     if (seekTo <= 0) {
                         int skip = com.tingshu.app.data.Settings.skipIntroSec();
                         if (skip > 0) seekTo = skip * 1000L;
@@ -287,21 +367,158 @@ public class PlayerCore {
             });
             player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
                 public boolean onError(MediaPlayer mp, int what, int extra) {
-                    stopProgress();
-                    // ★ v3.8.2：真正失败时先把进度落盘再上报 ——
-                    //   以前只靠 5 秒定时写库，续听位置最多丢 5 秒；
-                    //   而失败后用户第一反应往往就是重听这一集。
-                    saveProgressNow();
-                    if (cb != null) {
-                        cb.onStateChanged(false);
-                        cb.onError("播放失败(" + what + "," + extra + ")");
-                    }
+                    // ★ P0-1 / P0-2：交给自愈状态机，救不活才会上报 cb.onError
+                    //   （那时前端才会按既有逻辑自动停止）。
+                    handleError(what, extra);
                     return true;
                 }
             });
             player.prepareAsync();
         } catch (Throwable t) {
-            if (cb != null) cb.onError("播放异常: " + t.getMessage());
+            // ★ 取链/建连阶段的异常（如 setDataSource 抛错）：交给自愈状态机，
+            //   自救失败才会最终上报 cb.onError。
+            handleError(-1, -1);
+        }
+    }
+
+    // ==================== ★ P0-1 自动换源 / P0-2 网络重试 ====================
+
+    /**
+     * 播放出错后的自愈分发。
+     *
+     * <p>原则：先尽量原地救活，救不活才 {@code cb.onError} 上报（那时前端才会
+     * 按既有逻辑自动停止）。这样大多数「源站抖一下 / 直链过期」用户无感知，
+     * 只有真没救了才停。
+     *
+     * <p>两类策略：
+     * <ul>
+     *   <li><b>网络类错误</b>（IO / 超时 / 服务端挂）：同一直链、原位续播，
+     *       渐增间隔（1s / 2s / 4s）重试最多 {@link #MAX_NET_RETRIES} 次；</li>
+     *   <li><b>其它错误</b>（格式不支持 / 不明失败，多半是直链 403 或失效）：
+     *       按 Book.variants/sources 顺序换到下一个可用源，保留进度续播；</li>
+     * </ul>
+     * 网络重试耗尽后也会落到换源分支，双保险。
+     */
+    private void handleError(int what, int extra) {
+        // 优先用「实时位置」，拿不到再退到上次上报的位置
+        int live = 0;
+        try { live = curSec(); } catch (Throwable ignored) {}
+        int posSec = live > 0 ? live : lastCurSec;
+        // ★ v3.9.7 修复「已播章节反复播不了」：同一个位置已经失败过一轮
+        //   （换源/重试都没救活），说明大概率是这个续播位置本身有问题
+        //   （超界 / 直链时长不符），下一轮自愈改从头播。
+        if (posSec > 0 && posSec == lastFailPos) posSec = 0;
+        lastFailPos = posSec;
+        stopProgress();
+        // ★ 按出错时的位置落盘，保证自愈后能从原位续播（误差 ≤1 秒）。
+        //   不能用 saveProgressNow()：出错态下 getCurrentPosition 可能抛异常返回 0，
+        //   会把续播位置覆盖成 0，导致「听完一截又从头播」。
+        saveProgressAt(posSec);
+
+        if (isNetworkError(what, extra)) {
+            netRetries++;
+            if (netRetries <= MAX_NET_RETRIES) {
+                final long delay = NET_RETRY_BASE_MS * (1L << (netRetries - 1)); // 1/2/4 秒
+                final int myGen = healGen;
+                final int retryPos = posSec;   // ★ v3.9.7：posSec 可能已被改为 0（从头自愈）
+                if (healCb != null) healCb.onHeal(0, usedSource, null);
+                ui.postDelayed(new Runnable() {
+                    public void run() {
+                        // ★ 期间用户已切集/停止 → 作废这次重试，避免「幽灵续播」
+                        if (myGen != healGen) return;
+                        retrySameSource(retryPos);
+                    }
+                }, delay);
+                return;
+            }
+            // 网络重试耗尽 → 也尝试换源
+        }
+        switchSource(posSec);
+    }
+
+    /** 判断是否为「网络类」可重试错误 */
+    private static boolean isNetworkError(int what, int extra) {
+        if (what == MediaPlayer.MEDIA_ERROR_IO) return true;          // -1004
+        if (what == MediaPlayer.MEDIA_ERROR_TIMED_OUT) return true;   // -110
+        if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED) return true; // 100
+        if (extra == MediaPlayer.MEDIA_ERROR_IO) return true;
+        if (extra == MediaPlayer.MEDIA_ERROR_TIMED_OUT) return true;
+        return false;
+    }
+
+    /** 同一直链、原位重试（瞬时网络抖动用，直链多半仍有效） */
+    private void retrySameSource(int posSec) {
+        if (book == null || audioUrl == null || audioUrl.length() == 0) {
+            giveUp("播放失败");
+            return;
+        }
+        // resetState=false：同一集的自愈，保留 triedSources 等上下文
+        playUrlInternal(usedSource, chapterUrl, audioUrl,
+                (long) posSec * 1000, lastHeaders, false);
+    }
+
+    /**
+     * 自动换源：把当前失败源加入跳过列表，从下一个可用源取链后原位续播。
+     * 没有更多可用源时才 {@link #giveUp}。
+     *
+     * <p>取链是网络操作，必须放到后台线程；取回后再 post 回主线程起播。
+     */
+    private void switchSource(final int posSec) {
+        if (book == null) { giveUp("播放失败"); return; }
+        if (triedSources == null) triedSources = new ArrayList<String>();
+        if (usedSource != null && !triedSources.contains(usedSource)) {
+            triedSources.add(usedSource);
+        }
+        // 先剔掉当前死链缓存，避免换源后仍命中同一条缓存死链
+        if (usedSource != null) {
+            Aggregator.invalidateAudio(book, humanIndex());
+        }
+        final int chapterIdx = humanIndex();
+        final Book bk = book;
+        final List<String> skip = triedSources;
+        final int myGen = healGen;
+        Aggregator.singlePool().execute(new Runnable() {
+            public void run() {
+                String[] outUsed = new String[2];
+                @SuppressWarnings("unchecked")
+                Map<String, String>[] outHeaders = new Map[1];
+                String url = Aggregator.audioWithFallbackNetwork(
+                        bk, chapterIdx, null, outUsed, outHeaders, skip);
+                final String fUrl = url;
+                final String fSrc = outUsed[0];
+                final Map<String, String> fHdr = outHeaders[0];
+                ui.post(new Runnable() {
+                    public void run() {
+                        // 期间用户已切集/停止 → 作废这次换源
+                        if (myGen != healGen) return;
+                        if (fUrl == null || fUrl.length() == 0) {
+                            giveUp("播放失败：所有可用音源均不可用");
+                            return;
+                        }
+                        final String newName =
+                                BridgeSource.sourceNameOf(fSrc);
+                        if (healCb != null) healCb.onHeal(1, fSrc, newName);
+                        // 直接带保存的进度起播新源（不读 player 当前位置，避免误差）
+                        playUrlInternal(fSrc, outUsed[1], fUrl,
+                                (long) posSec * 1000, fHdr, false);
+                    }
+                });
+            }
+        });
+    }
+
+    /** 本集的「人读集号」：与 MainActivity.gotoChapter 的 humanIdx 保持一致 */
+    private int humanIndex() {
+        Chapter c = currentChapter();
+        if (c != null && c.index > 0) return c.index;
+        return index + 1;
+    }
+
+    /** 真的救不活了：通知 UI 失败（前端据此自动停止） */
+    private void giveUp(String msg) {
+        if (cb != null) {
+            cb.onStateChanged(false);
+            cb.onError(msg);
         }
     }
 
@@ -317,7 +534,8 @@ public class PlayerCore {
         try {
             pos = player == null ? 0 : player.getCurrentPosition();
         } catch (Throwable ignored) {}
-        playUrl(source, chapterUrl, audio, pos, extraHeaders);
+        // resetState=false：换源属于同一集的自愈上下文，保留 triedSources
+        playUrlInternal(source, chapterUrl, audio, pos, extraHeaders, false);
     }
 
     public void pause() {
@@ -395,6 +613,11 @@ public class PlayerCore {
         try {
             if (player != null) applySpeedInternal(player, s);
         } catch (Throwable ignored) {}
+        // ★ v3.9.0：倍速角标同步到桌面小组件（换倍速是低频操作，直接重绘）
+        try {
+            com.tingshu.app.widget.WidgetState.rate = s;
+            com.tingshu.app.widget.WidgetState.requestUpdate(ctx);
+        } catch (Throwable ignored) {}
     }
 
     // ==================== ★ v3.1 音量增益 ====================
@@ -425,7 +648,9 @@ public class PlayerCore {
 
     private static int clampGain(int pct) {
         if (pct < 50) return 50;
-        if (pct > 300) return 300;
+        // ★ v3.9.7：上限 300 → 200。实测 300%（+12dB）在大多数设备上
+        //   已经严重削波爆音，用户反馈"增益太高"。200%（+3dB）是安全上限。
+        if (pct > 200) return 200;
         return pct;
     }
 
@@ -451,9 +676,10 @@ public class PlayerCore {
 
             // 增幅：音量拉满 + 响度增强
             mp.setVolume(1f, 1f);
-            // 100% → 0mB，200% → +6dB(600mB)，300% → +12dB(1200mB)
-            // LoudnessEnhancer 上限是 2000mB，留足余量
-            int mb = (gainPct - 100) * 6;
+            // ★ v3.9.7：系数 6 → 3。原来 200% 就是 +6dB，拉到上限基本必爆音。
+            //   现在 150% ≈ +1.5dB、200% ≈ +3dB —— 温和放大，弱音听得清又不劈。
+            //   LoudnessEnhancer 上限 2000mB，200% 时仅 300mB，余量充足。
+            int mb = (gainPct - 100) * 3;
             ensureEnhancer(mp, mb);
         } catch (Throwable ignored) {
             // 个别 ROM 不支持 audiofx，静默降级为「增益无效但播放正常」
@@ -506,6 +732,8 @@ public class PlayerCore {
     }
 
     public void stop() {
+        // ★ P0-1/P0-2：停止重开自愈代际，作废在途的延迟重试
+        healGen++;
         stopProgress();
         saveProgressNow();
         try {
@@ -559,7 +787,12 @@ public class PlayerCore {
             if (audioManager == null) return;
 
             if (Build.VERSION.SDK_INT >= 26) {
-                if (focusRequest == null) {
+                // ★ v3.9.7：request 必须跟「用户当前策略」绑定，策略变了要重建。
+                //   以前固定 setWillPauseWhenDucked(false)（声称"被压音量时我不暂停"），
+                //   选了「暂停播放」策略的用户在部分场景（通知声、语音条）系统就
+                //   只发 CAN_DUCK 且认为我们自己会压音量 —— 表现为"设了暂停却不停"。
+                if (focusRequest == null || focusReqMode != mode) {
+                    releaseFocusRequest();
                     // AUDIOFOCUS_GAIN：我们要长期独占（听书是长时间播放场景）
                     // CONTENT_TYPE_SPEECH：让系统知道是人声，降音/Duck 的时机更准
                     focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -567,10 +800,12 @@ public class PlayerCore {
                                     .setUsage(AudioAttributes.USAGE_MEDIA)
                                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                     .build())
-                            // 声明「被 Duck 时我会自己降音量」，系统才会优先发 CAN_DUCK
-                            .setWillPauseWhenDucked(false)
+                            // mode=2（暂停策略）：声明"被 Duck 时我会暂停"，
+                            // 系统才会优先发 LOSS_TRANSIENT；mode=1（降音量）保持 false
+                            .setWillPauseWhenDucked(mode == 2)
                             .setOnAudioFocusChangeListener(focusChangeListener())
                             .build();
+                    focusReqMode = mode;
                 }
                 hasFocus = audioManager.requestAudioFocus(focusRequest)
                         == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
@@ -598,6 +833,111 @@ public class PlayerCore {
         hasFocus = false;
         pausedByFocus = false;
         ducking = false;
+    }
+
+    /** ★ v3.9.7：策略变化时释放旧 AudioFocusRequest（下次 acquireFocus 按新策略重建） */
+    private void releaseFocusRequest() {
+        if (focusRequest == null) return;
+        try {
+            if (audioManager != null && hasFocus) {
+                audioManager.abandonAudioFocusRequest(focusRequest);
+                hasFocus = false;
+            }
+        } catch (Throwable ignored) {}
+        focusRequest = null;
+    }
+
+    // ---------- ★ v3.9.7 兜底：不守音频焦点的第三方 App（媒体播放监听） ----------
+
+    /**
+     * 为什么需要它：音频焦点是"自觉"机制 —— 对方开始播放前要主动申请焦点，
+     * 系统才会通知我们让位。相当一部分国产 App（视频/短视频/某些音乐 App）
+     * 根本不申请焦点，两路声音就叠着放，用户表现为「设了暂停却拦不住」。
+     *
+     * <p>兜底方案（API 26+）：注册 {@link AudioManager.AudioPlaybackCallback}，
+     * 感知「除自己之外还有谁在活跃地放 USAGE_MEDIA」，状态翻转时按用户策略
+     * 暂停 / 降音；对方全停了再把声音还回来。无法识别对方 uid（隐藏 API），
+     * 用「活跃 MEDIA 流条数 &gt;= 2 且自己在播」判定 —— 本 App 同时最多一条。
+     */
+    private AudioManager.AudioPlaybackCallback playbackWatcher;
+    /** 上次判定到的「其他媒体在放」状态（防抖，只对翻转动作） */
+    private boolean otherMediaPlaying = false;
+
+    private void registerPlaybackWatcher() {
+        if (Build.VERSION.SDK_INT < 26) return;
+        if (playbackWatcher != null || audioManager == null) return;
+        try {
+            playbackWatcher = new AudioManager.AudioPlaybackCallback() {
+                @Override
+                public void onPlaybackConfigChanged(
+                        java.util.List<android.media.AudioPlaybackConfiguration> configs) {
+                    handleOtherMedia(configs);
+                }
+            };
+            audioManager.registerAudioPlaybackCallback(playbackWatcher, null);
+        } catch (Throwable t) {
+            playbackWatcher = null;   // 个别 ROM 不支持则静默退化为仅焦点模式
+        }
+    }
+
+    /** ★ v3.9.7：isActive() 在部分编译 API 里不可见，反射读取 */
+    private static boolean cfgActive(android.media.AudioPlaybackConfiguration c) {
+        try {
+            Object r = c.getClass().getMethod("isActive").invoke(c);
+            return r instanceof Boolean && ((Boolean) r).booleanValue();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * ★ v3.9.8 重写：状态机防震荡。
+     *
+     * <p>v3.9.7 的实现有致命缺陷：暂停自己后，自己的媒体流退出活跃列表，
+     * 下一轮回调里 {@code isPlaying()=false} → 判定"别人停了" → 自动恢复
+     * → 恢复后又看到别人 → 再暂停……死循环，表现为**播放按钮疯狂抽搐**。
+     *
+     * <p>新规则：
+     * <ul>
+     *   <li>自己在播：活跃 MEDIA 流 ≥2 = 有别人 → 按策略暂停/降音（幂等）；</li>
+     *   <li>自己已暂停：**绝不因为"别人还在放"而恢复**，只有活跃 MEDIA 流
+     *       清零（对方真停了）才恢复，且仅限此前是因它而暂停的。</li>
+     * </ul>
+     */
+    private void handleOtherMedia(java.util.List<android.media.AudioPlaybackConfiguration> configs) {
+        final int mode = Settings.audioFocusMode();
+        if (mode == 0) { otherMediaPlaying = false; return; }
+
+        int activeMedia = 0;
+        if (configs != null) {
+            for (int i = 0; i < configs.size(); i++) {
+                try {
+                    android.media.AudioPlaybackConfiguration c = configs.get(i);
+                    if (c == null || !cfgActive(c)) continue;
+                    AudioAttributes at = c.getAudioAttributes();
+                    if (at == null || at.getUsage() != AudioAttributes.USAGE_MEDIA) continue;
+                    activeMedia++;
+                } catch (Throwable ignored) {}
+            }
+        }
+        final boolean selfPlaying = isPlaying();
+
+        if (selfPlaying) {
+            boolean other = activeMedia >= 2;   // 自己(1) + 别人(≥1)
+            if (other == otherMediaPlaying) return;   // 无翻转，幂等
+            otherMediaPlaying = other;
+            if (other) {
+                if (mode == 1) duck(true); else pauseByFocus();
+            } else {
+                if (mode == 1) duck(false); else resumeByFocus();
+            }
+        } else {
+            // 自己已暂停：别人还在放（activeMedia ≥ 1）时**什么都不做**。
+            if (otherMediaPlaying && activeMedia == 0) {
+                otherMediaPlaying = false;
+                if (mode == 1) duck(false); else resumeByFocus();
+            }
+        }
     }
 
     /**
@@ -785,6 +1125,8 @@ public class PlayerCore {
         public void run() {
             if (!progressRunning) return;
             int cur = curSec(), dur = durSec();
+            // ★ P0-1/P0-2：记下最近一次位置，出错时据此在原位续播
+            if (cur > 0) lastCurSec = cur;
             // ★ v3.8.2 跳过片尾：当前位置落在结尾 N 秒内 → 提前完结本集。
             //   先 pause 再走 onEnded：pause 之后 MediaPlayer 不会再来
             //   onCompletion，避免同一集被完结两次、连跳两集。
@@ -851,10 +1193,21 @@ public class PlayerCore {
         saveRecord(curSec());
     }
 
+    /** 以指定秒数立即落库（出错自愈时按保存的位置续播，避免读到 0） */
+    private void saveProgressAt(int sec) {
+        saveRecord(sec);
+    }
+
     private void saveRecord(final int curSec) {
         final Book b = this.book;
         if (b == null || chapters.isEmpty()) return;
         final int idx = index;
+        // ★ v3.9.7：进度键统一用「章节自带的 index（humanIdx）」。
+        //   以前写库用 idx+1（下标），而 MainActivity.gotoChapter / Bridge 读库
+        //   用 ch.index —— 源给的集号若与下标不一致，进度就写读对不上，
+        //   续播/已听标记全部错位。
+        Chapter cu_ = currentChapter();
+        final int humanKey = (cu_ != null && cu_.index > 0) ? cu_.index : idx + 1;
         final String cu = chapterUrl;
         final String ct = currentChapter() == null ? "" : currentChapter().title;
         final int total = chapters.size();
@@ -863,7 +1216,7 @@ public class PlayerCore {
         com.tingshu.app.source.Aggregator.singlePool().execute(new Runnable() {
             public void run() {
                 try {
-                    HistoryRepo.record(b, idx + 1, ms, cu, ct, total);
+                    HistoryRepo.record(b, humanKey, ms, cu, ct, total);
                 } catch (Throwable ignored) {}
             }
         });

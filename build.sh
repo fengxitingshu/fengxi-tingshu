@@ -29,6 +29,10 @@ DEPS=(
   "$TOOL/kotlin-stdlib-1.8.22.jar"
   "$TOOL/gson-2.10.1.jar"
   "$TOOL/jsoup-1.17.2.jar"
+  # ★ v3.9.9：okhttp + okio —— eprendre 聚合源插件（sources_by_agg）的 Net 类
+  #   直接引用 okhttp3 API，Fuel 兼容层（responseJson）也要它。okio 是 okhttp 依赖。
+  "$TOOL/okhttp-4.10.0.jar"
+  "$TOOL/okio-jvm-3.0.0.jar"
   # ★ v3.0：Rhino 引擎 —— JS 脚本书源插件（.zip）靠它执行。
   #   用的是「裁剪版」：删掉了 org.mozilla.javascript.tools.*（Swing/AWT 的控制台工具），
   #   那部分在 Android 上既用不到、d8 也会刷一堆无害警告。
@@ -42,7 +46,8 @@ DEPS=(
 #   - rhino-slim   ：v3.0 起 core/js/* 引用了 org.mozilla.javascript.*
 #   - jsoup        ：v3.0 起 core/js/JsElement、JsHostApi 直接引用了 org.jsoup.*
 #   - chaquopy_java：v3.4 起 app/python/* 引用了 com.chaquo.python.*
-JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-slim.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar"
+#   - okhttp/okio  ：v3.9.9 起 Fuel 兼容层（FuelJsonKt.responseJson）引用 okhttp3
+JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-slim.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar"
 
 # Kotlin 编译器自身运行时（跑 K2JVMCompiler 用）
 KCP="$TOOL/kotlin-compiler-embeddable-1.8.22.jar:$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/kotlin-reflect-1.8.22.jar:$TOOL/trove4j-1.0.20200330.jar:$TOOL/annotations-13.0.jar"

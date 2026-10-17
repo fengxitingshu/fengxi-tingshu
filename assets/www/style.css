@@ -227,6 +227,11 @@ body.has-player .content { padding-bottom: calc(var(--tabbar-h) + 84px); }
 .srcdd-item.on { color: var(--primary); font-weight: 600; }
 .srcdd-item .tick { font-size: 12px; margin-left: auto; opacity: 0; }
 .srcdd-item.on .tick { opacity: 1; }
+/* ★ v3.9.3：下拉里的「自定义源」分组标题 */
+.srcdd-sep {
+    padding: 7px 15px 4px; font-size: 11.5px; color: var(--mut);
+    border-top: 1px solid var(--line2); margin-top: 3px;
+}
 html.dark .srcdd-pop { box-shadow: 0 10px 32px rgba(0, 0, 0, .6); }
 
 /* 点空白关闭：不拦截点击，只做"点外面就收起"的判定，避免盖住下拉面板 */
@@ -700,6 +705,29 @@ button.mini:active { opacity: .7; }
 .srcops { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .srcops button.mini { vertical-align: middle; }
 .srcops .srccount { margin-left: auto; align-self: center; }
+/* ★ v3.8.4：源管理导入栏窄屏排布修复。
+   实测 360px 窄屏（大量 vivo/iQOO 机型宽度）下，「导入源 / 导出分享 /
+   批量验证」三个加大按钮 + 右侧计数总宽超出一行，flex-wrap 把
+   「N / N 启用」挤到第二行成了孤儿行。修法三招：
+   1) 按钮横向 padding 16→12，一排省出约 12px；
+   2) gap 8→6，再省 4px；
+   3) 计数 flex-shrink:0 + nowrap —— 宁可按钮被压缩也不许它换行；
+   更窄的屏（≤359px）再降一档字号与 padding，320px 老机型也放得下。
+   仍然极端放不下时保留 flex-wrap 整行换行兜底，但计数永不当孤儿。
+   注意：按钮加大规则挂在 #sourcesPageContent .mini 上（带 ID，
+   特异性高于类选择器），所以这里必须同样带 ID 作用域才压得住。 */
+.srcops-main { gap: 6px; }
+#sourcesPageContent .srcops-main button.mini,
+#srcGroupContent .srcops-main button.mini { padding: 0 12px; }
+.srcops-main .srccount {
+    margin-left: auto; align-self: center;
+    flex-shrink: 0; white-space: nowrap;
+}
+@media (max-width: 359px) {
+    .srcops-main { gap: 5px; }
+    #sourcesPageContent .srcops-main button.mini,
+    #srcGroupContent .srcops-main button.mini { padding: 0 10px; font-size: 13px; }
+}
 .sctest { font-size: 12.5px; color: var(--text2); }
 .sctest.ok { color: #34c759; }
 .sctest.bad { color: #ff3b30; }
@@ -1548,7 +1576,10 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
 }
 .sheet {
     width: 100%; background: var(--card); border-radius: 16px 16px 0 0;
-    padding-bottom: var(--safe-b); overflow: hidden;
+    padding-bottom: var(--safe-b);
+    /* ★ v3.9.8：内容超高时面板自身可滚（定时面板等长表单不再被屏幕截断） */
+    max-height: 86vh; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
 }
 .sheet-hd { text-align: center; font-size: 13px; color: var(--text2);
     padding: 14px; border-bottom: 1px solid var(--line2); }
@@ -1660,6 +1691,81 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
 .chdl.dl-st1 { color: var(--text2); opacity: .7; }
 .chdl.dl-st2 { color: #34c759; }
 .chdl.dl-st3 { color: #ff3b30; }
+
+/* ★ v3.9.0：已收听标记 —— 绿色小对勾（选集弹层 + 详情页章节列表共用） */
+/* ★ v3.9.3：已收听标记 = 绿色圆圈圈住的「已」字（原来是绿色对勾 ✓） */
+/* ★ v3.9.7：已收听标记改为低调小对勾 ——
+   原来是绿色描边圆圈「已」，在行尾非常抢眼且与对勾状态冲突；
+   现在弱化为低饱和灰绿小勾，已听行的集号同时变淡，整体更协调 */
+.chdone {
+    flex-shrink: 0; box-sizing: border-box;
+    width: auto; height: auto; text-align: center;
+    font-size: 11px; font-weight: 700; line-height: 1;
+    color: #6fae8d; border: none; border-radius: 0;
+    padding: 0 1px; background: transparent;
+    opacity: .75;
+}
+.chapter.listened .no { color: var(--text2); opacity: .55; }
+.chlist-inner.cols-2 .chdone, .chlist-inner.cols-3 .chdone,
+.chapter-list.cols-2 .chdone, .chapter-list.cols-3 .chdone {
+    font-size: 10px;
+}
+
+/* ★ v3.9.0：定时关闭面板的「可选时段」行 */
+.sheet-sec {
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+    padding: 14px 18px 2px;
+}
+.sheet-tip {
+    font-size: 11.5px; line-height: 1.55; color: var(--text2);
+    padding: 2px 18px 8px;
+}
+.sleep-win {
+    display: flex; align-items: center; gap: 10px;
+    padding: 2px 18px 6px;
+}
+.sleep-win .sel, .sel {
+    flex: 1; min-width: 0;
+    border: 1px solid var(--line2); background: var(--bg); color: var(--text);
+    font-size: 14px; padding: 8px 10px; border-radius: 10px;
+    font-family: inherit; outline: none; -webkit-appearance: none;
+    appearance: none;
+}
+.sleep-win-x { font-size: 12px; color: var(--text2); flex-shrink: 0; }
+
+/* ★ v3.9.7：已收听标记统一为低调小对勾（与上方定义合并，去掉绿色描边圆圈时代） */
+.chdone {
+    flex-shrink: 0; min-width: 14px; text-align: center;
+    font-size: 11px; font-weight: 700; line-height: 1;
+    color: #6fae8d; padding: 2px 1px; opacity: .75;
+}
+.chlist-inner.cols-2 .chdone, .chlist-inner.cols-3 .chdone { min-width: 12px; font-size: 10px; }
+
+/* ★ v3.9.0：定时关闭面板的「可选时段」行 */
+.sheet-sec {
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+    padding: 14px 18px 2px;
+}
+.sheet-tip {
+    font-size: 11.5px; line-height: 1.55; color: var(--text2);
+    padding: 2px 18px 8px;
+}
+.sleep-win {
+    display: flex; align-items: center; gap: 10px;
+    padding: 2px 18px 6px;
+}
+.sleep-win .sel, .sel {
+    flex: 1; min-width: 0;
+    border: 1px solid var(--line2); background: var(--bg); color: var(--text);
+    font-size: 14px; padding: 8px 10px; border-radius: 10px;
+    font-family: inherit; outline: none; -webkit-appearance: none;
+    appearance: none;
+}
+.sleep-win-x { font-size: 12px; color: var(--text2); flex-shrink: 0; }
+
+/* ★ v3.9.8：定时面板下拉行（倒计时 / 按集停止） */
+.sleep-row { padding: 8px 18px 2px; }
+.sleep-row .sel { width: 100%; }
 
 /* ==================== 源导入 / 导出 ==================== */
 .ta {
@@ -1954,11 +2060,12 @@ html.dark .fctrl .pbtn svg { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
     text-align: center; padding: 32px 20px 24px;
     background: var(--card);
 }
+/* ★ v3.9.1：从 emoji 换成真实应用图标位图 —— 不再需要 emoji 字号与渐变底，
+   改为与桌面图标同款的圆角方块（图标自带背景色/留白，不再叠渐变）。 */
 .ab-logo {
+    display: block;
     width: 68px; height: 68px; margin: 0 auto 14px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 34px; border-radius: 20px;
-    background: linear-gradient(135deg, var(--primary), #ff8a6a);
+    border-radius: 18px; object-fit: cover;
     box-shadow: 0 8px 22px rgba(232, 80, 58, .28);
 }
 html.dark .ab-logo { box-shadow: 0 8px 22px rgba(232, 80, 58, .18); }
@@ -2516,4 +2623,138 @@ body.multi-on .chk { display: block; }
 .diag-act button.mini.ghost {
     background: transparent; color: var(--primary);
     border-color: var(--primary);
+}
+
+/* ==================== ★ v3.9.0 自定义源页（本地书源 + 网盘接口） ==================== */
+
+.cu-card {
+    margin: 12px 14px 0; border-radius: 14px;
+    background: var(--card); border: 1px solid var(--line);
+    overflow: hidden;
+}
+.cu-hd {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px; font-size: 15px; font-weight: 600;
+    border-bottom: 1px solid var(--line2);
+}
+.cu-hd .sw { margin-left: auto; }
+.cu-bd { padding: 12px 14px 14px; }
+
+.cu-desc { font-size: 12.5px; color: var(--text2); line-height: 1.65; }
+.cu-desc.dim { opacity: .75; }
+.cu-ok { font-size: 12.5px; color: #34c759; margin-top: 10px; }
+.cu-err { font-size: 12.5px; color: #ff3b30; margin-top: 10px; line-height: 1.6; }
+.cu-warn {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12.5px; color: #ff9500; margin-top: 10px;
+}
+.cu-badge {
+    font-size: 10.5px; font-weight: 400; padding: 1px 8px; border-radius: 9px;
+    background: var(--bg); color: var(--text2); border: 1px solid var(--line);
+}
+.cu-badge.ok { color: #34c759; border-color: rgba(52, 199, 89, .45); }
+
+.cu-ops { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+#customPageContent .mini {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 32px; padding: 0 14px; font-size: 13px;
+    line-height: 1; border-radius: 16px; box-sizing: border-box;
+}
+#customPageContent .mini.ghost { background: transparent; color: var(--primary); border-color: var(--primary); }
+#customPageContent .mini:disabled { opacity: .55; }
+
+/* 本地书列表 */
+.cu-books { margin-top: 12px; border-top: 1px solid var(--line2); }
+.cu-book {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 2px; border-bottom: 1px solid var(--line2); cursor: pointer;
+}
+.cu-book:last-child { border-bottom: none; }
+.cu-book:active { background: var(--line2); }
+.cu-book-t { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cu-book-s {
+    flex-shrink: 0; max-width: 45%; font-size: 11px; color: var(--text2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+    text-align: right;
+}
+
+/* 网盘解析区 */
+.cu-parse { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.cu-input {
+    flex: 1; min-width: 0; height: 34px; padding: 0 10px;
+    border: 1px solid var(--line); border-radius: 17px;
+    background: var(--bg); color: var(--text);
+    font-size: 13px; font-family: inherit; outline: none;
+}
+.cu-input:focus { border-color: var(--primary); }
+
+.cu-files { margin-top: 12px; border-top: 1px solid var(--line2); padding-top: 8px; }
+.cu-files-hd { font-size: 12px; color: var(--text2); padding: 2px 0 6px; }
+.cu-file {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 2px; border-bottom: 1px solid var(--line2); cursor: pointer;
+}
+.cu-file:last-of-type { border-bottom: none; }
+.cu-file input { flex-shrink: 0; accent-color: var(--primary); width: 16px; height: 16px; }
+.cu-file-t { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cu-file-s { flex-shrink: 0; font-size: 11px; color: var(--text2); }
+.cu-file.dir { color: var(--text2); font-size: 13px; cursor: default; }
+
+/* Cookie 配置弹窗里的多行输入 */
+.cu-tip { font-size: 12px; color: var(--text2); line-height: 1.7; padding: 0 16px 10px; }
+.cu-ta {
+    display: block; width: calc(100% - 32px); margin: 0 16px 12px;
+    padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--text);
+    font-size: 12.5px; line-height: 1.6; font-family: inherit; outline: none;
+    resize: none; word-break: break-all;
+}
+.cu-ta:focus { border-color: var(--primary); }
+
+/* ★ v3.9.1 本地书源：当前扫描目录一行 */
+.cu-root {
+    font-size: 12.5px; color: var(--text2); margin-top: 10px; line-height: 1.6;
+    word-break: break-all;
+}
+.cu-root b { color: var(--text); font-weight: 600; }
+.cu-root.dim { opacity: .8; }
+
+/* ==================== ★ v3.9.1 源分组批量管理 ==================== */
+
+/* 行首复选框（批量态） */
+.srcrow .srcchk {
+    flex-shrink: 0; width: 26px; height: 26px; margin-right: 4px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+}
+.srcrow .srcchk input { position: absolute; opacity: 0; width: 0; height: 0; }
+.srcrow .srcchk i {
+    width: 20px; height: 20px; border-radius: 5px;
+    border: 1.5px solid var(--line); background: var(--bg);
+    display: block; box-sizing: border-box; transition: background .18s, border-color .18s;
+}
+.srcrow .srcchk input:checked + i {
+    background: var(--primary); border-color: var(--primary);
+}
+.srcrow .srcchk input:checked + i::after {
+    content: ''; display: block; width: 5px; height: 9px; margin: 2px auto 0;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.srcrow-sel { background: var(--line2); }
+
+/* 底部批量工具条 */
+.srcbatchbar {
+    position: sticky; bottom: 0; z-index: 5;
+    margin-top: 12px; padding: 10px 12px;
+    background: var(--card); border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.srcbatchbar .sbb-cnt { font-size: 12.5px; color: var(--text2); flex-shrink: 0; }
+.srcbatchbar .sbb-cnt b { color: var(--primary); font-size: 14px; }
+.srcbatchbar .sbb-ops {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1;
+    justify-content: flex-end;
+}
+.srcbatchbar .mini.danger {
+    background: #ff3b30; border-color: #ff3b30; color: #fff;
 }

@@ -29,7 +29,7 @@
         // ★ v2.8：倍速改为「滑杆 + 0.1 步进」。
         //   滑杆内部用整数档位（10 = 1.0x），彻底规避浮点累加误差。
         canSpeed: true,
-        // ★ v3.1：音量增益百分比（100 = 原始音量，50~300）
+        // ★ v3.1：音量增益百分比（100 = 原始音量，50~200，★ v3.9.7 上限下调）
         gain: 100,
         // ★ v3.1：其他声音打断策略（0 不处理 / 1 降低音量 / 2 暂停播放）
         audioFocusMode: 0,
@@ -51,14 +51,28 @@
 
         // ★ v2.9：多选下载。null = 普通模式；否则 { sel: {集号: true} }
         multi: null,
+        // ★ v3.9.1：源分组批量管理（显式进入，不与长按手势冲突）
+        srcBatch: false,
+        srcSel: {},             // 源 id -> true
+        // ★ v3.9.1：源分组批量管理（显式进入，不与长按手势冲突）
+        srcBatch: false,
+        srcSel: {},             // 源 id -> true
         // ★ v2.9：当前下载目录（设置页显示用）
         dlDirName: '',
         dlDirUri: '',
 
-        // 定时关闭
+        // 定时关闭（★ v3.9.0 起权威状态在 native SleepTimer，前端只做展示与设置）
         sleepMin: 0,
         sleepAt: 0,
         sleepTimer: null,
+        // native 推送的定时状态：{min, remain, winStart, winEnd, holding, chip}
+        sleep: null,
+
+        // ★ v3.9.0：已收听集号缓存 { bookKey: {集号:true} }（progress 表镜像）
+        listened: {},
+
+        // ★ v3.9.0：已收听集号缓存 { bookKey: {集号:true} }（progress 表镜像）
+        listened: {},
 
         fullShow: false,
         _homeContinue: null,
@@ -94,8 +108,10 @@
         changelog: 'pageChangelog',   // ★ v3.7.3 更新公告
         diag: 'pageDiag',             // ★ v3.7.15-fix 源加载诊断
         crash: 'pageCrash',           // ★ v3.7.15-fix 崩溃日志
+        wgdiag: 'pageWgDiag',         // ★ v3.8.4 小组件诊断日志
         backup: 'pageBackup',         // ★ v3.8.0 备份与恢复
-        dlmanage: 'pageDlManage' };   // ★ v2.9 下载管理
+        dlmanage: 'pageDlManage',     // ★ v2.9 下载管理
+        custom: 'pageCustom' };       // ★ v3.9.0 自定义源（本地书源 + 网盘接口）
 
     function allPages() {
         var a = [], k;
@@ -189,9 +205,37 @@
         //   返回键必须先关弹窗。以前这里完全不看 #sheetWrap，返回键会穿透弹窗
         //   去关全屏播放页或退回上一级，用户看到的是「弹窗关不掉、按返回却在切页」。
         //   所有弹窗统一挂在 #sheetWrap 下，所以一处判断即可覆盖全部。
+        //
+        // ★ v3.9.1：选集弹层（#chSheetWrap）是**另一个**全屏遮罩容器，
+        //   之前返回键完全不认识它 —— 打开选集后按返回，直接去关全屏播放页
+        //   或退回上一级，而选集还挂在屏幕上。补在最前面（两者同时存在时
+        //   先关选集，它更靠上层）。
+        //
+        // ★ v3.9.3：首页源下拉展开时，返回键先收起它
+        var srcPop = $('homeSrcPop');
+        if (srcPop && !srcPop.classList.contains('hide')) { ui.closeSrcPop(); return true; }
+        if ($('chSheetWrap')) { ui.closeChapterList(); return true; }
         if ($('sheetWrap')) { ui.closeSheet(); return true; }
         // 长按菜单（更多/书签/选集下拉）同理，它挂在 #ctxMenu 上
         if ($('ctxMenu')) { ctxClose(); return true; }
+        // ★ v3.8.5：倍速 / 音量增益这两个展开面板是播放页**内嵌**的
+        //   （不是 #sheetWrap 弹窗），原来返回键完全看不见它们 ——
+        //   面板还开着，返回键却去关全屏页或退回上一级，用户感受就是
+        //   "返回键乱跳"。这里让返回键先折面板，一次折一层，
+        //   符合"返回 = 收起当前展开的东西"的直觉。
+        var spP = $('speedPanel'), gpP = $('gainPanel');
+        if ((spP && !spP.classList.contains('hide'))
+                || (gpP && !gpP.classList.contains('hide'))) {
+            if (spP && !spP.classList.contains('hide')) spP.classList.add('hide');
+            if (gpP && !gpP.classList.contains('hide')) gpP.classList.add('hide');
+            return true;
+        }
+        // ★ v3.9.1：源分组处于批量管理态时，返回键先退出批量
+        //   （"返回 = 收起当前展开的东西"，与倍速面板同一套直觉）
+        if (App.srcBatch) { App.srcBatch = false; App.srcSel = {}; paintSrcGroup(); return true; }
+        // ★ v3.9.1：源分组处于批量管理态时，返回键先退出批量
+        //   （"返回 = 收起当前展开的东西"，与倍速面板同一套直觉）
+        if (App.srcBatch) { App.srcBatch = false; App.srcSel = {}; paintSrcGroup(); return true; }
         // ★ v3.2：离开当前页面前先收起播放页的「更多」下拉，
         //   否则它会悬空留在新页面上
         ui.closeMore();
@@ -202,7 +246,24 @@
             return true;
         }
         if (App.tab !== 'home') { goTab('home'); return true; }
-        return false;
+
+        // ★ v3.9.1：已经回到首页、也没有任何可收起的东西了 —— 按返回就是想退出。
+        //   原来的实现在这里 return false，而原生 onKeyDown 用 evaluateJavascript
+        //   （异步、拿不到返回值）后又无条件 return true，于是"在首页按返回毫无反应"，
+        //   用户既退不出去也得不到任何反馈。现在：
+        //     第一次按 → 弹「确定要退出吗？」；
+        //     确认框还开着时再按一次 → 直接退出（不用去点按钮）；
+        //     点「确定」→ 退出；取消或点遮罩 → 关掉继续用。
+        if (App.exitSheet) {
+            App.exitSheet = false;
+            TS.call('exitApp');
+            return true;
+        }
+        App.exitSheet = true;
+        ui.confirmSheet('确定要退出枫兮听书吗？', function () {
+            TS.call('exitApp');
+        });
+        return true;
     };
 
     function updateTabbar() {
@@ -211,7 +272,8 @@
         // 二级页（详情/全屏/分组/书源/搜索/赞赏/设置/关于）隐藏底栏
         var isSub = (App.page === SUBS.detail || App.page === SUBS.full
             || App.page === SUBS.group || App.page === SUBS.sources
-            || App.page === SUBS.reward || App.page === SUBS.settings
+            || App.page === SUBS.custom || App.page === SUBS.reward
+            || App.page === SUBS.settings
             || App.page === SUBS.about || App.page === SUBS.changelog
             || App.page === TABS.search);
         bar.classList[isSub ? 'add' : 'remove']('hide');
@@ -307,6 +369,9 @@
         var cd = $('discoverCats');
         var cl = $('homeContent');
         if (!cd || !cl) return;
+
+        // ★ v3.9.3：首页停在本地书源视图 → 走专属渲染，不进分类浏览流程
+        if (App.home.src === 'local') { renderHomeLocal(); return; }
 
         // ★ v3.7.6：这里原来**无条件**复位「加载更多」状态。
         //   但 paintHomeSources 会在很多"非换源"场景被调到（discoverSources 回调、
@@ -449,6 +514,14 @@
         if (!list || !list.length) return false;
         var saved = loadLastHomeSource();
         if (!saved || !saved.src) return false;
+        // ★ v3.9.3：上次用的是本地书源（不在 discoverSources 列表里）
+        if (saved.src === 'local') {
+            // 本地源已停用就不恢复（App.sources 到手后由开关状态兜底）
+            App.home.src = 'local';
+            App.home.page = 1;
+            App.home.cat = '';
+            return true;
+        }
         var hit = null;
         for (var i = 0; i < list.length; i++) if (list[i].id === saved.src) hit = list[i];
         if (!hit) return false;                  // 上次的源没了 → 交给 homeCurrentSrc 回落
@@ -898,6 +971,23 @@
                  '<span>' + TS.esc(list[i].name) + '</span>' +
                  '<span class="tick">✓</span></div>';
         }
+        // ★ v3.9.3：自定义源（本地书源）开启后也进下拉，方便直接选。
+        //   网盘源没有"可浏览列表"（本质是分享链接解析），不往首页放。
+        var custom = [];
+        for (var s = 0; s < (App.sources || []).length; s++) {
+            var cs = App.sources[s];
+            if (cs && cs.id === 'local' && cs.enabled !== false) custom.push(cs);
+        }
+        if (custom.length) {
+            h += '<div class="srcdd-sep">自定义源</div>';
+            for (var c2 = 0; c2 < custom.length; c2++) {
+                var cOn = App.home.src === custom[c2].id;
+                h += '<div class="srcdd-item' + (cOn ? ' on' : '') +
+                     '" onclick="App.ui.homePickSrc(\'' + escAttr(custom[c2].id) + '\')">' +
+                     '<span>' + TS.esc(custom[c2].alias || custom[c2].name || '本地书源') + '</span>' +
+                     '<span class="tick">✓</span></div>';
+            }
+        }
         $('homeSrcList').innerHTML = h;
         pop.classList.remove('hide');
         $('homeSrcBtn').classList.add('open');
@@ -935,6 +1025,12 @@
         App.homePage = {};
         App.homeBooks = {};
         resetHomePaging();                       // ★ v3.7.6：换源后重新开始分页
+        // ★ v3.9.3：本地书源走专属视图（没有"分类浏览"，直接列本地书）
+        if (sid === 'local') {
+            saveLastHomeSource(sid);
+            renderHomeLocal();
+            return;
+        }
         var list = App.homeSources || [];
         for (var i = 0; i < list.length; i++) {
             if (list[i].id === sid) {
@@ -944,6 +1040,57 @@
         saveLastHomeSource(sid);                 // ★ v3.7.6：记住这次选的源
         paintHomeSources();
     };
+
+    /**
+     * ★ v3.9.3：首页的「本地书源」视图。
+     * 本地书源没有分类可浏览，直接列出扫描到的本地书（点开即详情）。
+     */
+    function renderHomeLocal() {
+        var cd = $('discoverCats');
+        var cl = $('homeContent');
+        if (!cl) return;
+        if (cd) cd.innerHTML = '';
+        var el = $('homeSrcName');
+        if (el) el.textContent = '本地书源';
+        // 已有扫描结果就直接重放，不再闪"扫描中"
+        if (App.custom && App.custom.books && App.custom.books.length) {
+            renderHomeLocalBooks(App.custom.books);
+            return;
+        }
+        cl.innerHTML = '<div class="loading"><span class="spinner"></span>扫描本地书籍中…</div>';
+        TS.call('localBooks');
+    }
+
+    /** 首页本地书列表渲染（onLocalBooks 回包时若正停在本地源视图就画书） */
+    function renderHomeLocalBooks(books) {
+        var cl = $('homeContent');
+        if (!cl) return;
+        if (!books || !books.length) {
+            cl.innerHTML =
+                '<div class="empty nosrc">' +
+                  '<div class="big">📁</div>' +
+                  '<div class="nosrc-t">没有扫到本地书籍</div>' +
+                  '<div class="nosrc-s">到「书源管理 → 自定义源 → 本地书源」发起扫描，<br>或指定一个扫描目录</div>' +
+                  '<div class="nosrc-btns">' +
+                    '<button class="mini" onclick="App.ui.goTab(\'mine\')">书源管理</button>' +
+                  '</div></div>';
+            return;
+        }
+        var h = '';
+        for (var i = 0; i < books.length; i++) {
+            var b = books[i];
+            h += '<div class="bookcard" onclick="App.ui.openBookJson(\'' +
+                 escAttr(JSON.stringify(b)) + '\')">';
+            h += '<img src="' + TS.esc(b.cover) + '" onerror="TS.imgFail(this)" loading="lazy" decoding="async">';
+            h += '<div class="info">';
+            h += '<div class="t" data-mq>' + TS.esc(b.title) + '</div>';
+            h += '<div class="s">' + TS.esc(b.count ? (b.count + ' 集') : '本地文件') + '</div>';
+            h += '<div class="tagline"><span class="tag src">本地</span></div>';
+            h += '</div></div>';
+        }
+        cl.innerHTML = h;
+        if (TS.markImages) TS.markImages(cl);
+    }
 
     /** 分类 chip：切换当前分类（内容区换成该分类的书） */
     ui.homeCat = function (k) {
@@ -1157,7 +1304,9 @@
     window.onSearchBySource = function (grp) {
         App.searchBySource = grp || {};
         paintSearchChips();
-        if (App.searchFilter && App.searchFilter !== 'all') paintSearch();
+        // ★ v3.9.3：只重绘不跳顶 —— 搜索进行中各源陆续回传，之前的整表
+        //   重绘 + scrollTop=0 会把用户正在浏览的筛选列表反复甩回顶部。
+        if (App.searchFilter && App.searchFilter !== 'all') paintSearch(false);
     };
 
     /**
@@ -1236,10 +1385,15 @@
         if (!c || !books || !books.length) return;
         // 容器里不是书籍卡片（骨架/空态/历史）→ 先清空，让本批结果独占
         if (!c.querySelector('.bookcard')) c.innerHTML = '';
+        // ★ v3.9.3：与 paintSearch 共用索引快照 —— 追加的卡片用
+        //   openSearchBook(快照下标)，增量到达再多也不会点错书
+        if (!App.paintList) App.paintList = [];
         var frag = document.createDocumentFragment();
+        var d = document.createElement('div');
         for (var i = 0; i < books.length; i++) {
-            var d = document.createElement('div');
-            d.innerHTML = searchCardHtml(books[i], -1);
+            var idx = App.paintList.length;
+            App.paintList.push(books[i]);
+            d.innerHTML = searchCardHtml(books[i], idx);
             while (d.firstChild) frag.appendChild(d.firstChild);
         }
         c.appendChild(frag);
@@ -1263,7 +1417,14 @@
         if (n > 1) h += '<span class="tag">' + n + ' 源</span>';
         if (b.source) h += '<span class="tag src">' + TS.esc(sourceName(b.source)) + '</span>';
         if (b.category) h += '<span class="tag src">' + TS.esc(b.category) + '</span>';
-        h += '</div></div></div>';
+        h += '</div></div>';
+        // ★ v3.9.3：收藏也走索引快照（不再把整本书 JSON 塞进 onclick ——
+        //   每张卡片几百字节的属性串，几百张卡片时明显拖慢首绘）
+        if (i >= 0) {
+            h += '<div class="fav-btn" data-key="' + TS.esc(b.key || '') + '" ' +
+                 'onclick="event.stopPropagation();App.ui.toggleFavPaint(' + i + ')">☆</div>';
+        }
+        h += '</div>';
         return h;
     }
 
@@ -1271,7 +1432,8 @@
         App.books = arr || [];
         App.searchRunning = false;
         paintSearchChips();
-        paintSearch();
+        // ★ v3.9.3：最终合并也是数据刷新，不把列表甩回顶部
+        paintSearch(false);
         // 顺手刷新历史（刚搜的词已入库）
         loadSearchHist();
     };
@@ -1312,6 +1474,8 @@
     };
 
     /** 来源筛选条：全部 + 各源（带命中数，0 条的源不显示）+ 诊断行 */
+    var _lastChipsHtml = null;
+
     function paintSearchChips() {
         var el = $('searchChips');
         if (!el) return;
@@ -1319,7 +1483,11 @@
         var ids = [];
         for (var k in grp) if (grp[k] && grp[k].length) ids.push(k);
         var sum = diagSummary();
-        if (!App.books.length && !ids.length && !sum) { el.classList.add('hide'); return; }
+        if (!App.books.length && !ids.length && !sum) {
+            el.classList.add('hide');
+            _lastChipsHtml = null;
+            return;
+        }
         el.classList.remove('hide');
         var h = '<div class="chiprow">';
         h += '<div class="chip' + (App.searchFilter === 'all' ? ' on' : '') +
@@ -1353,13 +1521,23 @@
                 h += '</div>';
             }
         }
+        // ★ v3.9.3：内容没变不重建（诊断行每秒都可能刷一次，重建会让
+        //   横向 chip 条闪烁、scrollLeft 归零 —— 用户点 chip 时像"乱跳"）
+        if (h === _lastChipsHtml) return;
+        // 重建时把横向滚动位置搬回来
+        var oldRow = el.querySelector('.chiprow');
+        var keepSL = oldRow ? oldRow.scrollLeft : 0;
         el.innerHTML = h;
+        var newRow = el.querySelector('.chiprow');
+        if (newRow && keepSL > 0) newRow.scrollLeft = keepSL;
+        _lastChipsHtml = h;
     }
 
     ui.filterSearch = function (id) {
         App.searchFilter = id;
         paintSearchChips();
-        paintSearch();
+        // 用户主动切筛选：回到顶部是预期行为（reset=true）
+        paintSearch(true);
         // ★ 让被选中的源滚到可视区中间，而不是整条滚回最左
         centerSearchChip(id);
     };
@@ -1391,7 +1569,7 @@
         });
     }
 
-    function paintSearch() {
+    function paintSearch(reset) {
         var c = $('searchResult');
         if (!c) return;
         var filter = App.searchFilter || 'all';
@@ -1401,6 +1579,13 @@
         } else {
             list = (App.searchBySource || {})[filter] || [];
         }
+        // ★ v3.9.3：滚动位置保护 —— 数据刷新型重绘（增量批次/按源分组/
+        //   最终合并陆续到达）保持用户所在位置；只有「新搜索」和「主动
+        //   切筛选」才回顶部。这是"点着点着列表乱跳"的根治。
+        var keepSL = c.scrollTop;
+        // ★ v3.9.3：索引快照 —— 卡片 onclick 里的下标一律指向这份快照，
+        //   之后 App.books 再被增量合并/重排也不会点错书。
+        App.paintList = list;
         if (!list || !list.length) {
             var extra = '换个关键词，或在「书源管理」里启用更多源';
             if (filter === 'all' && (App.searchDiag || []).length) {
@@ -1445,21 +1630,25 @@
             if (b.category) h += '<span class="tag src">' + TS.esc(b.category) + '</span>';
             h += '</div></div>';
             h += '<div class="fav-btn" data-key="' + TS.esc(b.key || '') + '" ' +
-                 'onclick="event.stopPropagation();App.ui.toggleFavJson(\'' +
-                 escAttr(JSON.stringify(b)) + '\')">☆</div>';
+                 'onclick="event.stopPropagation();App.ui.toggleFavPaint(' + i + ')">☆</div>';
             h += '</div>';
         }
         c.innerHTML = h;
-        c.scrollTop = 0;
+        // reset=true（新搜索/切筛选）回顶部；数据刷新保持原位置
+        c.scrollTop = reset ? 0 : keepSL;
         markFavs(list);
     }
 
-    /** 打开搜索结果：优先用「全部」合并视图的索引；筛选视图时先换数据源 */
+    /** 打开搜索结果：一律走 paintSearch 时的索引快照，杜绝点错书 */
     ui.openSearchBook = function (i) {
-        var filter = App.searchFilter || 'all';
-        var list = filter === 'all' ? App.books : ((App.searchBySource || {})[filter] || []);
-        var b = list[i];
+        var b = (App.paintList || [])[i];
         if (b) openBookObj(b);
+    };
+
+    /** 收藏切换：与卡片 onclick 同一套索引快照 */
+    ui.toggleFavPaint = function (i) {
+        var b = (App.paintList || [])[i];
+        if (b) ui.toggleFavJson(JSON.stringify(b));
     };
 
     function markFavs(arr) {
@@ -1749,8 +1938,17 @@
         if (!App.chapView) App.chapView = { cols: 1, seg: 0 };
     }
 
-    function renderDetail() {
+    /**
+     * 重画详情页。
+     *
+     * ★ v3.9.3：加 keepScroll 参数 —— 已听标记回传、收藏态变化、来源名
+     * 映射更新这类"数据刷新型重绘"在用户滚到长列表中间时随时可能到达，
+     * 之前一律 c.scrollTop=0，表现就是"章节列表滑着滑着弹回顶部"。
+     * 新开详情（默认）仍回顶部。
+     */
+    function renderDetail(keepScroll) {
         var c = $('detailContent');
+        var keepSL = c ? c.scrollTop : 0;
         var b = App.book || {};
         var chs = App.chapters;
 
@@ -1850,6 +2048,10 @@
             // ★ v3.7.16：加 data-mq —— 章节名过长时自动变跑马灯
             h += '<div class="tt" data-mq>' +
                  TS.esc(ch.title || ('第' + no + '集')) + '</div>';
+            // ★ v3.9.0：已收听 → 绿色小对勾
+            // ★ v3.9.7 修复：v3.9.3 改版时旧「已」字圆圈没删，和新对勾叠成
+            //   两个徽标挤在行尾，视觉很乱 —— 删掉旧圆圈，只留对勾（样式已调淡）。
+            if (isListened(no)) h += '<span class="chdone" title="已收听">✓</span>';
             // ★ v2.8 单集下载按钮。
             //   data-dl 绑的是「集号 no」（1 基），不是循环下标 i ——
             //   原生 CacheRepo/DownloadRepo 全用 1 基 humanIdx 作键，必须对齐。
@@ -1860,12 +2062,51 @@
         }
         h += '</div>';
         c.innerHTML = h;
-        c.scrollTop = 0;
+        // ★ v3.9.3：数据刷新型重绘保持滚动位置（新开详情默认回顶部）
+        c.scrollTop = keepScroll ? keepSL : 0;
         if (App.chapIdx >= 0) highlight(App.chapIdx);
         // 章节行建好后按下载状态刷一遍图标
         TS.call('cacheStatus', JSON.stringify(b));
+        // ★ v3.9.0：拉已收听集号（绿色圆圈「已」）
+        if (key) TS.call('listenedMarks', key);
         paintAllDlIcons();
         paintMultiUI();
+    }
+
+    /**
+     * ★ v3.9.3：已听标记**就地刷新**（不整页重绘）。
+     *
+     * 之前 onListenedMarks 一到就 renderDetail() 整页 innerHTML 重建 ——
+     * 用户刚进详情开始滑动时标记数据到达，轻则一顿卡、重则弹回顶部。
+     * 现在只增删各行里的 .chdone 徽标，滚动位置与 DOM 天然不动。
+     */
+    function paintChapMarks() {
+        var list = $('chapList');
+        if (!list || !App.book) return;
+        var rows = list.children;
+        for (var r = 0; r < rows.length; r++) {
+            var row = rows[r];
+            var m = /^ch(\d+)$/.exec(row.id || '');
+            if (!m) continue;
+            var abs = +m[1];
+            var ch = (App.chapters || [])[abs];
+            var no = (ch && ch.index) || (abs + 1);
+            var mark = row.querySelector('.chdone');
+            if (isListened(no)) {
+                if (!mark) {
+                    mark = document.createElement('span');
+                    mark.className = 'chdone';
+                    mark.title = '已收听';
+                    mark.textContent = '✓';
+                    var dl = row.querySelector('.dl');
+                    if (dl) row.insertBefore(mark, dl); else row.appendChild(mark);
+                }
+                row.classList.add('listened');   // ★ v3.9.7：集号变淡
+            } else {
+                if (mark) mark.parentNode.removeChild(mark);
+                row.classList.remove('listened');
+            }
+        }
     }
 
     // ---- ★ v2.9 长按手势 ----
@@ -1924,7 +2165,7 @@
         if (o.fav) App.favKeys[o.key] = true; else delete App.favKeys[o.key];
         TS.toast(o.fav ? '已加入收藏' : '已取消收藏');
         paintFavIcons();
-        if (App.page === SUBS.detail) renderDetail();
+        if (App.page === SUBS.detail) renderDetail(true);   // v3.9.3 保滚动位
         if (App.page === SUBS.full) paintFullFav();
         if (App.page === TABS.fav) loadFavs();
         if (App.page === TABS.home) loadHome();
@@ -2714,6 +2955,10 @@
     window.onPlaying = function (o) {
         // 取链成功 → 收掉加载转圈
         setBuffering(false);
+        // ★ v3.9.0：同步 native 定时关闭状态（页面重建/冷启动后权威状态在 native）
+        try { TS.call('getSleep'); } catch (e) {}
+        // ★ v3.9.0：同步 native 定时关闭状态（页面重建/冷启动后权威状态在 native）
+        try { TS.call('getSleep'); } catch (e) {}
         // ★ v3.7.13：播放成功就把"连续失败次数"清零，失败提示才不会误报累积
         App.playErrStreak = 0;
         // ★ v3.7.18：这一集播起来了 → 静默重试计数清零
@@ -2747,7 +2992,39 @@
         if (o && o.startMs > 5000) {
             TS.toast('从 ' + TS.fmt(Math.round(o.startMs / 1000)) + ' 处继续');
         }
+        // ★ v3.9.0：本集计入「已收听」—— 选集弹层/详情页的绿色小对勾即时更新。
+        //   native 的 progress 表在开播时就会落行，这里同步前端镜像即可，
+        //   不需要再回查（回查要等一轮桥往返，视觉上有延迟）。
+        if (o && typeof o.index === 'number' && o.index > 0 && App.book && App.book.key) {
+            var ls = App.listened[App.book.key] || (App.listened[App.book.key] = {});
+            if (!ls[o.index]) {
+                ls[o.index] = true;
+                if (App.page === SUBS.detail) {
+                    // ★ v3.9.3：标记就地刷新（原来整页重绘 + 手工恢复滚动位）
+                    paintChapMarks();
+                }
+                if ($('chSheetWrap')) repaintChsList(true);
+            }
+        }
         saveSession();
+    };
+
+    /**
+     * ★ P0-1 播放失败自动换源：native 在播放层换到新音源后续播时回调，
+     * 用于刷新播放条/全屏页右上角的「书源胶囊」，并给一句轻提示。
+     * 仅更新标签，不重建播放状态（native 已独立完成换源与续播）。
+     */
+    window.onSourceSwitched = function (o) {
+        if (!o) return;
+        App.playSource = o.source || App.playSource || '';
+        App.playSourceName = o.sourceName || sourceName(App.playSource);
+        paintPlaySource();
+        if (o.sourceName) TS.toast('已自动切换音源：' + o.sourceName);
+    };
+
+    /** ★ P0-2 网络波动自动重试：native 在重试前回调，给一句轻提示（不挡操作）。 */
+    window.onPlayRetry = function () {
+        if (TS && TS.toast) TS.toast('网络波动，正在自动重试…');
     };
 
     /**
@@ -3198,6 +3475,8 @@
 
         // 打开时按缓存状态刷一遍图标
         if (App.book) TS.call('cacheStatus', JSON.stringify(App.book));
+        // ★ v3.9.0：拉已收听集号（绿色小对勾）
+        if (App.book && App.book.key) TS.call('listenedMarks', App.book.key);
         paintAllDlIcons();
 
         // 当前集滚到中间，方便看前后文
@@ -3225,6 +3504,9 @@
                  //   markMarquee 自动接管成跑马灯（多列布局下 CSS 会关掉）。
                  '<span class="chtt" data-mq>' +
                  TS.esc(ch.title || ('第' + no + '集')) + '</span>' +
+                 // ★ v3.9.7：已收听 → 低调灰绿小对勾（旧「已」字圆圈删除，
+                 //   修掉与对勾并存的双徽标，详情页与选集弹层现在样式一致）
+                 (isListened(no) ? '<span class="chdone" title="已收听">✓</span>' : '') +
                  '<span class="chdl" data-dl="' + no +
                  '" onclick="event.stopPropagation();App.ui.dlChapter(' + no + ')"></span>' +
                  (on ? '<span class="chplay">▶</span>' : '') +
@@ -4095,7 +4377,7 @@
     //   200 = 放大到 200%（原生走 LoudnessEnhancer 响度增强）
     // 滑杆内部同样用整数档位（步进 10），避免浮点漂移。
     var GAIN_MIN = 50;    // 50%
-    var GAIN_MAX = 300;   // 300%
+    var GAIN_MAX = 200;   // ★ v3.9.7：300 → 200，高档位实际是爆音不是增益
     var GAIN_STEP = 10;   // 每档 10%
 
     /** 与倍速一致的整数档位思路：档位 = 百分比本身（都是整数，无需换算） */
@@ -4122,7 +4404,7 @@
             '" id="' + cid + '_r" oninput="App.ui.onGainInput(this.value)">' +
             '<div class="sp-val" id="' + cid + '_v">' + gainLabel(step) + '</div>' +
             '<div class="gain-ticks"><span>50%</span><span>100%</span>' +
-            '<span>200%</span><span>300%</span></div>' +
+            '<span>150%</span><span>200%</span></div>' +
             '</div>';
     }
 
@@ -4234,63 +4516,207 @@
         TS.toast('已设为「' + focusModeText(v) + '」');
     };
 
-    // ==================== 定时关闭 ====================
+    // ==================== 定时关闭（★ v3.9.0 支持可选时段） ====================
 
+    /**
+     * 定时关闭面板。
+     *
+     * ★ v3.9.0 改版：
+     *   ① 倒计时权威逻辑移到 native（SleepTimer）—— 旧实现是页面里的
+     *      setInterval，用户退回首页/App 退后台页面被回收后倒计时就消失了，
+     *      到点不停；现在页面只负责设置与展示；
+     *   ② 新增「时段关闭」：可再选一个时段（如 22:00–06:00，支持跨午夜），
+     *      只有当前时刻在时段内倒计时才递减，时段外自动停表、剩余时间保留。
+     */
+    /**
+     * 定时关闭面板（★ v3.9.8 改为下拉式）。
+     *
+     * 旧版每档一行平铺，加「按集停止」后总行数超出一屏，底部选项够不着。
+     * 现在倒计时/按集各一个下拉框，选中即生效；时段保持双下拉。
+     */
     ui.sleepMenu = function () {
-        var opts = [0, 10, 15, 30, 45, 60, 90, 120];
-        var labels = ['关闭', '10分钟', '15分钟', '30分钟', '45分钟', '1小时', '1.5小时', '2小时'];
+        var s = App.sleep || {};
+        var cur = (typeof s.min === 'number') ? s.min : 0;
+        var eps = (typeof s.eps === 'number') ? s.eps : 0;
+        var ws = (typeof s.winStart === 'number' && s.winStart >= 0) ? s.winStart : -1;
+        var we = (typeof s.winEnd === 'number' && s.winEnd >= 0) ? s.winEnd : -1;
+
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
         h += '<div class="sheet" onclick="event.stopPropagation()">';
         h += '<div class="sheet-hd">定时关闭</div>';
-        for (var i = 0; i < opts.length; i++) {
-            h += '<div class="sheet-item' + (App.sleepMin === opts[i] ? ' on' : '') +
-                 '" onclick="App.ui.sleepPick(' + opts[i] + ')">' + labels[i] + '</div>';
-        }
+
+        // ---- 倒计时（下拉，选中即生效） ----
+        h += '<div class="sheet-sec">倒计时关闭</div>';
+        h += '<div class="sleep-row"><select id="sleepMinSel" class="sel" onchange="App.ui.sleepPick(this.value)">' +
+             minOpts(cur) + '</select></div>';
+
+        // ---- 按集停止（下拉，选中即生效） ----
+        h += '<div class="sheet-sec">按集停止</div>';
+        h += '<div class="sleep-row"><select id="sleepEpsSel" class="sel" onchange="App.ui.sleepPickEps(this.value)">' +
+             epsOpts(eps) + '</select></div>';
+
+        // ---- 时段关闭 ----
+        h += '<div class="sheet-sec">可选时段关闭</div>';
+        h += '<div class="sheet-tip">只在所选时段内倒计时；时段外自动停表，剩余时间保留，' +
+             '进入时段后继续。不选时段则全天生效。</div>';
+        h += '<div class="sleep-win">';
+        h += '<select id="sleepWs" class="sel">' + winOpts(ws) + '</select>';
+        h += '<span class="sleep-win-x">至</span>';
+        h += '<select id="sleepWe" class="sel">' + winOpts(we) + '</select>';
+        h += '</div>';
+        h += '<div class="sheet-item" onclick="App.ui.sleepSaveWin()">保存时段设置</div>';
+
         h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
         h += '</div></div>';
-        var d = document.createElement('div');
-        d.id = 'sheetWrap';
-        d.innerHTML = h;
-        document.body.appendChild(d);
+        sheet(h);
     };
 
+    /** 倒计时下拉选项（0 = 关闭） */
+    function minOpts(cur) {
+        var opts = [[0, '关闭'], [10, '10 分钟'], [15, '15 分钟'], [20, '20 分钟'],
+                    [30, '30 分钟'], [45, '45 分钟'], [60, '1 小时'],
+                    [90, '1.5 小时'], [120, '2 小时']];
+        var h = '';
+        for (var i = 0; i < opts.length; i++) {
+            h += '<option value="' + opts[i][0] + '"' + (cur === opts[i][0] ? ' selected' : '') +
+                 '>' + opts[i][1] + '</option>';
+        }
+        return h;
+    }
+
+    /** 按集停止下拉选项（0 = 不启用） */
+    function epsOpts(cur) {
+        var opts = [[0, '不启用'], [1, '播完本集'], [2, '再听 2 集'],
+                    [3, '再听 3 集'], [5, '再听 5 集']];
+        var h = '';
+        for (var i = 0; i < opts.length; i++) {
+            h += '<option value="' + opts[i][0] + '"' + (cur === opts[i][0] ? ' selected' : '') +
+                 '>' + opts[i][1] + '</option>';
+        }
+        return h;
+    }
+
+    /** 时段下拉选项（每 15 分钟一档；-1 = 不选） */
+    function winOpts(cur) {
+        var h = '<option value="-1"' + (cur < 0 ? ' selected' : '') + '>不指定</option>';
+        for (var m = 0; m < 24 * 60; m += 15) {
+            h += '<option value="' + m + '"' + (cur === m ? ' selected' : '') + '>' +
+                 two2(Math.floor(m / 60)) + ':' + two2(m % 60) + '</option>';
+        }
+        return h;
+    }
+    function two2(n) { return n < 10 ? '0' + n : '' + n; }
+
     ui.closeSheet = function () {
+        // ★ v3.9.1：退出确认框被关掉（点遮罩 / 点取消 / 或确认后自动关）时，
+        //   必须把「确认框正在显示」的标记清掉，否则下一次在首页按返回
+        //   会被误判成"连按第二次"而直接退出。
+        App.exitSheet = false;
         var w = $('sheetWrap');
         if (w && w.parentNode) w.parentNode.removeChild(w);
     };
 
-    ui.sleepPick = function (min) {
-        ui.closeSheet();
+    /**
+     * 倒计时选择（★ v3.9.8 起从下拉框触发：选中即生效但**不关面板**，
+     * 方便接着设时段；min 由 select.value 传入是字符串，需转数字）。
+     */
+    ui.sleepPick = function (minStr) {
+        var min = parseInt(minStr, 10);
+        if (isNaN(min)) return;
         App.sleepMin = min;
         if (App.sleepTimer) { clearInterval(App.sleepTimer); App.sleepTimer = null; }
+        var s = App.sleep || {};
+        var ws = (typeof s.winStart === 'number' && s.winStart >= 0) ? s.winStart : -1;
+        var we = (typeof s.winEnd === 'number' && s.winEnd >= 0) ? s.winEnd : -1;
         if (min <= 0) {
             App.sleepAt = 0;
+            TS.call('setSleep', 0, -1, -1);
             TS.toast('定时关闭已取消');
         } else {
-            App.sleepAt = Date.now() + min * 60000;
-            App.sleepTimer = setInterval(function () {
-                paintSleepBtn();
-                if (Date.now() >= App.sleepAt) {
-                    clearInterval(App.sleepTimer);
-                    App.sleepTimer = null;
-                    App.sleepMin = 0;
-                    App.sleepAt = 0;
-                    TS.call('pause');
-                    paintSleepBtn();
-                    TS.toast('定时时间到，已暂停');
-                }
-            }, 30000);
-            TS.toast(min + ' 分钟后自动暂停');
+            App.sleepAt = Date.now() + min * 60000;   // 仅用于面板内预估，权威在 native
+            TS.call('setSleep', min, ws, we);
+            TS.toast(min + ' 分钟后自动暂停' + (ws >= 0 && we >= 0 ? '（仅时段内计时）' : ''));
         }
         paintSleepBtn();
     };
 
+    /** ★ v3.9.7：按集停止选择（n=0 取消；下拉触发不关面板） */
+    ui.sleepPickEps = function (nStr) {
+        var n = parseInt(nStr, 10);
+        if (isNaN(n)) return;
+        TS.call('setSleepEpisodes', n);
+        TS.toast(n > 0 ? ('播完 ' + n + ' 集后自动暂停') : '已取消按集停止');
+        paintSleepBtn();
+    };
+
+    /** 保存时段（不动倒计时） */
+    ui.sleepSaveWin = function () {
+        var wsEl = $('sleepWs'), weEl = $('sleepWe');
+        var ws = wsEl ? parseInt(wsEl.value, 10) : -1;
+        var we = weEl ? parseInt(weEl.value, 10) : -1;
+        if (isNaN(ws)) ws = -1;
+        if (isNaN(we)) we = -1;
+        var min = (App.sleep && App.sleep.min) || 0;
+        TS.call('setSleep', min, ws, we);
+        TS.toast(ws >= 0 && we >= 0
+            ? ('已设时段 ' + two2(Math.floor(ws / 60)) + ':' + two2(ws % 60) + '–' +
+               two2(Math.floor(we / 60)) + ':' + two2(we % 60))
+            : '已取消时段限制');
+    };
+
+    /** native 推送的定时状态（设置/停表/到点/进程恢复都会推） */
+    window.onSleep = function (o) {
+        App.sleep = o || null;
+        paintSleepBtn();
+    };
+
+    /** ★ v3.9.0：native 回传某本书已收听的集号（1 基） */
+    window.onListenedMarks = function (o) {
+        if (!o || !o.key) return;
+        var set = {};
+        var arr = o.idx || [];
+        for (var i = 0; i < arr.length; i++) set[arr[i]] = true;
+        App.listened[o.key] = set;
+        // 选集弹层 / 详情页正开着就更新 —— ★ v3.9.3 详情页改**就地刷新**
+        // （只增删「已」徽标，不再整页重绘：之前用户刚开始滑列表时标记
+        // 数据到达 → 全页重建 → 卡一下 + 弹回顶部）
+        if (App.page === SUBS.detail && App.book && App.book.key === o.key) paintChapMarks();
+        if ($('chSheetWrap')) repaintChsList(true);
+    };
+
+    /** 当前书某集是否已收听 */
+    function isListened(no) {
+        var b = App.book;
+        if (!b || !b.key) return false;
+        var set = App.listened[b.key];
+        return !!(set && set[no]);
+    }
+
+
+    /** 当前书某集是否已收听 */
+    function isListened(no) {
+        var b = App.book;
+        if (!b || !b.key) return false;
+        var set = App.listened[b.key];
+        return !!(set && set[no]);
+    }
+
     function paintSleepBtn() {
         var el = $('sleepBtn');
         if (!el) return;
-        if (App.sleepMin > 0) {
-            var d = Math.max(0, Math.ceil((App.sleepAt - Date.now()) / 60000));
-            el.textContent = '⏱ ' + d + '分';
+        var s = App.sleep;
+        // ★ v3.9.7：按集停止也在按钮上可见（无倒计时时单独展示）
+        if (s && s.eps > 0 && !(s.min > 0 && s.remain > 0)) {
+            el.textContent = '⏱ ' + s.eps + '集后停';
+            el.classList.add('on');
+            return;
+        }
+        if (s && s.min > 0 && s.remain > 0) {
+            var m = Math.max(1, Math.ceil(s.remain / 60));
+            var t = '⏱ ' + (m >= 60 ? (Math.floor(m / 60) + '时' + (m % 60 ? (m % 60) + '分' : '')) : m + '分');
+            if (s.holding) t += ' · 停表';
+            if (s.eps > 0) t += ' · ' + s.eps + '集';
+            el.textContent = t;
             el.classList.add('on');
         } else {
             el.textContent = '⏱ 定时';
@@ -4406,6 +4832,9 @@
             var b = bucketsOf();
             if (!(b[App.srcGroupKey] || []).length) { ui.back(); return; }
             paintSrcGroup();
+        } else if (App.page === SUBS.custom) {
+            // ★ v3.9.0：自定义源页（panReady/enabled 变化后重绘徽章与开关）
+            paintCustom();
         }
         if (App.page === TABS.home) paintHomeSources();
 
@@ -4456,8 +4885,8 @@
 
     window.onSourceNames = function (o) {
         App.sourceNames = o || {};
-        // 名字映射更新后，刷新依赖它的视图
-        if (App.page === SUBS.detail) renderDetail();
+        // 名字映射更新后，刷新依赖它的视图（v3.9.3 保滚动位）
+        if (App.page === SUBS.detail) renderDetail(true);
         paintPlaySource();
         if (App.books && App.books.length) paintSearchChips();
     };
@@ -4514,6 +4943,8 @@
      * groupOf() 把单个源映射到某个 k，一级页只列"有源"的分组。
      */
     var SRC_GROUPS = [
+        // ★ v3.9.0：自定义源置顶 —— 本地书源 + 网盘接口都从这里进
+        { k: 'custom', t: '自定义源', sub: '本地书源 + 主流网盘接口' },
         { k: 'builtin', t: '内置源', sub: '随 App 自带，可停用但不可删除' },
         { k: 'js', t: 'JS 插件源', sub: '由 JS 脚本插件包提供，一个包可含多个源' },
         { k: 'jar', t: 'jar 插件源', sub: '由 jar 插件提供，可整包卸载' },
@@ -4533,6 +4964,10 @@
     /** 单个源 → 分组 key。eprendre 归到"订阅导入" */
     function groupOf(s) {
         if (!s) return 'other';
+        // ★ v3.9.0：本地书源 / 网盘接口 → 自定义源组（要先于 builtin 判断：
+        //   这两类源 native 标了 builtin=true 表示"不可删除"，但不是内置源组）
+        var o0 = s.origin || '';
+        if (o0 === 'local' || o0 === 'pan') return 'custom';
         if (s.builtin) return 'builtin';
         var o = s.origin || '';
         if (o === 'eprendre') return 'url';
@@ -4577,7 +5012,7 @@
         var on = countEnabled(arr);
 
         var h = '';
-        h += '<div class="srcops" style="padding:0 14px 10px">' +
+        h += '<div class="srcops srcops-main" style="padding:0 14px 10px">' +
              '<button class="mini" onclick="App.ui.importMenu()">导入源</button>' +
              '<button class="mini" onclick="App.ui.exportMenu()">导出 / 分享</button>' +
              '<button class="mini" onclick="App.ui.verifyMenu()">批量验证</button>' +
@@ -4626,8 +5061,495 @@
 
     ui.openSrcGroup = function (k) {
         App.srcGroupKey = k;
+        // ★ v3.9.0：自定义源组是「功能页」不是普通源列表 ——
+        //   本地书源要能扫描/重扫，网盘接口要能配 Cookie/解析链接，
+        //   这些交互塞不进通用的「一行一源 + 长按菜单」列表里，
+        //   所以单独走 pageCustom（#pageCustom）。
+        if (k === 'custom') {
+            goSub('custom');
+            paintCustom();
+            // 进来先拉一次已扫描的本地书列表（不触发重扫）；
+            // 一次都没扫过时返回空表，页面显示"尚未扫描"
+            TS.call('localBooks');
+            return;
+        }
         goSub('srcGroup');
         paintSrcGroup();
+    };
+
+    // ==================== ★ v3.9.0 自定义源页：本地书源 + 网盘接口 ====================
+
+    /**
+     * 自定义源页状态。native 回包只更新这个对象 + 重绘，不在回调里拼 DOM，
+     * 避免扫描/解析途中用户切页回来看到半截状态。
+     */
+    App.custom = {
+        scanning: false,
+        count: -1,          // -1 = 还没扫过；0 = 扫过但没有
+        error: '',
+        needPerm: false,
+        root: '',           // ★ v3.9.1 自定义扫描目录（'' = 扫全机）
+        books: [],          // localBooks 回包（Book.toJson）
+        pan: {}             // pid -> { shareUrl, files:[], picked:{} }
+    };
+
+    /** 六个网盘平台（顺序即展示顺序；id 与 PanResolver 常量一致） */
+    var PAN_LIST = ['pan_ali', 'pan_baidu', 'pan_quark', 'pan_tianyi', 'pan_115', 'pan_uc'];
+    var PAN_NAMES = {
+        pan_ali: '阿里云盘', pan_baidu: '百度网盘', pan_quark: '夸克网盘',
+        pan_tianyi: '天翼云盘', pan_115: '115网盘', pan_uc: 'UC网盘'
+    };
+    var PAN_TIPS = {
+        pan_ali: '公开分享可直接解析，一般无需配置',
+        pan_baidu: '需登录 Cookie，接口变动较频繁',
+        pan_quark: '需登录 Cookie，支持加密分享',
+        pan_tianyi: '需登录 Cookie，个人盘/家庭云均可',
+        pan_115: '需登录 Cookie，老接口可能失效',
+        pan_uc: '需登录 Cookie，与夸克同源'
+    };
+
+    function panState(pid) {
+        var p = App.custom.pan[pid];
+        if (!p) { p = { shareUrl: '', files: [], picked: {} }; App.custom.pan[pid] = p; }
+        return p;
+    }
+
+    /** App.sources 里的本地书源对象（启用/停用开关要读它的 enabled） */
+    function localSrc() {
+        var arr = App.sources || [];
+        for (var i = 0; i < arr.length; i++) if (arr[i].id === 'local') return arr[i];
+        return null;
+    }
+
+    function panSrc(pid) {
+        var arr = App.sources || [];
+        for (var i = 0; i < arr.length; i++) if (arr[i].id === pid) return arr[i];
+        return null;
+    }
+
+    /** 文件大小人性化 */
+    function panSize(n) {
+        n = n || 0;
+        if (n >= 1073741824) return (n / 1073741824).toFixed(1) + 'G';
+        if (n >= 1048576) return (n / 1048576).toFixed(0) + 'M';
+        if (n >= 1024) return (n / 1024).toFixed(0) + 'K';
+        return n + 'B';
+    }
+
+    function paintCustom() {
+        var c = $('customPageContent');
+        if (!c) return;
+        var t = $('customTitle');
+        if (t) t.textContent = '自定义源';
+
+        var h = '';
+        h += '<div class="tip">本地书源播放本机音频（音乐/听书 App 下载的文件夹都能识别）；' +
+             '网盘接口把分享链接包成书源，解析后直接入队播放，自动下一集、' +
+             '历史续播、通知栏一样不少。</div>';
+
+        // ============ 本地书源卡片 ============
+        var ls = localSrc();
+        var lsOn = !!(ls && ls.enabled);
+        var st = App.custom;
+        h += '<div class="cu-card">';
+        h += '<div class="cu-hd">本地书源' +
+             '<label class="sw"><input type="checkbox" ' + (lsOn ? 'checked' : '') +
+             ' onchange="App.ui.customToggleLocal(this.checked)"><i></i></label></div>';
+        h += '<div class="cu-bd">';
+        h += '<div class="cu-desc">扫描本机存储里的音频文件，按所在文件夹自动分成一本书，' +
+             '文件名即章节名（001、002 自然排序）。全程本地播放，不耗流量。</div>';
+
+        // ★ v3.9.1：自定义扫描目录（默认扫全机，可指定一个文件夹）
+        if (st.root) {
+            h += '<div class="cu-root">扫描范围：<b>' + TS.esc(st.root) + '</b></div>';
+        } else {
+            h += '<div class="cu-root dim">扫描范围：全部目录</div>';
+        }
+        h += '<div class="cu-ops">';
+        h += '<button class="mini ghost" onclick="App.ui.customLocalPickDir()">选择文件夹</button>';
+        if (st.root) {
+            h += '<button class="mini ghost" onclick="App.ui.customLocalSetDir(\'\')">恢复全部目录</button>';
+        }
+        h += '</div>';
+
+        h += '<div class="cu-ops">';
+        h += '<button class="mini" onclick="App.ui.customLocalScan()">' +
+             (st.scanning ? '扫描中…' : '扫描本机音频') + '</button>';
+        h += '<button class="mini ghost" onclick="App.ui.customLocalBooks()">刷新列表</button>';
+        h += '</div>';
+
+        if (st.needPerm) {
+            h += '<div class="cu-warn">需要存储访问权限才能扫描音频文件 ' +
+                 '<button class="mini" onclick="App.ui.customAskPerm()">去授权</button></div>';
+        } else if (st.error) {
+            h += '<div class="cu-err">' + TS.esc(st.error) + '</div>';
+        } else if (st.count === 0) {
+            h += '<div class="cu-desc dim">没有找到音频文件。确认本机有音乐/有声书文件后重试；' +
+                 '部分系统需要手动授予「音乐和音频」权限。</div>';
+        } else if (st.count > 0) {
+            h += '<div class="cu-ok">已扫描到 ' + st.count + ' 本本地书</div>';
+        } else {
+            h += '<div class="cu-desc dim">尚未扫描，点上方「扫描本机音频」开始。</div>';
+        }
+
+        if (st.books.length) {
+            h += '<div class="cu-books">';
+            for (var i = 0; i < st.books.length; i++) {
+                var bk = st.books[i];
+                h += '<div class="cu-book" onclick="App.ui.customOpenLocal(' + i + ')">';
+                h += '<div class="cu-book-t">' + TS.esc(bk.title || bk.name || '未命名') + '</div>';
+                h += '<div class="cu-book-s">' + TS.esc(bk.url || '') + '</div>';
+                h += '</div>';
+            }
+            h += '</div>';
+        }
+        h += '</div></div>';
+
+        // ============ 网盘接口卡片（每平台一张） ============
+        for (var p = 0; p < PAN_LIST.length; p++) {
+            var pid = PAN_LIST[p];
+            var ps = panSrc(pid);
+            var pOn = !!(ps && ps.enabled && ps.panReady);
+            var pReady = !!(ps && ps.panReady);
+            var st2 = panState(pid);
+
+            h += '<div class="cu-card">';
+            h += '<div class="cu-hd">' + PAN_NAMES[pid] +
+                 '<span class="cu-badge' + (pReady ? ' ok' : '') + '">' +
+                 (pReady ? '已配置' : '未配置') + '</span>' +
+                 '<label class="sw"><input type="checkbox" ' + (pOn ? 'checked' : '') +
+                 ' onchange="App.ui.customTogglePan(\'' + pid + '\', this.checked)"><i></i></label></div>';
+            h += '<div class="cu-bd">';
+            h += '<div class="cu-desc">' + TS.esc(PAN_TIPS[pid]) + '</div>';
+            h += '<div class="cu-ops">';
+            h += '<button class="mini" onclick="App.ui.customPanCookie(\'' + pid + '\')">配置 Cookie</button>';
+            h += '<button class="mini ghost" onclick="App.ui.customPanClear(\'' + pid + '\')">清除</button>';
+            h += '</div>';
+
+            // ---- 解析分享链接 ----
+            h += '<div class="cu-parse">';
+            h += '<input class="cu-input" id="panShare_' + pid + '" placeholder="粘贴分享链接，如 ' +
+                 'https://pan.quark.cn/s/xxxx" value="' + TS.esc(st2.shareUrl || '') + '">';
+            h += '<button class="mini" onclick="App.ui.customPanParse(\'' + pid + '\")"' +
+                 (st2.parsing ? ' disabled' : '') + '>' +
+                 (st2.parsing ? '解析中…' : '解析') + '</button>';
+            h += '</div>';
+
+            if (st2.error) {
+                h += '<div class="cu-err">' + TS.esc(st2.error) + '</div>';
+            }
+
+            // ---- 文件清单 ----
+            if (st2.files.length) {
+                var nPick = 0, k;
+                for (k in st2.picked) if (st2.picked[k]) nPick++;
+                h += '<div class="cu-files">';
+                h += '<div class="cu-files-hd">解析到 ' + st2.files.length + ' 项' +
+                     (nPick ? '（已选 ' + nPick + '）' : '') + '</div>';
+                for (var fi = 0; fi < st2.files.length; fi++) {
+                    var f = st2.files[fi];
+                    // 勾选键用数组下标：文件 id 可能含特殊字符，拼进 HTML 属性不安全
+                    if (f.dir) {
+                        h += '<div class="cu-file dir">📁 ' + TS.esc(f.name || '') + '</div>';
+                        continue;
+                    }
+                    h += '<label class="cu-file">';
+                    h += '<input type="checkbox" ' + (st2.picked[fi] ? 'checked' : '') +
+                         ' onchange="App.ui.customPanPick(\'' + pid + '\', ' + fi +
+                         ', this.checked)">';
+                    h += '<span class="cu-file-t">' + TS.esc(f.name || '') + '</span>';
+                    h += '<span class="cu-file-s">' + panSize(f.size) + '</span>';
+                    h += '</label>';
+                }
+                h += '<div class="cu-ops">';
+                h += '<button class="mini ghost" onclick="App.ui.customPanAll(\'' + pid +
+                     '\', true)">全选</button>';
+                h += '<button class="mini ghost" onclick="App.ui.customPanAll(\'' + pid +
+                     '\', false)">全不选</button>';
+                h += '<button class="mini" onclick="App.ui.customPanPlay(\'' + pid + '\')">播放选中</button>';
+                h += '</div>';
+                h += '</div>';
+            }
+            h += '</div></div>';
+        }
+
+        h += '<div class="tip">网盘直链每次播放时现取、不落库（直链有时效）；' +
+             'Cookie 只存在本机。接口变动或 Cookie 失效时会给出明确错误，' +
+             '不会静默失败。</div>';
+        c.innerHTML = h;
+    }
+
+    // ---------- 本地书源交互 ----------
+
+    ui.customLocalScan = function () {
+        App.custom.scanning = true;
+        App.custom.error = '';
+        App.custom.needPerm = false;
+        paintCustom();
+        TS.call('localScan');
+    };
+
+    ui.customLocalBooks = function () {
+        TS.call('localBooks');
+    };
+
+    ui.customAskPerm = function () {
+        TS.call('requestStoragePerm');
+    };
+
+    /** 打开系统目录选择器（SAF），挑一个文件夹作为扫描根目录 */
+    ui.customLocalPickDir = function () {
+        TS.call('localPickDir');
+    };
+
+    /**
+     * 设置扫描目录（'' = 全部）。
+     * 选择器还原不出真实路径的 ROM 走这里：让用户直接粘贴路径。
+     */
+    ui.customLocalSetDir = function (dir) {
+        if (dir == null) return;
+        if (dir === '' ) {
+            TS.call('localSetDir', '');
+            return;
+        }
+        ui.inputSheet('扫描目录', dir, function (v) {
+            var p = (v || '').trim();
+            if (!p) { TS.toast('路径为空，已恢复扫描全部目录'); }
+            TS.call('localSetDir', p);
+        });
+    };
+
+    ui.customToggleLocal = function (on) {
+        TS.call('setSourceEnabled', 'local', !!on);
+        TS.toast(on ? '本地书源已启用' : '本地书源已停用');
+    };
+
+    /** 打开一本本地书 → 直接走标准详情流程（detailFromJson → 章节表 → 播放） */
+    ui.customOpenLocal = function (i) {
+        var b = App.custom.books[i];
+        if (!b) return;
+        // openBookObj 内部会 historyGet(b.key)，这里不重复调
+        ui.openBookJson(JSON.stringify(b));
+    };
+
+    window.onLocalScan = function (o) {
+        App.custom.scanning = false;
+        if (!o) { paintCustom(); return; }
+        if (o.ok) {
+            App.custom.count = o.count || 0;
+            App.custom.needPerm = !!o.needPermission;
+            App.custom.error = o.needPermission ? '' : (o.error || '');
+            if (typeof o.root === 'string') App.custom.root = o.root;
+            // 扫完顺便拉列表（扫描已把结果写进 native 缓存）
+            TS.call('localBooks');
+            TS.toast(o.needPermission ? '需要存储权限' :
+                ('扫描完成，找到 ' + (o.count || 0) + ' 本'));
+        } else {
+            App.custom.error = o.error || '扫描失败';
+        }
+        paintCustom();
+    };
+
+    window.onLocalBooks = function (o) {
+        if (o && o.ok && o.books) {
+            App.custom.books = o.books;
+            App.custom.count = o.books.length;
+        }
+        if (o && typeof o.root === 'string') App.custom.root = o.root;
+        // ★ v3.9.3：首页正停在「本地书源」视图 → 把扫到的书画进首页
+        if (App.home && App.home.src === 'local' && App.page === TABS.home) {
+            renderHomeLocalBooks((o && o.ok && o.books) || []);
+            return;
+        }
+        paintCustom();
+    };
+
+    /**
+     * ★ v3.9.1 自定义扫描目录的结果。
+     * 两种来源：① SAF 目录选择器（带 path）；② localSetDir 的回包（带 root）。
+     * 选择器在少数 ROM 上还原不出真实路径（path 为空）—— 这时退化成手动粘贴，
+     * 而不是报一句"失败"就把用户晾在那儿。
+     */
+    window.onLocalDir = function (o) {
+        if (!o) return;
+        if (!o.ok) {
+            if (!o.cancel) TS.toast('打不开目录选择器，可改用手动输入路径');
+            return;
+        }
+        // ① 来自 SAF 选择器：带 path 字段（可能为空）
+        if ('path' in o) {
+            if (o.path) {
+                App.custom.root = o.path;
+                TS.call('localSetDir', o.path);
+            } else {
+                // 少数 ROM 的 documentId 是私有 id，还原不出真实路径 ——
+                // 退化成手动输入，而不是干巴巴报一句"失败"
+                ui.inputSheet('扫描目录（绝对路径）', '/storage/emulated/0/', function (v) {
+                    var p = (v || '').trim();
+                    if (p) TS.call('localSetDir', p);
+                });
+                TS.toast('取不到该文件夹路径，请手动输入');
+            }
+            return;
+        }
+        // ② 来自 localSetDir 的回包：带 root / count
+        if (typeof o.root === 'string') {
+            App.custom.root = o.root;
+            if (o.needPermission) {
+                App.custom.needPerm = true;
+            } else if (o.count === 0) {
+                TS.toast(o.root ? '已设置，但该目录下没有找到音频文件'
+                                : '已恢复扫描全部目录');
+            } else {
+                TS.toast(o.root ? ('已设为扫描该目录，找到 ' + o.count + ' 本')
+                                : '已恢复扫描全部目录');
+            }
+            paintCustom();
+        }
+    };
+
+    /** 权限申请结果（MainActivity 回调推来） */
+    window.onLocalPerm = function (o) {
+        if (o && o.ok) {
+            TS.toast('已获得权限，正在重新扫描');
+            ui.customLocalScan();
+        } else {
+            App.custom.needPerm = true;
+            paintCustom();
+            TS.toast('未获得存储权限，无法扫描本地音频');
+        }
+    };
+
+    // ---------- 网盘接口交互 ----------
+
+    ui.customTogglePan = function (pid, on) {
+        TS.call('setSourceEnabled', pid, !!on);
+        TS.toast(on ? (PAN_NAMES[pid] || pid) + ' 已启用' :
+                       (PAN_NAMES[pid] || pid) + ' 已停用');
+    };
+
+    /** 配置 Cookie 弹窗（多行文本 + 平台指引） */
+    ui.customPanCookie = function (pid) {
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">' + TS.esc(PAN_NAMES[pid] || pid) + ' · 配置 Cookie</div>';
+        h += '<div class="cu-tip">' + TS.esc(panHelp(pid)).replace(/\n/g, '<br>') + '</div>';
+        h += '<textarea id="panCk" class="cu-ta" rows="4" placeholder="整条 Cookie 粘贴到这里">' +
+             TS.esc(panCookieGuess(pid)) + '</textarea>';
+        h += '<div class="sheet-item" onclick="App.ui.customPanSave(\'' + pid + '\')">保存</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+    };
+
+    /** 取 Cookie 指引文案（与 PanResolver.helpOf 对齐） */
+    function panHelp(pid) {
+        if (pid === 'pan_ali') {
+            return '公开分享一般无需 Cookie；仅在自己网盘/加密分享时需要。\n' +
+                   '浏览器登录 aliyundrive.com 后 F12 → 网络 → 任一条请求的 ' +
+                   'Request Headers 里整条 Cookie 复制过来。';
+        }
+        var host = {
+            pan_baidu: 'https://pan.baidu.com', pan_quark: 'https://pan.quark.cn',
+            pan_tianyi: 'https://cloud.189.cn', pan_115: 'https://115.com',
+            pan_uc: 'https://drive.uc.cn'
+        }[pid] || '';
+        return '电脑浏览器登录 ' + host + ' → 按 F12 → 网络 → 刷新页面 → ' +
+               '任一条请求 → Request Headers → Cookie，整条复制粘贴到下面。';
+    }
+
+    /**
+     * Cookie 回填。App.sources 里没有 cookie 原文（native 只给 panReady 布尔），
+     * 这里只能留空让用户重贴 —— 安全上也应该如此（不明文泄露）。
+     */
+    function panCookieGuess(pid) { return ''; }
+
+    ui.customPanSave = function (pid) {
+        var el = $('panCk');
+        var ck = el ? (el.value || '').trim() : '';
+        if (!ck) { TS.toast('Cookie 不能为空'); return; }
+        ui.closeSheet();
+        TS.call('panSave', pid, ck);
+    };
+
+    ui.customPanClear = function (pid) {
+        TS.call('panClear', pid);
+    };
+
+    ui.customPanParse = function (pid) {
+        var el = $('panShare_' + pid);
+        var url = el ? (el.value || '').trim() : '';
+        if (!url) { TS.toast('先粘贴分享链接'); return; }
+        var st = panState(pid);
+        st.shareUrl = url;
+        st.files = [];
+        st.picked = {};
+        st.error = '';
+        st.parsing = true;
+        paintCustom();
+        TS.call('panParse', pid, url);
+    };
+
+    ui.customPanPick = function (pid, fi, on) {
+        var st = panState(pid);
+        st.picked[fi] = !!on;
+        paintCustom();
+    };
+
+    ui.customPanAll = function (pid, on) {
+        var st = panState(pid);
+        for (var i = 0; i < st.files.length; i++) {
+            if (st.files[i].dir) continue;
+            st.picked[i] = !!on;
+        }
+        paintCustom();
+    };
+
+    /** 播放选中文件 → panPlay（native 侧组装队列并直接起播） */
+    ui.customPanPlay = function (pid) {
+        var st = panState(pid);
+        var picked = [];
+        for (var i = 0; i < st.files.length; i++) {
+            var f = st.files[i];
+            if (f.dir || !st.picked[i]) continue;
+            picked.push({ id: f.id, name: f.name, size: f.size, dir: false, token: f.token || '' });
+        }
+        if (!picked.length) { TS.toast('先勾选要播放的文件'); return; }
+        if (!st.shareUrl) { TS.toast('分享链接为空，请重新解析'); return; }
+        TS.call('panPlay', pid, st.shareUrl, JSON.stringify(picked));
+    };
+
+    window.onPanSaved = function (o) {
+        if (!o) return;
+        if (o.ok) {
+            TS.toast(o.ready ? '已保存，接口可用' : '已保存');
+        } else {
+            TS.toast('保存失败' + (o.error ? '：' + o.error : ''));
+        }
+        // panReady 变了 → 让 native 重推源列表，开关状态才准
+        TS.call('listSources');
+        paintCustom();
+    };
+
+    window.onPanFiles = function (o) {
+        var pid = o && o.platform;
+        if (!pid) return;
+        var st = panState(pid);
+        st.parsing = false;
+        if (o.ok) {
+            st.files = o.files || [];
+            st.picked = {};
+            st.error = '';
+            // 默认全选文件（文件夹项 PanResolver 已展平，通常剩下的都是音频）
+            for (var i = 0; i < st.files.length; i++) {
+                if (!st.files[i].dir) st.picked[st.files[i].id] = true;
+            }
+        } else {
+            st.files = [];
+            st.picked = {};
+            st.error = o.error || '解析失败';
+        }
+        paintCustom();
     };
 
     /** 二级页：某个分组下的全部源 */
@@ -4646,12 +5568,15 @@
             return;
         }
 
-        // ★ v3.7.14：多选逻辑整个下掉 —— 用户反馈"长按和选择有冲突"。
+        // ★ v3.7.14：长按不再"顺便进入多选"（用户反馈长按和选择有冲突）。
         //   现在长按只干一件事：在按点弹菜单（启用/停用、测试、改名、删除）。
-        //   不再有勾选框、不再有多选吸顶条、也不再需要批量开关。
+        // ★ v3.9.1：但「批量管理」这个需求是真实存在的（一次删十几个源、
+        //   整批停用），所以改成**显式进入**：点顶栏「批量」才进多选态，
+        //   勾选只通过行首的复选框，与长按手势彻底分开，不再打架。
         var canBatch = def.k !== 'builtin';
+        if (!canBatch && App.srcBatch) App.srcBatch = false;   // 内置组不支持
 
-        // 顶栏「全部开启 / 全部关闭」图标（内置源组不给）
+        // 顶栏「全部开启 / 全部关闭 / 批量管理」图标（内置源组不给）
         paintSrcGroupNav(canBatch);
 
         var h = '';
@@ -4661,7 +5586,10 @@
              '</span>' +
              '</div>';
         h += '<div class="srcops" style="padding:0 0 8px">' +
-             '<span class="srchint">长按任意一行打开菜单</span></div>';
+             '<span class="srchint">' +
+             (App.srcBatch ? '勾选要操作的书源，然后在下方工具条选择操作'
+                           : '长按任意一行打开菜单；点顶栏「批量」可多选') +
+             '</span></div>';
 
         for (var i = 0; i < list.length; i++) {
             var s = list[i];
@@ -4671,8 +5599,17 @@
             // ★ v3.7.13：所有点击/长按统一走 bindSrcPress 委托，
             //   不再在 HTML 上写一堆 onmousedown/ontouchstart（那种写法
             //   每行 4 个内联事件，既臃肿又会和委托打架）。
-            h += '<div class="' + cls + '" data-sid="' + escAttr(s.id) + '"' +
+            h += '<div class="' + cls + (App.srcBatch && App.srcSel[s.id] ? ' srcrow-sel' : '') +
+                 '" data-sid="' + escAttr(s.id) + '"' +
                  ' data-nm="' + escAttr(nm) + '">';
+
+            // ★ v3.9.1：批量态 —— 行首复选框（点它就勾/消，不参与长按手势）
+            if (App.srcBatch) {
+                h += '<label class="srcchk" onclick="event.stopPropagation()">' +
+                     '<input type="checkbox" ' + (App.srcSel[s.id] ? 'checked' : '') +
+                     ' onchange="App.ui.srcSelToggle(\'' + escAttr(s.id) +
+                     '\', this.checked)"><i></i></label>';
+            }
 
             h += '<div class="srcinfo">';
             h += '<div class="srcname">' + TS.esc(nm) + '</div>';
@@ -4688,11 +5625,13 @@
                  '</div>';
             h += '</div>';
 
-            // 行内开关
-            h += '<label class="sw" onclick="event.stopPropagation()">' +
-                 '<input type="checkbox" ' + (s.enabled ? 'checked' : '') +
-                 ' data-toggle="' + escAttr(s.id) + '">' +
-                 '<i></i></label>';
+            // 行内开关（批量态隐藏：这时行首是复选框，两个圈套在一起容易误点）
+            if (!App.srcBatch) {
+                h += '<label class="sw" onclick="event.stopPropagation()">' +
+                     '<input type="checkbox" ' + (s.enabled ? 'checked' : '') +
+                     ' data-toggle="' + escAttr(s.id) + '">' +
+                     '<i></i></label>';
+            }
             h += '</div>';
         }
 
@@ -4705,12 +5644,170 @@
         } else if (def.k === 'py') {
             h += '<div class="tip">Python 源由 .py 脚本提供，可以单独删除。' +
                  '长按任意一行打开菜单：启用/停用、测试连通、改名、删除。</div>';
+            // ★ v3.9.1：Python 源排障入口 —— 解释器没起来 / 缺三方模块时，
+            //   光看"源搜不出东西"完全无法定位，这里给两个按钮：
+            //   「重新加载」催一次补登记，「运行自检」看 Python 侧到底缺什么。
+            h += '<div class="srcops" style="padding:4px 14px 14px">' +
+                 '<button class="mini" onclick="App.ui.pyReload()">重新加载 Python 源</button>' +
+                 '<button class="mini ghost" onclick="App.ui.pySelfTest()">运行自检</button>' +
+                 '</div>';
         } else {
             h += '<div class="tip">长按任意一行打开菜单：启用/停用、测试连通、改名、删除。</div>';
         }
+
+        // ★ v3.9.1：批量态的底部工具条（贴在内容末尾，不挡列表）
+        if (App.srcBatch) {
+            var n = 0, sid;
+            for (sid in App.srcSel) if (App.srcSel[sid]) n++;
+            h += '<div class="srcbatchbar" id="srcBatchBar">';
+            h += '<span class="sbb-cnt">已选 <b>' + n + '</b> / ' + list.length + '</span>';
+            h += '<div class="sbb-ops">';
+            h += '<button class="mini ghost" onclick="App.ui.srcSelAll(true)">全选</button>';
+            h += '<button class="mini ghost" onclick="App.ui.srcSelInverse()">反选</button>';
+            h += '<button class="mini" onclick="App.ui.srcSelEnable(true)">启用</button>';
+            h += '<button class="mini" onclick="App.ui.srcSelEnable(false)">停用</button>';
+            // ★ v3.9.4：内置源组（builtin）与自定义源组（custom：本地书源 +
+            //   网盘接口）都不给删除 —— 这两类源在 native 里注册为 builtin，
+            //   removeSourceById 一律返回 false，点了只会得到"删除 0 个"的空结果。
+            //   自定义源组只需启用/停用。
+            if (def.k !== 'builtin' && def.k !== 'custom') {
+                h += '<button class="mini danger" onclick="App.ui.srcSelDelete()">删除</button>';
+            }
+            h += '<button class="mini ghost" onclick="App.ui.srcBatchToggle()">完成</button>';
+            h += '</div></div>';
+        }
+
         c.innerHTML = h;
         bindSrcPress(c);
     }
+
+    // ==================== ★ v3.9.1 源分组批量管理 ====================
+
+    /**
+     * 进入 / 退出批量态。
+     *
+     * <p>刻意**不用长按进入**（v3.7.14 的教训：长按和选择会打架），
+     * 而是由顶栏「批量」按钮显式进入；退出时清空勾选，不留隐形状态。
+     */
+    ui.srcBatchToggle = function () {
+        App.srcBatch = !App.srcBatch;
+        App.srcSel = {};
+        paintSrcGroup();
+        if (App.srcBatch) TS.toast('已进入批量管理，勾选后选择操作');
+    };
+
+    /** 勾选 / 取消勾选某个源 */
+    ui.srcSelToggle = function (id, on) {
+        if (!App.srcSel) App.srcSel = {};
+        if (on) App.srcSel[id] = true; else delete App.srcSel[id];
+        // 只更新计数，不整页重绘（重绘会让复选框失焦、列表跳回顶部）
+        var bar = $('srcBatchBar');
+        if (bar) {
+            var n = 0, sid;
+            for (sid in App.srcSel) if (App.srcSel[sid]) n++;
+            var box = bar.querySelector('.sbb-cnt');
+            if (box) box.innerHTML = '已选 <b>' + n + '</b>';
+            var row = document.querySelector('.srcrow[data-sid="' +
+                      String(id).replace(/"/g, '\\"') + '"]');
+            if (row) row.classList[on ? 'add' : 'remove']('srcrow-sel');
+        }
+    };
+
+    /** 全选 / 全不选 */
+    ui.srcSelAll = function (on) {
+        var list = (bucketsOf()[App.srcGroupKey]) || [];
+        App.srcSel = {};
+        if (on) {
+            for (var i = 0; i < list.length; i++) App.srcSel[list[i].id] = true;
+        }
+        paintSrcGroup();
+    };
+
+    /** 反选 */
+    ui.srcSelInverse = function () {
+        var list = (bucketsOf()[App.srcGroupKey]) || [];
+        var next = {};
+        for (var i = 0; i < list.length; i++) {
+            if (!App.srcSel[list[i].id]) next[list[i].id] = true;
+        }
+        App.srcSel = next;
+        paintSrcGroup();
+    };
+
+    /** 选中的源统一启用/停用（复用 onSourceChanged 里的批量计数，只弹一次提示） */
+    ui.srcSelEnable = function (on) {
+        var todo = [];
+        var sid;
+        for (sid in App.srcSel) if (App.srcSel[sid]) todo.push(sid);
+        if (!todo.length) { TS.toast('还没有勾选任何书源'); return; }
+        App._bulkSw = { left: todo.length, total: todo.length, on: !!on };
+        for (var i = 0; i < todo.length; i++) TS.call('setSourceEnabled', todo[i], !!on);
+        // 本地先乐观同步，UI 立刻反应（回调回来会再校一次）
+        var list = (bucketsOf()[App.srcGroupKey]) || [];
+        for (var k = 0; k < list.length; k++) {
+            if (App.srcSel[list[k].id]) list[k].enabled = !!on;
+        }
+        paintSrcGroup();
+        TS.toast((on ? '正在启用 ' : '正在停用 ') + todo.length + ' 个源…');
+    };
+
+    /** ★ v3.9.1：重新登记 .py 源（解释器起来得比源表登记晚时手工催一次） */
+    ui.pyReload = function () {
+        TS.toast('正在重新加载 Python 源…');
+        TS.call('pyReload');
+    };
+
+    /** ★ v3.9.1：Python 运行自检，把解释器/模块缺什么讲清楚 */
+    ui.pySelfTest = function () {
+        TS.toast('正在自检 Python 运行时…');
+        TS.call('pySelfTest');
+    };
+
+    window.onPySelfTest = function (o) {
+        if (!o) { TS.toast('自检无返回'); return; }
+        var d = o.detail || {};
+        var lines = [];
+        lines.push('解释器状态：' + (o.available ? '已就绪' : (o.starting ? '启动中' : '不可用')));
+        if (o.error) lines.push('错误：' + o.error);
+        if (d.python) lines.push('Python：' + d.python);
+        var mods = d.modules || {};
+        var bad = [];
+        var mk;
+        for (mk in mods) if (mods[mk] !== 'ok') bad.push(mk + ' → ' + mods[mk]);
+        if (bad.length) {
+            lines.push('缺失模块：');
+            for (var i = 0; i < bad.length; i++) lines.push('· ' + bad[i]);
+        } else if (d.python) {
+            lines.push('关键模块：全部可用');
+        }
+        if (d.base_spider) lines.push('base.spider：' + d.base_spider);
+        // 内容较长，用一个可滚动的确认式弹层展示（不是 toast，免得看不全）
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">Python 运行自检</div>';
+        h += '<div class="cf-msg" style="max-height:52vh;overflow:auto;text-align:left">' +
+             TS.esc(lines.join('\n')).replace(/\n/g, '<br>') + '</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
+        h += '</div></div>';
+        sheet(h);
+    };
+
+
+    /** 批量删除（内置源组走不到这里） */
+    ui.srcSelDelete = function () {
+        var todo = [];
+        var sid;
+        for (sid in App.srcSel) if (App.srcSel[sid]) todo.push(sid);
+        if (!todo.length) { TS.toast('还没有勾选任何书源'); return; }
+        var g = groupDef(App.srcGroupKey);
+        ui.confirmSheet('确定删除选中的 ' + todo.length + ' 个' + g.t +
+                        '？删除后需要从原文件/链接重新导入。', function () {
+            App._bulkDel = { left: todo.length, total: todo.length, done: 0 };
+            for (var i = 0; i < todo.length; i++) TS.call('removeSourceById', todo[i]);
+            App.srcSel = {};
+            TS.toast('正在删除 ' + todo.length + ' 个源…');
+        });
+    };
 
     /**
      * ★ v3.7.13：源分组的**事件委托**。
@@ -4889,25 +5986,33 @@
               'onclick="App.ui.srcToggleAll(false)">' +
               '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2.5a7.5 7.5 0 110 15 7.5 7.5 0 010-15z"/></svg>' +
               '<i>全关</i>' +
+            '</span>' +
+            // ★ v3.9.1：批量管理（勾选后统一启用/停用/删除）
+            '<span class="bulkbtn' + (App.srcBatch ? ' active-on' : '') + '" ' +
+              'title="勾选多个书源后批量启用/停用/删除" ' +
+              'onclick="App.ui.srcBatchToggle()">' +
+              '<svg viewBox="0 0 24 24"><path d="M3 5h2v14H3V5zm4 0h14v2H7V5zm0 5h14v2H7v-2zm0 5h14v2H7v-2z"/></svg>' +
+              '<i>' + (App.srcBatch ? '退出' : '批量') + '</i>' +
             '</span>';
     }
 
     // ==================== ★ v3.7.4 源批量管理 ====================
 
     /**
-     * ★ v3.7.14：多选态已整体移除（用户反馈「长按和选择有冲突」）。
+     * ★ v3.7.14：长按多选态曾整体移除（长按和选择有冲突）。
      *
-     * <p>下面这些接口保留为空实现，只为兼容可能残留的旧调用点
-     * （比如设置页深链、老版本缓存里的内联事件）。真正的交互只有一条：
-     * 长按/短按一行 → {@link srcRowMenu} 弹菜单。
+     * <p>但 ★ v3.9.1 起「批量管理」作为**显式入口**回归（顶栏「批量」按钮），
+     * 真正的实现见上面的 srcBatchToggle / srcSelAll / srcSelInverse /
+     * srcSelEnable / srcSelDelete。
+     *
+     * <p>⚠️ 这里**绝不能再写** srcSelAll / srcSelInvert / srcSelDelete 的空实现 ——
+     * 本块在文件里位于真实实现之后，赋值会把真函数覆盖成空壳，
+     * 表现就是「批量管理里勾选后点删除毫无反应」（v3.9.3 的线上问题）。
+     * 只保留确实没有新实现、仅为兼容旧调用点的空壳。
      */
     ui.enterSrcMulti = function () {};
     ui.exitSrcMulti = function () {};
-    ui.srcLockedTip = function () { TS.toast('内置源只能停用，不能删除'); };
     ui.toggleSrcSel = function () {};
-    ui.srcSelAll = function () {};
-    ui.srcSelInvert = function () {};
-    ui.srcSelDelete = function () {};
     ui.doBatchDeleteSrc = function () {};
 
     /**
@@ -5049,9 +6154,10 @@
      * onSourceList（整表），所以这里只做本地移除 + 提示，避免多一次无效的 listSources 往返。
      */
     window.onCustomChanged = function (o) {
-        // ★ v3.7.14：批量删除（_batchDel）随多选一起下掉了，这里只处理单个删除。
-        //   保留 batch 分支的空壳判断，防止老缓存里还留着 _batchDel 的残留状态。
-        var batch = App._batchDel;
+        // ★ v3.9.1：批量删除回来了（源分组「批量管理」→ 勾选 → 删除）。
+        //   _bulkDel 是本版的新计数器；_batchDel 是 v3.7.14 前的旧名，
+        //   两个都认，防止老缓存里还留着旧状态导致逐条弹提示。
+        var batch = App._bulkDel || App._batchDel;
         if (batch && batch.left > 0) {
             batch.left--;
             if (o && o.ok) batch.done++;
@@ -5061,7 +6167,11 @@
             }
             if (batch.left <= 0) {
                 var done = batch.done, total = batch.total;
+                // ★ v3.9.4：两个计数器都要清！原来只清 _batchDel，
+                //   _bulkDel 残留（left=0）会让下一次单条删除走进本分支却不减计数，
+                //   表现为"再删就不弹提示"。两边一起置空。
                 App._batchDel = null;
+                App._bulkDel = null;
                 TS.toast(done === total
                     ? ('已删除 ' + done + ' 个源')
                     : ('已删除 ' + done + ' 个，' + (total - done) + ' 个失败'));
@@ -5106,6 +6216,10 @@
             paintSrcGroup();
         } else if (App.page === SUBS.sources) {
             paintSources();
+        } else if (App.page === SUBS.custom) {
+            // ★ v3.9.0：自定义源页的开关状态来自 App.sources，
+            //   源列表刷新后要重绘（否则 Cookie 配好了徽章还是「未配置」）
+            paintCustom();
         }
         if (App.page === TABS.home) paintHomeSources();
     }
@@ -6730,6 +7844,36 @@
             : (o.log || '');
     };
 
+    /** ★ v3.8.4：小组件诊断日志页 */
+    ui.openWgDiag = function () {
+        goSub('wgdiag');
+        var el = $('wgdiagBody');
+        if (el) el.textContent = '正在读取…';
+        TS.call('widgetDiagLog');
+    };
+
+    ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
+
+    ui.wgDiagClear = function () { TS.call('widgetDiagClear'); };
+
+    ui.wgDiagCopy = function () {
+        var el = $('wgdiagBody');
+        var txt = el ? el.textContent : '';
+        if (!txt || txt === '正在读取…') { TS.toast('暂无内容'); return; }
+        try { TS.call('copyText', txt); TS.toast('诊断日志已复制'); }
+        catch (e) { TS.toast('复制失败'); }
+    };
+
+    /** 原生回调：小组件诊断日志 */
+    window.onWgDiagLog = function (o) {
+        o = o || {};
+        var el = $('wgdiagBody');
+        if (!el) return;
+        el.textContent = o.empty
+            ? '（暂无小组件记录 —— 添加一次桌面小组件后再来看）'
+            : (o.log || '');
+    };
+
     // ==================== ★ v3.8.0 备份与恢复 ====================
     //
     // 页面结构：概览 → 本地备份 → 网络备份(WebDAV) → 自动备份 → 执行记录。
@@ -7336,6 +8480,127 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.11',
+            date: '2026-10-17',
+            fixes: [
+                '★ 修复：坚果云 WebDAV 测试连接报「没有权限（403）」',
+                '   · 根因：坚果云对 /dav/ 根目录限制较多，列根目录会被拒，',
+                '     但对子目录读写完全正常，旧测试逻辑被误判为连接失败',
+                '   · 测试改为三级降级：测根 → 测备份目录 → 真实写入探测（PUT+DELETE）',
+                '   · 403 提示文案补充坚果云专属排查建议（子目录地址/流量/频率限制）'
+            ]
+        },
+        {
+            ver: '3.9.10',
+            date: '2026-10-16',
+            fixes: [
+                '★ 修复：聚合源 jar 导入失败（「jar 里没有找到可用的书源」）',
+                '   · 根因：Android 10+ 无法再反射枚举 dex 类名，插件入口 SourceEntry 找不到',
+                '   · 现改为直接解析 dex 字符串池提取类名，不依赖系统内部 API',
+                '   · 兼容 zip 套 jar 的双层导入'
+            ]
+        },
+        {
+            ver: '3.9.9',
+            date: '2026-10-16',
+            fixes: [
+                '★ 新增：支持导入 eprendre「我的听书」格式的聚合源插件（sources_by_agg 等 jar）',
+                '   · 内置聚合包里的 20+ 源（番茄听书/博看/B站/酷我听/懒人听书 等）可搜索、看详情、播放',
+                '   · 补齐宿主兼容层：直链取链器、Fuel 网络库最小实现（B站/博看 需要）',
+                '   · 打包 okhttp + okio 运行库，插件按名链接零缺失'
+            ]
+        },
+        {
+            ver: '3.9.8',
+            date: '2026-10-16',
+            fixes: [
+                '★★★ 修复「播放/暂停按钮疯狂抽搐」：v3.9.7 新增的"其他媒体打断"监听有个死循环 —— 暂停自己后自己的媒体流退出活跃列表，下一轮被误判成"别人停了"→自动恢复→又看到别人→再暂停，循环往复。已重写判定状态机：暂停期间绝不自动恢复，直到别的媒体真正全部停止',
+                '★★ 定时关闭面板改为下拉式：倒计时、按集停止、可选时段各用下拉框选择，选中即生效 —— 旧版逐行平铺超出一屏，底部选项（保存时段/取消）点不到',
+                '★ 所有底部弹层加了高度保险：内容超过屏幕 86% 时面板内部自动滚动，不会再被截断'
+            ],
+        },
+        {
+            ver: '3.9.7',
+            date: '2026-10-15',
+            fixes: [
+                '★★ 定时关闭新增「按集停止」：可选播完本集 / 再听 2、3、5 集后自动暂停，与倒计时、时段关闭相互独立、先到先停；定时按钮和桌面小组件都会显示剩余集数',
+                '★★ 修复「播放过的章节再点无法播放」：听完（或跳过片尾）的一集会把续播位置记到片尾附近，换源重解析后音频实际时长对不上，拿着超界位置反复 seek 失败 → 所有源都"救不活"。现在起播位置贴近/超出时长就自动从头播，自愈时同一位置二次失败也会改从头试',
+                '★ 修复「已收听」标记叠加显示两个徽标（绿色圆圈「已」+ 绿色对勾挤在一起）的排版问题：现在只保留一个低调的灰绿小对勾，已听集号同时变淡，视觉更协调',
+                '★★ 修复「设置了暂停播放，其他媒体还是打断不了」：以前只靠音频焦点（对方 App 得"自觉"申请才有效），很多国产 App 根本不申请。现在额外监听系统媒体播放状态，检测到别的 App 在放声音就按你的策略暂停/降音，对方停了自动恢复（Android 8.0+）',
+                '★ 音量增益调低：上限 300% → 200%，放大幅度减半（200% ≈ +3dB）——原来的高档位实测是削波爆音不是更响，现在温和放大不劈'
+            ],
+        },
+        {
+            ver: '3.9.6',
+            date: '2026-10-14',
+            fixes: [
+                '★★★ 找到「一打开就闪退」的**真正原因**并修复：读取「播放倍速」设置时用了 SharedPreferences.getFloat()，而手机里这个值被存成了**整数**，一读就抛 ClassCastException，直接把 MainActivity 的启动带崩 → 点图标必闪退。现已改为**宽容读取**（整数/长整数/浮点/字符串都能正确转成倍速），并把坏值自动改写成正确类型（自愈）——升级后**不用卸载重装**，打开即好',
+                '★★ 堵住坏值的来源：恢复备份时，倍速这类「浮点设置项」以前会被写成整数（备份 JSON 里是整数时），现改为强制按浮点写回。以后恢复备份不会再踩这个坑',
+                '★ 倍速读取加范围兜底：任何非法值（0、负数、超大）一律回落到 1.0 倍速，不再让异常值影响启动',
+                '★ 沿用 v3.9.5 的成果：App 启动时各初始化步骤仍全部独立隔离，单点失败不再导致整个 App 打不开；崩溃日志双写（内部 + /sdcard/Android/data/com.tingshu.app/files/crash.log），排查更快'
+            ],
+            adds: []
+        },
+        {
+            ver: '3.9.5',
+            date: '2026-10-14',
+            fixes: [
+                '★★ 继续修复「一打开就闪退」：v3.9.4 的通知小图标修复没解决问题，说明崩溃点不在那里。本版把 App.onCreate 里**每一个初始化步骤都单独隔离**（设置、Cookie、播放状态、书源注册、Python 宿主、缓存、数据库），任何一步失败只让对应功能不可用，**不再让整个 App 打不开**',
+                '★★ 崩溃日志现在**一定会留下**：把崩溃处理器提前到 Application 启动的第一行（原来排在初始化中段，一旦初始化崩溃它还没挂上，所以什么日志都没有）；并且**同时写一份到外部目录** /sdcard/Android/data/com.tingshu.app/files/crash.log（免权限），用「文件管理」直接就能找到，不用再连电脑抓 logcat',
+                '★ 初始化失败的步骤会以「初始化失败（已隔离，未闪退）」的形式记进同一份崩溃日志，即使是没到崩溃程度的错误也能看到是哪一步出的问题',
+                '★ 沿用 v3.9.4 的通知小图标修复（仍指向 App 自绘图标）与批量管理删除修复'
+            ],
+            adds: []
+        },
+        {
+            ver: '3.9.4',
+            date: '2026-10-14',
+            fixes: [
+                '★★ 修复「新版一打开就闪退」：通知栏播放控制的**小图标**误用了系统框架资源（android.R.drawable.*）。Android 规定前台服务通知的小图标必须来自本 App，用框架资源会在 startForeground() 时抛异常直接闪退。现已改回 App 自绘的品牌图标',
+                '★★ 修复书源管理「分组的批量管理」里勾选后点删除毫无反应：一段 v3.7.14 时期的旧空实现残留在文件末尾，把真正的删除/全选/反选函数覆盖成了空壳。已移除残留，并给自定义源组隐藏无意义的「删除」按钮（本地书源 / 网盘接口本就不可删）',
+                '★ 修复章节列表「已收听」标记不刷新的老问题复用：一处过期实现又把详情页改回整页重绘，导致滑动时卡顿并弹回顶部。已就地刷新（只增删「已」徽标）',
+                '★ 修复首页「本地书源」视图下扫描完成后不显示书：扫描回包的分支恢复',
+                '★ 删除文件内多段重复代码（自定义源页整段重复、Python 自检块重复），包体与运行都更干净'
+            ],
+            adds: []
+        },
+        {
+            ver: '3.9.0',
+            date: '2026-10-14',
+            fixes: [],
+            adds: [
+                '★★ 桌面小组件白板重写：全新深色渐变卡片设计 —— 不透明深底（任意壁纸上白字都清晰）、封面右上角「正在播」状态点、四键全部坐上圆形背板（播放键用主题色渐变圆突出，比以前更好点）、进度条加粗到 6dp 且已播部分用暖色渐变。功能不变：可点进度条（20 格）、四键控制、点封面进 App',
+                '★★ 新增「自定义源」：书源管理里置顶的「自定义源」组，内含两块能力。① 本地书源：扫描本机音频文件，按所在文件夹自动分成一本书（文件名即章节名，001/002 自然排序），全程本地播放不耗流量；② 主流网盘接口：阿里云盘、百度网盘、夸克网盘、天翼云盘、115网盘、UC网盘六个平台，粘贴分享链接解析出文件清单，勾选后直接入队播放 —— 自动下一集、历史续播、通知栏、小组件全部自动生效',
+                '★★ 定时关闭升级为「进程级常驻」：以前倒计时长在播放页里，一退页面就停；现在由 App 进程自己计时，退后台、锁屏、甚至进程重启后都会恢复，到点照常暂停',
+                '★ 定时关闭新增「可选时段」：可再选一个时段（如 22:00–06:00，支持跨午夜），只有当前时刻在时段内倒计时才递减；时段外自动停表、剩余时间保留，进入时段后继续。适合「只想睡前听、不希望白天也计时」的场景',
+                '★ 选集页新增「已收听」标记：听过的集在章节列表里显示绿色小对勾（进度表里有过记录的就算），追长书时一眼看到哪集听过、哪集没听过',
+                '★ 小组件新增两个角标：当前倍速（≠1.0 才显示，如「2×」）和定时关闭剩余时间（如「⏱ 23分」/「⏱ 停表」），播放状态一眼可见'
+            ]
+        },
+        {
+            ver: '3.8.5',
+            date: '2026-10-13',
+            fixes: [
+                '★★ 桌面小组件推倒重写，解决「多台手机全部用不了」：前几版小组件的空白，是**桌面绘制卡片时解析不了我们自绘的那些样式**造成的 —— 背景一旦加载失败就回落到系统白底，而字和图都是白的，看上去就是一张白卡片（进度条还会退化成一个小圆圈）。本版把所有需要桌面去解析的自绘样式全部去掉：底色直接用固定颜色、进度条改成 20 个小格子直接上色、封面直接传图片，只保留系统自带图标。白卡、圆圈、内容残缺这些情况应该都能恢复正常',
+                '★★ 修复返回键逻辑太乱：以前返回键完全没用上前端的处理结果，于是"打开了更多菜单或倍速面板，按返回却在切页/退出"。现在返回键一次收一层：先关弹窗 → 关长按菜单 → 折叠倍速/音量面板 → 退出全屏播放页 → 退回上一级 → 回首页',
+                '★ 新增首页返回退出确认：在首页按返回会弹「确定要退出吗？」，点「退出」才关闭 App；若 2.5 秒内连按两次返回则直接退出，不用等弹窗'
+            ],
+            adds: []
+        },
+        {
+            ver: '3.8.4',
+            date: '2026-10-13',
+            fixes: [
+                '★★ 修复「跳过片头 / 跳过片尾」功能丢失：上一版构建时误用了旧版文件，把这两个功能整个冲掉了。本版完整恢复，播放页「更多」菜单里照旧能开关和微调（0~300 秒）',
+                '★★ 修复桌面小组件还是一片空白：这次把能想到的宿主兼容性问题全部排掉了 —— 预览图换成普通位图（原来指向自适应图标，部分桌面加载不了）、进度条改用框架自带样式（不再依赖桌面解析主题属性）、四个按键全部换成系统框架位图（不再用自绘矢量，避免桌面进程加载资源失败）、绘制过程改成一段一段独立 try，任何一段出问题也只丢那一段的功能而不是整块变空白。另外加了诊断日志，万一还有问题也能一眼定位',
+                '★ 修复源管理页「导入源 / 导出分享 / 批量验证」这一行在窄屏手机上排布错乱：按钮换行挤压，「N / N 启用」被孤零零挤到第二行。现在窄屏下压缩按钮内边距、计数固定不换行，一排整齐显示',
+                '★★ 修复状态栏（通知栏）图标不是上传的枫兮听书图标：播放通知、进度刷新通知、悬浮球通知的小图标全部换成上传的 App 图标',
+                '★ 修复系统媒体卡片（锁屏 / 通知播放控制）不显示可拖动进度条：开播瞬间往往还拿不到总时长，时长元数据一直没补进去，系统就永远不画进度条。现在时长一到位立即补写；Android 11 以上改由系统依据播放位置自动绘制，不再与手写进度条互相冲突',
+                '★ 修正播放倍速在系统媒体控件里不可用：声明的动作位标志写错了一位（1<<16 应为 1<<30），导致部分系统（如原子播放器）读不到倍速能力'
+            ],
+            adds: []
+        },
         {
             ver: '3.8.2',
             date: '2026-10-13',

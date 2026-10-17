@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.0 封面右上角状态点 - 暂停态（wgLive 的灰色变体）。
+
+  暂停/有内容未播放 = 灰点；播放中换 wg_live_dot（暖色）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#99FFFFFF"/>
+    <stroke android:width="1dp" android:color="#331B2133"/>
+</shape>
