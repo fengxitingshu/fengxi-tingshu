@@ -54,6 +54,11 @@ public final class WebDavClient {
     private static final int CONNECT_TIMEOUT = 12000;
     private static final int READ_TIMEOUT = 30000;
 
+    /** 认证协议：自动（默认，先试 Basic 遇 Digest 质询自动切）/ 仅 Basic / 仅 Digest */
+    public static final String AUTH_AUTO = "auto";
+    public static final String AUTH_BASIC = "basic";
+    public static final String AUTH_DIGEST = "digest";
+
     /** 远端文件项 */
     public static final class DavFile {
         public String name = "";
@@ -72,13 +77,15 @@ public final class WebDavClient {
         public byte[] bytes;
         /** 是否为反射失败（用于给出更有针对性的提示） */
         public boolean reflectFailed;
+        /** 401 时服务端返回的 WWW-Authenticate 头（用于判断 Basic/Digest） */
+        public String wwwAuth;
     }
 
     // ==================== 对外接口 ====================
 
     /** 探测可达性 + 认证是否正确（PROPFIND Depth:0 打到 baseUrl） */
-    public static Result test(String baseUrl, String user, String pass) {
-        return request("PROPFIND", baseUrl, user, pass, null, null, "0", false, CONNECT_TIMEOUT);
+    public static Result test(String baseUrl, String user, String pass, String authType) {
+        return request("PROPFIND", baseUrl, user, pass, null, null, "0", false, CONNECT_TIMEOUT, authType);
     }
 
     /**
@@ -98,8 +105,8 @@ public final class WebDavClient {
      *       写入成功说明认证与读写权限全部正常。</li>
      * </ol>
      */
-    public static Result smartTest(String baseUrl, String user, String pass, String dir) {
-        Result r = test(baseUrl, user, pass);
+    public static Result smartTest(String baseUrl, String user, String pass, String dir, String authType) {
+        Result r = test(baseUrl, user, pass, authType);
         if (r.ok || r.code == 207) return r;
 
         String base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
@@ -110,11 +117,11 @@ public final class WebDavClient {
         if (d.length() > 0) {
             // 2) 先确保备份子目录存在（坚果云要求目标文件夹已存在/现建），
             //    再列它、再真实写入探测，三级全部贴近真实备份动作
-            ensureDir(base, user, pass, d);   // 失败不阻断，下面用探针兜底
+            ensureDir(base, user, pass, d, authType);   // 失败不阻断，下面用探针兜底
 
             // 2a) 备份目录本身可列即可用
             Result r2 = request("PROPFIND", base + d + "/", user, pass,
-                    null, null, "0", false, CONNECT_TIMEOUT);
+                    null, null, "0", false, CONNECT_TIMEOUT, authType);
             if (r2.ok || r2.code == 207) {
                 r2.ok = true;
                 r2.error = "";
@@ -123,10 +130,10 @@ public final class WebDavClient {
             // 3) 写入探测：PUT + DELETE（最接近真实备份路径的动作）
             byte[] probe = "fengxi-probe".getBytes();
             Result r3 = request("PUT", base + d + "/.fx-probe.txt", user, pass,
-                    null, probe, null, false, READ_TIMEOUT);
+                    null, probe, null, false, READ_TIMEOUT, authType);
             if (r3.ok) {
                 request("DELETE", base + d + "/.fx-probe.txt", user, pass,
-                        null, null, null, false, READ_TIMEOUT);
+                        null, null, null, false, READ_TIMEOUT, authType);
                 r3.code = 207;   // 对上层表示「连接与读写全部正常」
                 r3.error = "";
                 return r3;
@@ -140,7 +147,7 @@ public final class WebDavClient {
      * 确保远端子目录存在。逐级 MKCOL（WebDAV 不允许一次建多级）。
      * <b>405 / 301 视为「已存在」，按成功处理。</b>
      */
-    public static Result ensureDir(String baseUrl, String user, String pass, String dir) {
+    public static Result ensureDir(String baseUrl, String user, String pass, String dir, String authType) {
         Result last = new Result();
         last.ok = true;
         last.code = 200;
@@ -153,7 +160,7 @@ public final class WebDavClient {
             if (seg == null || seg.length() == 0) continue;
             acc.append(seg).append('/');
             Result r = request("MKCOL", acc.toString(), user, pass, null, null, null,
-                    false, CONNECT_TIMEOUT);
+                    false, CONNECT_TIMEOUT, authType);
             // 201 新建成功；405 已存在（RFC 4918 说 405 Method Not Allowed）；
             // 301/302 部分服务端对已存在目录回重定向
             if (r.code == 201 || r.code == 405 || r.code == 301 || r.code == 302
@@ -169,30 +176,50 @@ public final class WebDavClient {
     }
 
     /** 上传文件（PUT，流式） */
-    public static Result put(String url, String user, String pass, File file) {
+    public static Result put(String url, String user, String pass, File file, String authType) {
         if (file == null || !file.isFile()) {
             Result r = new Result();
             r.error = "本地文件不存在";
             return r;
         }
-        return request("PUT", url, user, pass, file, null, null, false, READ_TIMEOUT);
+        return request("PUT", url, user, pass, file, null, null, false, READ_TIMEOUT, authType);
     }
 
     /** 上传字节（备用） */
-    public static Result put(String url, String user, String pass, byte[] data) {
-        return request("PUT", url, user, pass, null, data, null, false, READ_TIMEOUT);
+    public static Result put(String url, String user, String pass, byte[] data, String authType) {
+        return request("PUT", url, user, pass, null, data, null, false, READ_TIMEOUT, authType);
     }
 
-    /** 下载到文件（GET，流式，不整块进内存） */
-    public static Result getToFile(String url, String user, String pass, File dest) {
+    /** 下载到文件（GET，流式，不整块进内存）；authType 支持 Digest 质询重试 */
+    public static Result getToFile(String url, String user, String pass, File dest, String authType) {
+        String initAuth = AUTH_DIGEST.equals(authType) ? null : basicHeader(user, pass);
+        Result r = doGetToFile(url, user, pass, dest, initAuth);
+        if (r.code == 401 && r.wwwAuth != null && wantsDigest(authType)) {
+            java.util.Map<String, String> ch = parseWwwAuth(r.wwwAuth);
+            if ("digest".equals(ch.get("scheme"))) {
+                String dig = digestHeader("GET", digestUri(url), user, pass, ch);
+                if (dig != null) {
+                    Result r2 = doGetToFile(url, user, pass, dest, dig);
+                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType);
+                    return r2;
+                }
+            }
+        }
+        if (r.code == 401) r.error = better401(r.wwwAuth, authType);
+        return r;
+    }
+
+    /** 真正执行一次 GET 下载 */
+    private static Result doGetToFile(String url, String user, String pass, File dest, String authHeader) {
         Result r = new Result();
         HttpURLConnection conn = null;
         InputStream in = null;
         OutputStream out = null;
         try {
-            conn = open(url, user, pass);
+            conn = open(url, authHeader);
             conn.setRequestMethod("GET");
             r.code = conn.getResponseCode();
+            try { r.wwwAuth = conn.getHeaderField("WWW-Authenticate"); } catch (Throwable ignored) {}
             if (r.code != 200) {
                 r.error = httpError(r.code);
                 return r;
@@ -232,8 +259,8 @@ public final class WebDavClient {
     }
 
     /** 删除远端文件 */
-    public static Result delete(String url, String user, String pass) {
-        Result r = request("DELETE", url, user, pass, null, null, null, false, CONNECT_TIMEOUT);
+    public static Result delete(String url, String user, String pass, String authType) {
+        Result r = request("DELETE", url, user, pass, null, null, null, false, CONNECT_TIMEOUT, authType);
         // 204/200 都算成功；404 也算「已经没了」→ 当作成功
         if (r.code == 204 || r.code == 200 || r.code == 404) {
             r.ok = true;
@@ -246,10 +273,10 @@ public final class WebDavClient {
      * 列目录（PROPFIND Depth:1）。
      * <p>部分服务端不支持 Depth:1，此时返回空列表（调用方降级处理，不阻塞主流程）。
      */
-    public static List<DavFile> list(String baseUrl, String user, String pass, String dir) {
+    public static List<DavFile> list(String baseUrl, String user, String pass, String dir, String authType) {
         List<DavFile> out = new ArrayList<DavFile>();
         String url = joinUrl(baseUrl, dir);
-        Result r = request("PROPFIND", url, user, pass, null, null, "1", true, READ_TIMEOUT);
+        Result r = request("PROPFIND", url, user, pass, null, null, "1", true, READ_TIMEOUT, authType);
         if (!r.ok && r.code != 207) return out;
         String xml = r.body;
         if (xml == null || xml.length() == 0) return out;
@@ -275,15 +302,51 @@ public final class WebDavClient {
 
     // ==================== 核心请求 ====================
 
+    /**
+     * ★ 带认证协议处理的请求（对外）。
+     *
+     * <p>{@code authType} 取值：{@code auto}（默认，先试 Basic，遇 Digest 质询自动切）、
+     * {@code basic}（只用 Basic）、{@code digest}（先不带头，遇 Digest 质询再算）。
+     * 当服务端要求 Digest 而我们一开始用了 Basic（或根本没带）时，会在 401 后
+     * 自动应答 Digest 并重试一次 —— 这正是过去「报密码错误其实是无协议」的根因。
+     */
     private static Result request(String method, String url, String user, String pass,
                                   File bodyFile, byte[] bodyBytes, String depth,
-                                  boolean wantText, int readTimeout) {
+                                  boolean wantText, int readTimeout, String authType) {
+        // 初始认证头：digest 模式先不带头（等 401 质询），其余先发 Basic
+        String initAuth = AUTH_DIGEST.equals(authType) ? null : basicHeader(user, pass);
+
+        Result r = doRequest(method, url, user, pass, bodyFile, bodyBytes, depth,
+                wantText, readTimeout, initAuth);
+
+        // 401 + 服务端要求 Digest → 应答 Digest 并重试一次（仅当协议选择允许 digest）
+        if (r.code == 401 && r.wwwAuth != null && wantsDigest(authType)) {
+            java.util.Map<String, String> ch = parseWwwAuth(r.wwwAuth);
+            if ("digest".equals(ch.get("scheme"))) {
+                String uri = digestUri(url);
+                String dig = digestHeader(method, uri, user, pass, ch);
+                if (dig != null) {
+                    Result r2 = doRequest(method, url, user, pass, bodyFile, bodyBytes, depth,
+                            wantText, readTimeout, dig);
+                    if (r2.code == 401) r2.error = better401(r2.wwwAuth, authType);
+                    return r2;
+                }
+            }
+        }
+        if (r.code == 401) r.error = better401(r.wwwAuth, authType);
+        return r;
+    }
+
+    /** 真正发一次请求（authHeader 为已算好的 Authorization 头，可为 null） */
+    private static Result doRequest(String method, String url, String user, String pass,
+                                    File bodyFile, byte[] bodyBytes, String depth,
+                                    boolean wantText, int readTimeout, String authHeader) {
         Result r = new Result();
         HttpURLConnection conn = null;
         InputStream in = null;
         OutputStream out = null;
         try {
-            conn = open(url, user, pass);
+            conn = open(url, authHeader);
             conn.setReadTimeout(readTimeout);
 
             // ★ 关键：改方法名必须在 getOutputStream()/getResponseCode() 之前
@@ -320,6 +383,8 @@ public final class WebDavClient {
             }
 
             r.code = conn.getResponseCode();
+            // 401 时务必读取服务端返回的 WWW-Authenticate，用于判断 Basic/Digest
+            try { r.wwwAuth = conn.getHeaderField("WWW-Authenticate"); } catch (Throwable ignored) {}
 
             // 读响应体（PROPFIND 是 207，仍属成功）
             InputStream is;
@@ -359,26 +424,175 @@ public final class WebDavClient {
         }
     }
 
-    /** 建连接 + 基础设置 + Basic 认证 */
-    private static HttpURLConnection open(String url, String user, String pass) throws Exception {
+    /** 计算 Basic 认证头（无账号时返回 null） */
+    private static String basicHeader(String user, String pass) {
+        if (user == null || user.length() == 0) return null;
+        String token = user + ":" + (pass == null ? "" : pass);
+        byte[] raw;
+        try { raw = token.getBytes("UTF-8"); }
+        catch (Throwable t) { raw = token.getBytes(); }
+        String b64;
+        try {
+            b64 = android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP);
+        } catch (Throwable t) {
+            b64 = java.util.Base64.getEncoder().encodeToString(raw);
+        }
+        return "Basic " + b64;
+    }
+
+    /** 建连接 + 基础设置；authHeader 为已算好的 Authorization 头（可为 null） */
+    private static HttpURLConnection open(String url, String authHeader) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(CONNECT_TIMEOUT);
         conn.setInstanceFollowRedirects(false);   // WebDAV 的 301/302 语义特殊，自己处理更稳
         conn.setUseCaches(false);
         conn.setRequestProperty("User-Agent", "FengXiTingShu/3.8 (Android WebDAV)");
         conn.setRequestProperty("Accept", "*/*");
-        if (user != null && user.length() > 0) {
-            String token = user + ":" + (pass == null ? "" : pass);
-            String b64;
-            try {
-                b64 = android.util.Base64.encodeToString(token.getBytes("UTF-8"),
-                        android.util.Base64.NO_WRAP);
-            } catch (Throwable t) {
-                b64 = java.util.Base64.getEncoder().encodeToString(token.getBytes("UTF-8"));
-            }
-            conn.setRequestProperty("Authorization", "Basic " + b64);
+        if (authHeader != null && authHeader.length() > 0) {
+            conn.setRequestProperty("Authorization", authHeader);
         }
         return conn;
+    }
+
+    // ==================== ★ Digest 认证（RFC 2617 / 7616） ====================
+
+    /** 该认证协议是否允许走 Digest（auto / digest 都允许；basic 不允许） */
+    private static boolean wantsDigest(String authType) {
+        return AUTH_AUTO.equals(authType) || AUTH_DIGEST.equals(authType);
+    }
+
+    /**
+     * 解析 {@code WWW-Authenticate} 头，返回 {scheme, realm, nonce, qop, opaque, algorithm}。
+     * <p>对带引号的值（可能含逗号，如 {@code qop="auth,auth-int"}）做完整捕获。
+     */
+    private static java.util.Map<String, String> parseWwwAuth(String header) {
+        java.util.Map<String, String> m = new java.util.HashMap<String, String>();
+        if (header == null) return m;
+        String h = header.trim();
+        String lower = h.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("digest")) {
+            m.put("scheme", "digest");
+            h = h.substring(6).trim();
+        } else if (lower.startsWith("basic")) {
+            m.put("scheme", "basic");
+            return m;
+        } else {
+            int sp = lower.indexOf(' ');
+            m.put("scheme", sp > 0 ? lower.substring(0, sp) : lower);
+            return m;
+        }
+        // key = "value" 或 key = value（值可带引号，引号内可含逗号）
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+                "(\\w+)\\s*=\\s*(\"[^\"]*\"|[^,]+)");
+        java.util.regex.Matcher mat = p.matcher(h);
+        while (mat.find()) {
+            String k = mat.group(1).toLowerCase(java.util.Locale.ROOT);
+            String v = mat.group(2).trim();
+            if (v.startsWith("\"") && v.endsWith("\"")) v = v.substring(1, v.length() - 1);
+            m.put(k, v);
+        }
+        return m;
+    }
+
+    /**
+     * 根据 401 质询算 Digest Authorization 头。优先选 {@code auth}（不做 auth-int，
+     * 后者需对请求体做 hash，WebDAV PUT 不便）。
+     */
+    private static String digestHeader(String method, String uri, String user, String pass,
+                                       java.util.Map<String, String> ch) {
+        try {
+            String realm = ch.get("realm") == null ? "" : ch.get("realm");
+            String nonce = ch.get("nonce") == null ? "" : ch.get("nonce");
+            String opaque = ch.get("opaque");
+            String qop = ch.get("qop");
+
+            String chosenQop = null;
+            if (qop != null && qop.length() > 0) {
+                String q = qop.toLowerCase(java.util.Locale.ROOT);
+                if (q.contains("auth-int")) chosenQop = "auth-int";
+                else if (q.contains("auth")) chosenQop = "auth";
+            }
+
+            String ha1 = md5(user + ":" + realm + ":" + pass);
+            String ha2 = md5(method + ":" + uri);
+            String nc = "00000001";
+            String cnonce = randomHex(16);
+            String response;
+            if (chosenQop != null) {
+                response = md5(ha1 + ":" + nonce + ":" + nc + ":" + cnonce
+                        + ":" + chosenQop + ":" + ha2);
+            } else {
+                response = md5(ha1 + ":" + nonce + ":" + ha2);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Digest username=\"").append(user).append("\",");
+            sb.append("realm=\"").append(realm).append("\",");
+            sb.append("nonce=\"").append(nonce).append("\",");
+            sb.append("uri=\"").append(uri).append("\",");
+            sb.append("response=\"").append(response).append("\"");
+            if (chosenQop != null) {
+                sb.append(",qop=").append(chosenQop);
+                sb.append(",nc=").append(nc);
+                sb.append(",cnonce=\"").append(cnonce).append("\"");
+            }
+            if (opaque != null && opaque.length() > 0) {
+                sb.append(",opaque=\"").append(opaque).append("\"");
+            }
+            if (ch.get("algorithm") != null) {
+                sb.append(",algorithm=\"").append(ch.get("algorithm")).append("\"");
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Digest 用的请求 URI：取 URL 的路径（含 query），不含 host */
+    private static String digestUri(String url) {
+        try {
+            java.net.URL u = new java.net.URL(url);
+            String uri = u.getPath();
+            if (uri == null || uri.length() == 0) uri = "/";
+            String q = u.getQuery();
+            if (q != null && q.length() > 0) uri = uri + "?" + q;
+            return uri;
+        } catch (Throwable t) {
+            return url;
+        }
+    }
+
+    private static String md5(String s) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+        byte[] b = md.digest(s.getBytes("UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) sb.append(String.format("%02x", x));
+        return sb.toString();
+    }
+
+    private static String randomHex(int n) {
+        java.util.Random rnd = new java.util.Random();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) sb.append(String.format("%02x", rnd.nextInt(256)));
+        return sb.toString();
+    }
+
+    /**
+     * ★ 401 的精准文案：区分「协议不匹配」与「真密码错」，不再一律报「密码错误」。
+     */
+    private static String better401(String wwwAuth, String authType) {
+        if (wwwAuth != null && wwwAuth.toLowerCase(java.util.Locale.ROOT).contains("digest")) {
+            return "认证失败（401）：服务器要求 Digest 认证，但当前协议不匹配。"
+                    + "请在 WebDAV 设置里把「认证协议」改成「Digest」或「自动」后重试。";
+        }
+        // 服务端给的是 Basic 质询（或无质询）
+        if (AUTH_DIGEST.equals(authType)) {
+            return "认证失败（401）：当前选了 Digest，但服务器似乎要求 Basic 认证。"
+                    + "请改成「自动」或「Basic」后重试。";
+        }
+        return "认证失败（401）：账号或密码不对。"
+                + "若用坚果云，请到网页端「安全选项」生成应用密码，不要填登录密码；"
+                + "若服务器要求 Digest，请把「认证协议」改成「自动」或「Digest」。";
     }
 
     // ==================== ★ 反射改方法名（多级 fallback） ====================
@@ -594,8 +808,9 @@ public final class WebDavClient {
                         + "要么把地址开头的 http:// 改成 https://，"
                         + "要么把端口改成 5005";
             case 401:
-                return "认证失败（401）：账号或密码不对。"
-                        + "若用坚果云，请到网页端「安全选项」生成应用密码，不要填登录密码";
+                return "认证失败（401）：账号或密码不对，或服务端要求 Digest 认证。"
+                        + "坚果云请到网页端「安全选项」生成应用密码；"
+                        + "若服务器要求 Digest，请把「认证协议」改成「自动」或「Digest」";
             case 403:
                 return "没有权限（403）：服务器拒绝该操作。"
                         + "坚果云用户建议：①在坚果云里先建一个文件夹（如 backup），"

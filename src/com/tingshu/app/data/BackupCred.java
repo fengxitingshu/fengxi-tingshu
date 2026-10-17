@@ -30,9 +30,16 @@ public final class BackupCred {
     /** ★ 密码单独一个 key —— 便于单独清理，也便于审计「密码存在哪」 */
     private static final String K_PASS = "dav_pass";
     private static final String K_DIR = "dav_dir";
+    /** ★ 认证协议：auto / basic / digest */
+    private static final String K_AUTH = "dav_auth";
 
     /** 默认远端子目录名 */
     public static final String DEFAULT_DIR = "fengxi-backup";
+
+    /** 认证协议取值 */
+    public static final String AUTH_AUTO = "auto";
+    public static final String AUTH_BASIC = "basic";
+    public static final String AUTH_DIGEST = "digest";
 
     private static SharedPreferences sp() {
         Context c = com.tingshu.app.core.App.ctx();
@@ -40,7 +47,7 @@ public final class BackupCred {
         return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    public static void save(String url, String user, String pass, String dir) {
+    public static void save(String url, String user, String pass, String dir, String auth) {
         SharedPreferences p = sp();
         if (p == null) return;
         p.edit()
@@ -48,10 +55,11 @@ public final class BackupCred {
                 .putString(K_USER, user == null ? "" : user.trim())
                 .putString(K_PASS, pass == null ? "" : pass)
                 .putString(K_DIR, normDir(dir))
+                .putString(K_AUTH, normAuth(auth))
                 .commit();
     }
 
-    /** 读全部配置。返回 {ok, url, user, pass, dir, hasPass} */
+    /** 读全部配置。返回 {ok, url, user, pass, dir, hasPass, auth} */
     public static JSONObject load() {
         JSONObject o = new JSONObject();
         SharedPreferences p = sp();
@@ -60,12 +68,14 @@ public final class BackupCred {
             String user = p == null ? "" : p.getString(K_USER, "");
             String pass = p == null ? "" : p.getString(K_PASS, "");
             String dir = p == null ? "" : p.getString(K_DIR, "");
+            String auth = p == null ? AUTH_AUTO : p.getString(K_AUTH, AUTH_AUTO);
             o.put("ok", true);
             o.put("url", url);
             o.put("user", user);
             o.put("pass", pass);            // 前端负责打码显示
             o.put("hasPass", pass != null && pass.length() > 0);
             o.put("dir", dir == null || dir.length() == 0 ? DEFAULT_DIR : dir);
+            o.put("auth", auth);
         } catch (Throwable ignored) {}
         return o;
     }
@@ -95,6 +105,17 @@ public final class BackupCred {
         }
     }
 
+    /** 认证协议，默认 auto */
+    public static String authType() {
+        SharedPreferences p = sp();
+        try {
+            String a = p == null ? AUTH_AUTO : p.getString(K_AUTH, AUTH_AUTO);
+            return normAuth(a);
+        } catch (Throwable t) {
+            return AUTH_AUTO;
+        }
+    }
+
     /** 是否已配置（有地址即视为已配置） */
     public static boolean configured() {
         String u = url();
@@ -116,5 +137,11 @@ public final class BackupCred {
         while (d.startsWith("/")) d = d.substring(1);
         while (d.endsWith("/")) d = d.substring(0, d.length() - 1);
         return d.length() == 0 ? DEFAULT_DIR : d;
+    }
+
+    /** 认证协议规范化：只接受 auto/basic/digest，其余回退 auto */
+    private static String normAuth(String raw) {
+        if (AUTH_BASIC.equals(raw) || AUTH_DIGEST.equals(raw)) return raw;
+        return AUTH_AUTO;
     }
 }

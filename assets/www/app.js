@@ -8173,6 +8173,7 @@
         var user = o.user || '';
         var dir = o.dir || 'fengxi-backup';
         var hasPass = !!o.hasPass;
+        var auth = o.auth || 'auto';
 
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
         h += '<div class="sheet" onclick="event.stopPropagation()">';
@@ -8187,6 +8188,13 @@
             + (hasPass ? '已保存，留空则不修改' : '应用密码') + '" value="">';
         h += '<input id="davDir" class="sheet-input" type="text" placeholder="备份目录" value="'
             + escAttr(dir) + '">';
+        h += '<div class="cf-msg">认证协议：大多数服务用「自动」即可；若提示密码错误但密码正确，'
+            + '多半是服务端要求 Digest，可改「Digest」或保持「自动」。</div>';
+        h += '<select id="davAuth" class="sheet-input">'
+            + '<option value="auto"' + (auth === 'auto' ? ' selected' : '') + '>自动（推荐）</option>'
+            + '<option value="basic"' + (auth === 'basic' ? ' selected' : '') + '>仅 Basic</option>'
+            + '<option value="digest"' + (auth === 'digest' ? ' selected' : '') + '>仅 Digest</option>'
+            + '</select>';
         h += '<div class="sheet-item" id="davOk">保存</div>';
         if (hasPass) h += '<div class="sheet-item danger" id="davClear">清除配置</div>';
         h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
@@ -8201,18 +8209,19 @@
             var n = val('davUser').trim();
             var p = val('davPass');
             var d = val('davDir').trim();
+            var a = val('davAuth') || 'auto';
             if (!u) { TS.toast('请填写服务器地址'); return; }
             ui.closeSheet();
             App.bk.busy = true;
             bkLog('正在保存 WebDAV 配置…');
-            TS.call('davSave', u, n, p, d);
+            TS.call('davSave', u, n, p, d, a);
         };
         var cl = $('davClear');
         if (cl) cl.onclick = function () {
             ui.closeSheet();
             ui.confirmSheet('清除已保存的 WebDAV 地址与密码？', function () {
                 App.bk.busy = true;
-                TS.call('davSave', '', '', '', '');
+                TS.call('davSave', '', '', '', '', 'auto');
             });
         };
     };
@@ -8481,8 +8490,20 @@
 
     var CHANGELOG = [
         {
-            ver: '3.9.11',
+            ver: '3.9.12',
             date: '2026-10-17',
+            fixes: [
+                '★ 修复：WebDAV 同步/备份报「密码错误」其实是认证协议不匹配',
+                '   · 根因：部分服务（飞牛 NAS、部分 Nextcloud/自建）要求 Digest 认证，',
+                '     旧版只发 Basic，服务器回 401 被笼统报成密码错',
+                '   · 新增 Digest 认证（解析 WWW-Authenticate 质询 → 自动应答并重试）',
+                '   · 设置页新增「认证协议」选择：自动 / 仅 Basic / 仅 Digest（默认自动）',
+                '   · 401 文案精准区分：协议不匹配提示改协议，真密码错才提示检查密码'
+            ]
+        },
+        {
+            ver: '3.9.11',
+            date: '2026-10-16',
             fixes: [
                 '★ 修复：坚果云 WebDAV 测试连接报「没有权限（403）」',
                 '   · 根因：坚果云对 /dav/ 根目录限制较多，列根目录会被拒，',

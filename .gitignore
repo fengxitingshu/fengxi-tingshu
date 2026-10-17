@@ -11,6 +11,9 @@ out/
 *.tar.gz
 .mapping
 mapping.txt
+# 发布目录（APK/校验/jar 等构建产物，不入库）
+release/
+apk/
 
 # 截图等非源码资源（不入库）
 截图/

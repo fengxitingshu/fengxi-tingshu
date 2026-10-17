@@ -2881,12 +2881,12 @@ public class Bridge {
     }
 
     @JavascriptInterface
-    public void davSave(final String url, final String user, final String pass, final String dir) {
+    public void davSave(final String url, final String user, final String pass, final String dir, final String auth) {
         bg(new Runnable() {
             public void run() {
                 JSONObject o = new JSONObject();
                 try {
-                    com.tingshu.app.data.BackupCred.save(url, user, pass, dir);
+                    com.tingshu.app.data.BackupCred.save(url, user, pass, dir, auth);
                     o.put("ok", true);
                     o.put("url", com.tingshu.app.data.BackupCred.url());
                     o.put("dir", com.tingshu.app.data.BackupCred.dir());
@@ -2908,6 +2908,7 @@ public class Bridge {
                     String url = com.tingshu.app.data.BackupCred.url();
                     String user = com.tingshu.app.data.BackupCred.user();
                     String pass = com.tingshu.app.data.BackupCred.pass();
+                    String auth = com.tingshu.app.data.BackupCred.authType();
                     if (url == null || url.length() == 0) {
                         o.put("ok", false);
                         o.put("error", "还没有配置服务器地址");
@@ -2917,7 +2918,7 @@ public class Bridge {
                         //   测备份目录 → 再不行做一次真实写入探测
                         com.tingshu.app.data.WebDavClient.Result r =
                                 com.tingshu.app.data.WebDavClient.smartTest(url, user, pass,
-                                        com.tingshu.app.data.BackupCred.dir());
+                                        com.tingshu.app.data.BackupCred.dir(), auth);
                         long ms = System.currentTimeMillis() - t0;
                         o = com.tingshu.app.data.WebDavClient.toJson(r);
                         o.put("latencyMs", ms);
@@ -2950,6 +2951,7 @@ public class Bridge {
                             String user = com.tingshu.app.data.BackupCred.user();
                             String pass = com.tingshu.app.data.BackupCred.pass();
                             String dir = com.tingshu.app.data.BackupCred.dir();
+                            String auth = com.tingshu.app.data.BackupCred.authType();
                             if (base == null || base.length() == 0) {
                                 throw new IllegalStateException("还没有配置服务器地址");
                             }
@@ -2965,14 +2967,14 @@ public class Bridge {
 
                             // 2) 确保远端目录存在
                             com.tingshu.app.data.WebDavClient.Result dr =
-                                    com.tingshu.app.data.WebDavClient.ensureDir(base, user, pass, dir);
+                                    com.tingshu.app.data.WebDavClient.ensureDir(base, user, pass, dir, auth);
                             if (!dr.ok) throw new IllegalStateException(
                                     "创建远端目录失败：" + dr.error);
 
                             // 3) 上传
                             String target = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + name;
                             com.tingshu.app.data.WebDavClient.Result ur =
-                                    com.tingshu.app.data.WebDavClient.put(target, user, pass, tmp);
+                                    com.tingshu.app.data.WebDavClient.put(target, user, pass, tmp, auth);
                             if (!ur.ok) throw new IllegalStateException("上传失败：" + ur.error);
 
                             o.put("ok", true);
@@ -3003,13 +3005,14 @@ public class Bridge {
                     String user = com.tingshu.app.data.BackupCred.user();
                     String pass = com.tingshu.app.data.BackupCred.pass();
                     String dir = com.tingshu.app.data.BackupCred.dir();
+                    String auth = com.tingshu.app.data.BackupCred.authType();
                     if (base == null || base.length() == 0) {
                         o.put("ok", false);
                         o.put("error", "还没有配置服务器地址");
                         o.put("items", new org.json.JSONArray());
                     } else {
                         java.util.List<com.tingshu.app.data.WebDavClient.DavFile> all =
-                                com.tingshu.app.data.WebDavClient.list(base, user, pass, dir);
+                                com.tingshu.app.data.WebDavClient.list(base, user, pass, dir, auth);
                         org.json.JSONArray arr = new org.json.JSONArray();
                         java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat(
                                 "MM-dd HH:mm", java.util.Locale.getDefault());
@@ -3054,6 +3057,7 @@ public class Bridge {
                     String user = com.tingshu.app.data.BackupCred.user();
                     String pass = com.tingshu.app.data.BackupCred.pass();
                     String dir = com.tingshu.app.data.BackupCred.dir();
+                    String auth = com.tingshu.app.data.BackupCred.authType();
                     if (base == null || base.length() == 0) {
                         throw new IllegalStateException("还没有配置服务器地址");
                     }
@@ -3067,7 +3071,7 @@ public class Bridge {
 
                     String url = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + safe;
                     com.tingshu.app.data.WebDavClient.Result dr =
-                            com.tingshu.app.data.WebDavClient.getToFile(url, user, pass, tmp);
+                            com.tingshu.app.data.WebDavClient.getToFile(url, user, pass, tmp, auth);
                     if (!dr.ok) throw new IllegalStateException("下载失败：" + dr.error);
 
                     o = com.tingshu.app.data.BackupRestore.restore(tmp);
@@ -3095,12 +3099,13 @@ public class Bridge {
                     String user = com.tingshu.app.data.BackupCred.user();
                     String pass = com.tingshu.app.data.BackupCred.pass();
                     String dir = com.tingshu.app.data.BackupCred.dir();
+                    String auth = com.tingshu.app.data.BackupCred.authType();
                     String safe = new java.io.File(remoteName == null ? "" : remoteName).getName();
                     if (safe.length() == 0) throw new IllegalStateException("文件名无效");
 
                     String url = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + safe;
                     com.tingshu.app.data.WebDavClient.Result r =
-                            com.tingshu.app.data.WebDavClient.delete(url, user, pass);
+                            com.tingshu.app.data.WebDavClient.delete(url, user, pass, auth);
                     o.put("ok", r.ok);
                     o.put("name", safe);
                     if (!r.ok) o.put("error", r.error);
