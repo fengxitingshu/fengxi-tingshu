@@ -58,7 +58,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String WIDGET_NEXT = "com.tingshu.app.widget.NEXT";
     /** 点「停止」（★ v3.8.2 新增，与通知栏动作对齐） */
     public static final String WIDGET_STOP = "com.tingshu.app.widget.STOP";
-    /** 点进度条某格 → seek（extra "sec" = 目标秒） */
+    /** 点进度条某格 → seek（extra "sec" = 目标秒）。★ v3.9.16 起布局不再挂，
+     *  保留常量供 WidgetClickReceiver 兼容旧桌面缓存的小组件点击。 */
     public static final String WIDGET_SEEK = "com.tingshu.app.widget.SEEK";
     /**
      * 控制键/进度条的统一投递 action。
@@ -71,8 +72,7 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     public static final String WIDGET_ACTION =
             "com.tingshu.app.widget.ACTION";
 
-    /** 进度条点击分区数（每格 5%），与布局里 wgBar0..19/wgSeek0..19 一一对应 */
-    static final int SEEK_SEGMENTS = 20;
+    /** ★ v3.9.16 兼容模式后不再使用（进度条改为单 ProgressBar），保留常量占位 */
 
     @Override
     public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
@@ -150,23 +150,21 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     /**
      * 组装一块小组件的视图（读 WidgetState 快照）。
      *
-     * <p>★ v3.9.3 = v3.8.5 <b>逐字节复刻</b>。v3.9.2 把动作集收回六类后用户
-     * 仍报白卡，说明 originOS 桌面对 v3.9.0 重写布局的结构本身过敏（封面
-     * FrameLayout 三层叠 / 单层 seek 格 / 额外 TextView 动作 / @string 引用 /
-     * 0.5dp 分数边距——无法远程判定具体是哪条）。本版布局与调用序列照抄
-     * 3.8.5 反编译结果，一步不多一步不少：
+     * <p>★ v3.9.16 <b>兼容模式</b>：诊断日志证实 App 侧构建与提交全部成功
+     * （update OK、无异常、内容正确），白卡发生在<b>桌面渲染环节</b>。
+     * 本版把每次刷新的 RemoteViews 动作从「40+ 个（含 20 个 seek
+     * PendingIntent + 20 格上色）」砍到 10 个左右：
      * <ol>
      *   <li>{@code setInt(wgRoot,"setBackgroundColor",背景)}</li>
      *   <li>{@code setTextViewText} × 书名/副标题/两个时间</li>
-     *   <li>{@code setImageViewBitmap(wgCover, 封面或 null)}（null 已实测安全）</li>
-     *   <li>循环 {@code setInt(wgBar_i,"setBackgroundColor",…)}——只上色</li>
-     *   <li>循环 {@code setOnClickPendingIntent(wgSeek_i,…)}——只点击</li>
+     *   <li>{@code setImageViewBitmap(wgCover, 封面或 null)}</li>
+     *   <li>{@code setProgressBar(wgProgress,…)}（替代 40 格两层结构）</li>
      *   <li>{@code setImageViewResource(wgToggle,播放/暂停)}</li>
      *   <li>{@code setOnClickPendingIntent} × 六处（四键 + 封面 + 文字区）</li>
      *   <li>{@code setBoolean(…,"setSelected",true)} × 2（跑马灯）</li>
      * </ol>
-     * 放弃 v3.9.0 的角标（倍速/定时）与状态点 —— 可用性优先。
-     * 每段独立 try-catch 并写诊断日志（3.8.5 同款）。
+     * 代价：放弃点格子跳进度（App 内可拖进度）。布局同步简化，
+     * 四键图标全部用本包资源（v3.9.14 起）。每段独立 try-catch 并写诊断日志。
      */
     private RemoteViews build(Context ctx) {
         RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_player);
@@ -225,43 +223,21 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
             diag(ctx, "build time FAILED: " + t);
         }
 
-        int filled = 0;
+        int pct = 0;
         if (seekable) {
-            filled = (int) Math.floor((double) cur * SEEK_SEGMENTS / dur);
-            if (filled < 0) filled = 0;
-            if (filled > SEEK_SEGMENTS) filled = SEEK_SEGMENTS;
+            pct = (int) Math.floor((double) cur * 1000 / dur);
+            if (pct < 0) pct = 0;
+            if (pct > 1000) pct = 1000;
         }
 
-        // ---- 显示层：wgBar0..19 逐格上色（3.8.5 同款配色：
-        //      已播 #F2FFFFFF，未播 #33FFFFFF） ----
+        // ---- 进度条：★ v3.9.16 兼容模式 —— 单个 ProgressBar + setProgressBar。
+        //      旧的「20 显示格 + 20 点击格」带 20 个 PendingIntent，部分桌面
+        //      （originOS 等）对 RemoteViews 里挂大量 PendingIntent 渲染失败
+        //      → 整块白卡。诊断已证实 App 侧构建/提交全部正常，白卡在桌面环节。 ----
         try {
-            for (int i = 0; i < SEEK_SEGMENTS; i++) {
-                int viewId = ctx.getResources().getIdentifier(
-                        "wgBar" + i, "id", ctx.getPackageName());
-                if (viewId == 0) continue;
-                v.setInt(viewId, "setBackgroundColor",
-                        i < filled ? 0xF2FFFFFF : 0x33FFFFFF);
-            }
+            v.setProgressBar(R.id.wgProgress, 1000, seekable ? pct : 0, false);
         } catch (Throwable t) {
             diag(ctx, "build progress FAILED: " + t);
-        }
-
-        // ---- 点击层：wgSeek0..19 挂 seek PendingIntent（独立 try，3.8.5 同款）。
-        //     RemoteViews 判定 PendingIntent 是否相同不看 extras，
-        //     所以 20 格必须各配一个 requestCode（100+i），
-        //     否则 FLAG_UPDATE_CURRENT 会让最后一个覆盖全部。 ----
-        try {
-            for (int i = 0; i < SEEK_SEGMENTS; i++) {
-                int viewId = ctx.getResources().getIdentifier(
-                        "wgSeek" + i, "id", ctx.getPackageName());
-                if (viewId == 0) continue;
-                if (seekable) {
-                    int target = (int) ((i + 0.5) * dur / SEEK_SEGMENTS);
-                    v.setOnClickPendingIntent(viewId, seekPi(ctx, target, 100 + i));
-                }
-            }
-        } catch (Throwable t) {
-            diag(ctx, "build seek FAILED: " + t);
         }
 
         // ---- 播放/暂停图标 ----
@@ -320,21 +296,8 @@ public class PlayerWidgetProvider extends AppWidgetProvider {
     }
 
     /**
-     * 进度条点击的 PendingIntent。
-     *
-     * <p>秒数由这里按 5% 粒度算好塞进 extra，PlayerService 的 ACT_SEEK 消费。
+     * 打开 App（点封面 / 书名）
      */
-    private PendingIntent seekPi(Context ctx, int sec, int req) {
-        Intent i = new Intent(ctx, WidgetClickReceiver.class);
-        i.setAction(WIDGET_ACTION);
-        i.putExtra("act", WIDGET_SEEK);
-        i.putExtra("sec", sec);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getBroadcast(ctx, req, i, flags);
-    }
-
-    /** 打开 App（点封面 / 书名） */
     private PendingIntent openApp(Context ctx, int req) {
         Intent i = new Intent(ctx, MainActivity.class);
         i.setAction(Intent.ACTION_MAIN);
