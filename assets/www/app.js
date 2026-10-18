@@ -3193,13 +3193,13 @@
 
     window.onProgress = function (cur, dur) {
         setTime(cur || 0, dur || 0);
-        paintLyrics(cur || 0);   // ★ v3.9.34 字幕跟随
+        paintLyrics(cur || 0, dur || 0);   // ★ v3.9.35 纯文本字幕也需要 dur 按比例定位
         saveSession();
     };
 
-    // ==================== ★ v3.9.34 实验性字幕（LRC / 同名 txt） ====================
+    // ==================== ★ v3.9.34 字幕（LRC / 文本）→ ★ v3.9.35 升级 ====================
     App.lyrics = null;      // [[sec, text], ...]（LRC）或 null
-    App.lyricsTxt = null;   // 纯文本模式（无时间轴）的整段文字
+    App.lyricsTxt = null;   // ★ v3.9.35 纯文本模式：[[text, cumChars], ...]（切句 + 累计字数）
     App._lrcIdx = -1;
 
     window.onLyrics = function (lrc) {
@@ -3212,11 +3212,13 @@
 
         var html = '';
         if (lrc.indexOf('\u0000txt\u0000') === 0) {
-            // 同名 .txt：无时间轴的纯文本字幕，整段展示
-            App.lyricsTxt = lrc.replace('\u0000txt\u0000', '').replace(/\r/g, '');
-            var rows = App.lyricsTxt.split('\n');
-            for (var r = 0; r < rows.length; r++) {
-                if (rows[r].trim()) html += '<div class="lrc-line on">' + TS.esc(rows[r]) + '</div>';
+            // ★ v3.9.35：纯文本字幕不再整段静态展示 —— 切句后按「累计字数占比 ×
+            //   本集时长」动态定位当前句。有声小说语速基本均匀，不需要逐句时间轴；
+            //   且比例取自媒体时间 cur/dur，seek / 倍速都自动适配。
+            App.lyricsTxt = splitSentences(lrc.replace('\u0000txt\u0000', '').replace(/\r/g, ''));
+            if (!App.lyricsTxt.length) { if (box) box.classList.add('hide'); return; }
+            for (var r = 0; r < App.lyricsTxt.length; r++) {
+                html += '<div class="lrc-line" data-i="t' + r + '">' + TS.esc(App.lyricsTxt[r][0]) + '</div>';
             }
         } else {
             var lines = [];
@@ -3240,13 +3242,60 @@
         if (box) box.classList.remove('hide');
     };
 
-    /** 按 curSec 高亮当前句并滚动居中 */
-    function paintLyrics(cur) {
-        var L = App.lyrics;
-        if (!L || !L.length) return;   // 纯文本模式不高亮
-        var idx = 0;
-        for (var i = 0; i < L.length; i++) {
-            if (cur >= L[i][0]) idx = i; else break;
+    /** ★ v3.9.35：把纯文本切句。句末标点断句（吞掉紧跟的引号/省略号）；
+     *  无标点长句在逗号/顿号处兜底；返回 [text, cumChars]，cumChars 为
+     *  到本句末为止的累计字数（含标点——标点也对应朗读停顿，占比更准）。 */
+    function splitSentences(txt) {
+        var BREAK = '。！？；!?;…\n';
+        var SOFT = '，,、 ';
+        var QUOTE = '”』」"\')]';
+        var out = [], buf = '', i = 0;
+        while (i < txt.length) {
+            var ch = txt.charAt(i);
+            buf += ch; i++;
+            if (BREAK.indexOf(ch) >= 0) {
+                // 「……」「！！」等连续标点并进同一句；再吞引号/括号收尾
+                while (i < txt.length && BREAK.indexOf(txt.charAt(i)) >= 0 && txt.charAt(i) !== '\n') {
+                    buf += txt.charAt(i); i++;
+                }
+                while (i < txt.length && QUOTE.indexOf(txt.charAt(i)) >= 0) {
+                    buf += txt.charAt(i); i++;
+                }
+                var s = buf.replace(/^\s+|\s+$/g, '');
+                if (s) out.push([s, 0]);
+                buf = '';
+            } else if (buf.length >= 36 && SOFT.indexOf(ch) >= 0) {
+                var s2 = buf.replace(/^\s+|\s+$/g, '');
+                if (s2) out.push([s2, 0]);
+                buf = '';
+            }
+        }
+        var tail = buf.replace(/^\s+|\s+$/g, '');
+        if (tail) out.push([tail, 0]);
+        var cum = 0;
+        for (var j = 0; j < out.length; j++) { cum += out[j][0].length + 1; out[j][1] = cum; }
+        return out;
+    }
+
+    /** 按 curSec 高亮当前句并滚动居中。
+     *  ★ v3.9.35：LRC 用精确时间；纯文本用「进度比例 × 累计字数」估算定位。 */
+    function paintLyrics(cur, dur) {
+        var T = App.lyricsTxt;
+        var idx = -1;
+        if (T && T.length) {
+            if (!(dur > 0)) return;   // 时长未知（未 onMetaData）先不动
+            var target = (cur / dur) * T[T.length - 1][1];
+            for (var i = 0; i < T.length; i++) {
+                if (target <= T[i][1]) { idx = i; break; }
+            }
+            if (idx < 0) idx = T.length - 1;
+        } else {
+            var L = App.lyrics;
+            if (!L || !L.length) return;
+            idx = 0;
+            for (var k = 0; k < L.length; k++) {
+                if (cur >= L[k][0]) idx = k; else break;
+            }
         }
         if (idx === App._lrcIdx) return;
         App._lrcIdx = idx;
@@ -8632,6 +8681,18 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.35',
+            date: '2026-10-18',
+            fixes: [
+                '★ 字幕升级：没有 LRC 也能看字幕',
+                '   · 同名 .txt 文本自动切句，按朗读进度估算时间，逐句高亮跟随；',
+                '     拖进度 / 调倍速都自动适配',
+                '   · 支持整本小说 txt：和音频放同一目录（目录里只有这一个 txt 即可），',
+                '     按音频文件名里的集数自动截取对应章节（如「012.mp3」→「第12章」）',
+                '   · 文本编码 GBK / UTF-8 自动识别；同名 .lrc 仍最优先'
+            ]
+        },
         {
             ver: '3.9.34',
             date: '2026-10-18',

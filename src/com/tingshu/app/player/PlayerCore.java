@@ -607,7 +607,11 @@ public class PlayerCore {
     }
 
     /**
-     * ★ v3.9.34 实验性字幕：本地音频找同名 .lrc，解析后经 onLyrics 回传。
+     * ★ v3.9.34 实验性字幕 → ★ v3.9.35 升级：有声小说基本没有 .lrc，字幕分三层找——
+     *   1) 同名 .lrc/.LRC：有精确时间轴，最优先；
+     *   2) 同名 .txt：本集文本，前端按「进度比例」生成估算时间轴自动滚动；
+     *   3) 目录里唯一的整本 .txt：整本小说文本，按音频文件名里的集数找到
+     *      对应章节，只把本集那段回传（GBK/UTF-8 自动识别）。
      * 网络直链不做探测（避免额外请求）。无字幕回传空串（前端隐藏）。
      */
     private void loadLyricsIfAny() {
@@ -618,21 +622,21 @@ public class PlayerCore {
                 String base = f.getName();
                 int dot = base.lastIndexOf('.');
                 if (dot > 0) base = base.substring(0, dot);
-                String[] exts = {".lrc", ".LRC", ".txt"};
+                String[] exts = {".lrc", ".LRC"};
                 for (String ext : exts) {
                     java.io.File c = new java.io.File(f.getParent(), base + ext);
                     if (c.isFile() && c.length() > 0 && c.length() < 512 * 1024) {
-                        byte[] b = new byte[(int) c.length()];
-                        java.io.FileInputStream fi = new java.io.FileInputStream(c);
-                        try { fi.read(b); } finally { try { fi.close(); } catch (Throwable ignored) {} }
-                        lrc = new String(b, "UTF-8");
-                        if (ext.equals(".txt")) {
-                            // 纯文本字幕：整段返回，前端按普通文本展示（不按时间）
-                            lrc = "\0txt\0" + lrc;   // 标记为纯文本
-                        }
+                        lrc = readTextFile(c);
                         break;
                     }
                 }
+                if (lrc == null) {
+                    java.io.File t = new java.io.File(f.getParent(), base + ".txt");
+                    if (t.isFile() && t.length() > 0 && t.length() < 512 * 1024) {
+                        lrc = "\0txt\0" + readTextFile(t);   // 标记为纯文本
+                    }
+                }
+                if (lrc == null) lrc = extractFromBookTxt(f);
             }
         } catch (Throwable ignored) { lrc = null; }
         final String payload = lrc;
@@ -641,6 +645,77 @@ public class PlayerCore {
                 if (cb != null) cb.onLyrics(payload);
             }
         });
+    }
+
+    /** 读小文本文件并智能解码（UTF-8 优先，乱码回退 GBK） */
+    private static String readTextFile(java.io.File f) throws java.io.IOException {
+        byte[] b = new byte[(int) f.length()];
+        java.io.FileInputStream fi = new java.io.FileInputStream(f);
+        try {
+            int off = 0, n;
+            while (off < b.length && (n = fi.read(b, off, b.length - off)) > 0) off += n;
+        } finally { try { fi.close(); } catch (Throwable ignored) {} }
+        return decodeSmart(b);
+    }
+
+    /** UTF-8 解出替换符(\uFFFD)说明不是 UTF-8（中文小说常见 GBK）→ 回退 GBK */
+    private static String decodeSmart(byte[] b) {
+        String s = new String(b, java.nio.charset.StandardCharsets.UTF_8);
+        if (s.indexOf('\uFFFD') >= 0) {
+            try { return new String(b, "GBK"); } catch (Throwable ignored) { return s; }
+        }
+        return s;
+    }
+
+    /**
+     * ★ v3.9.35 整本小说字幕：音频同目录**恰好只有一个**较大的 .txt 时，
+     * 视为整本小说文本。取音频文件名里第一段数字当集数（"012.mp3"→12、
+     * "第12集.mp3"→12），在 txt 里找「第12章/第12集/12、…」样式的章节行，
+     * 从该行截到下一个章节行为止，作为本集字幕文本回传。
+     * 找不到章节或不满足条件返回 null（不干扰其它字幕途径）。
+     */
+    private static String extractFromBookTxt(java.io.File audio) {
+        try {
+            java.io.File[] fs = audio.getParentFile().listFiles();
+            if (fs == null) return null;
+            java.io.File book = null;
+            for (java.io.File x : fs) {
+                if (!x.isFile()) continue;
+                String n = x.getName().toLowerCase();
+                if (n.endsWith(".txt") && x.length() > 1024) {
+                    if (book != null) return null;   // 多个 txt 无法判断哪个是整本 → 放弃
+                    book = x;
+                }
+            }
+            if (book == null || book.length() > 8L * 1024 * 1024) return null;
+            java.util.regex.Matcher nm = java.util.regex.Pattern.compile("(\\d{1,4})").matcher(audio.getName());
+            if (!nm.find()) return null;
+            final int ep = Integer.parseInt(nm.group(1));
+            // 章节行：行首「第N章/集/回/节/话」或「N、/N./N 标题」
+            java.util.regex.Pattern chap = java.util.regex.Pattern.compile(
+                    "^\\s*第?\\s*(\\d{1,4})\\s*[章节集回话,.、:：\\s]");
+            String all = readTextFile(book);
+            String[] lines = all.split("\n", -1);
+            int start = -1, end = lines.length;
+            for (int i = 0; i < lines.length; i++) {
+                java.util.regex.Matcher m = chap.matcher(lines[i]);
+                if (!m.find()) continue;
+                int no;
+                try { no = Integer.parseInt(m.group(1)); } catch (Throwable e2) { continue; }
+                if (no == ep) { start = i; break; }
+            }
+            if (start < 0) return null;
+            for (int i = start + 1; i < lines.length; i++) {
+                if (chap.matcher(lines[i]).find()) { end = i; break; }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (int i = start; i < end && sb.length() < 200 * 1024; i++) {
+                String t = lines[i].trim();
+                if (t.length() > 0) sb.append(t).append('\n');
+            }
+            if (sb.length() < 10) return null;
+            return "\0txt\0" + sb.toString();
+        } catch (Throwable ignored) { return null; }
     }
 
     /**
