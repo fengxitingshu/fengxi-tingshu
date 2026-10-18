@@ -51,6 +51,13 @@ public final class WebDavClient {
 
     private WebDavClient() {}
 
+    /** ★ v3.9.45：PROPFIND 的标准请求体（部分实现如飞牛对无 body 的 PROPFIND 回 405） */
+    private static final String PROPFIND_BODY =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+            + "<D:propfind xmlns:D=\"DAV:\"><D:prop>"
+            + "<D:resourcetype/><D:getcontentlength/><D:getlastmodified/><D:displayname/>"
+            + "</D:prop></D:propfind>";
+
     /**
      * ★ v3.9.37：把 URL 的 path 段逐段编码（scheme://host 原样保留）。
      * 已编码的段（%XX 形式）先解码再编码，避免二次编码。
@@ -423,6 +430,13 @@ public final class WebDavClient {
         //   「测试连接正常（探针文件名是纯 ASCII）但一备份就报没有权限」。
         url = encodeDavUrl(url);
 
+        // ★ v3.9.45：PROPFIND 必须带请求体。RFC 4918 允许无 body（等同 allprop），
+        //   但飞牛等部分实现对无请求体的 PROPFIND 直接回 405 Method Not Allowed
+        //   —— 表现就是「备份上传成功、恢复列表却刷不出来」。统一补标准 prop 请求体。
+        if ("PROPFIND".equals(method) && bodyFile == null && bodyBytes == null) {
+            try { bodyBytes = PROPFIND_BODY.getBytes("UTF-8"); } catch (Throwable ignored) {}
+        }
+
         // 初始认证头：digest 模式先不带头（等 401 质询），其余先发 Basic
         String initAuth = AUTH_DIGEST.equals(authType) ? null : basicHeader(user, pass);
 
@@ -502,7 +516,11 @@ public final class WebDavClient {
 
             if (bodyFile != null || bodyBytes != null) {
                 conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "application/octet-stream");
+                // bodyFile = 上传的备份包（二进制）；bodyBytes = 探针文本 /
+                // PROPFIND 的 XML 请求体 → 用 xml 类型（飞牛对 PROPFIND 的
+                // Content-Type 有校验，octet-stream 同样可能被拒）
+                conn.setRequestProperty("Content-Type",
+                        bodyFile != null ? "application/octet-stream" : "application/xml");
                 try {
                     conn.setFixedLengthStreamingMode(
                             bodyFile != null ? bodyFile.length() : bodyBytes.length);
@@ -552,7 +570,7 @@ public final class WebDavClient {
                 // ★ v3.9.37：403/507 时也解码 body —— 「没有权限」的真正原因
                 //   （限流/流量用超）往往就写在响应体里，不能只看状态码。
                 // ★ v3.9.38：410/404 同理 —— 坚果云的删除墓碑/目录消失原因也在 body。
-                if (wantText || r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404) {
+                if (wantText || r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404 || r.code == 405) {
                     r.body = decode(bo.toByteArray(), conn.getContentEncoding());
                 }
             }
@@ -563,7 +581,7 @@ public final class WebDavClient {
                 // ★ v3.9.37：403/507 时带上服务器响应里的人话片段。
                 //   坚果云限流/流量用超时，body 会写明原因，只看状态码永远在猜。
                 // ★ v3.9.38：410/404 同样带原因。
-                if (r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404) {
+                if (r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404 || r.code == 405) {
                     String hint = bodyHint(r.body);
                     if (hint.length() > 0) r.error += "。服务器返回：" + hint;
                 }
