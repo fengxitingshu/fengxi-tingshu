@@ -3197,12 +3197,19 @@
         saveSession();
     };
 
-    // ==================== ★ v3.9.34 字幕（LRC / 文本）→ ★ v3.9.35 升级 ====================
+    // ==================== ★ v3.9.34 字幕（LRC / 文本）→ ★ v3.9.35 升级 → ★ v3.9.36 加开关 ====================
     App.lyrics = null;      // [[sec, text], ...]（LRC）或 null
     App.lyricsTxt = null;   // ★ v3.9.35 纯文本模式：[[text, cumChars], ...]（切句 + 累计字数）
     App._lrcIdx = -1;
+    // ★ v3.9.36 字幕开关（默认开）。关掉后 onLyrics 只缓存不渲染，
+    //   再打开时用缓存立即恢复，不用等下一句进度回调。
+    App._lyricsOn = true;
+    App._lastLyricsPayload = '';
+    try { App._lyricsOn = localStorage.getItem('lyricsOn') !== '0'; } catch (e) {}
 
     window.onLyrics = function (lrc) {
+        App._lastLyricsPayload = lrc || '';   // 缓存最近一次字幕，供开关切换后恢复
+        if (!App._lyricsOn) { hideLyrics(); return; }
         App.lyrics = null;
         App.lyricsTxt = null;
         App._lrcIdx = -1;
@@ -3240,6 +3247,34 @@
         }
         if (list) list.innerHTML = html;
         if (box) box.classList.remove('hide');
+    };
+
+    /** ★ v3.9.36：收起字幕区并清状态（开关关闭 / 无字幕时复用） */
+    function hideLyrics() {
+        App.lyrics = null;
+        App.lyricsTxt = null;
+        App._lrcIdx = -1;
+        var box = $('lyricsBox');
+        if (box) box.classList.add('hide');
+    }
+
+    /** ★ v3.9.36：字幕开关（播放页「更多」菜单入口）。
+     *  打开时若当前书没有字幕文本，顺手告诉用户 txt 要放哪 ——
+     *  「TXT 文本在哪」是字幕功能被发现的第一道门槛。 */
+    ui.toggleLyrics = function () {
+        App._lyricsOn = !App._lyricsOn;
+        try { localStorage.setItem('lyricsOn', App._lyricsOn ? '1' : '0'); } catch (e) {}
+        if (!App._lyricsOn) {
+            hideLyrics();
+            TS.toast('字幕已关闭');
+            return;
+        }
+        if (App._lastLyricsPayload) {
+            window.onLyrics(App._lastLyricsPayload);
+            TS.toast('字幕已开启');
+        } else {
+            TS.toast('已开启，但当前没有字幕文本：把同名 txt 或整本小说 txt 放进音频所在文件夹');
+        }
     };
 
     /** ★ v3.9.35：把纯文本切句。句末标点断句（吞掉紧跟的引号/省略号）；
@@ -4326,6 +4361,11 @@
                 // ★ v3.8.2 跳过片尾：放到结尾前自动收尾（片尾曲/结尾广告）
                 label: '跳过片尾', icon: '⏩', val: skipOutroLabel(),
                 pick: function () { ui.moreSkipOutro(); }
+            },
+            {
+                // ★ v3.9.36 字幕开关：lrc/txt 文本跟随显示
+                label: '字幕', icon: '💬', val: App._lyricsOn ? '开' : '关',
+                pick: function () { ui.closeMore(); ui.toggleLyrics(); }
             }
         ];
         App._moreOpen = true;
@@ -8681,6 +8721,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.36',
+            date: '2026-10-18',
+            fixes: [
+                '★ 字幕开关：播放页「更多」菜单新增「字幕」项，可开/关字幕显示',
+                '   · 关闭后立即隐藏；再打开自动恢复当前字幕',
+                '★ 开启字幕但没有找到文本时，会提示 txt 文件的放置方法',
+                '   · 字幕文本需自己准备：把「同名 txt」或「整本小说 txt」放进',
+                '     音频所在的文件夹（App 不会自动联网下载文本）'
+            ]
+        },
         {
             ver: '3.9.35',
             date: '2026-10-18',
