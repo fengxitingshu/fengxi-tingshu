@@ -415,7 +415,7 @@ public class Bridge {
      */
     @JavascriptInterface
     public void resumeSession() {
-        Aggregator.singlePool().execute(new Runnable() {
+        Aggregator.lightPool().execute(new Runnable() {   // ★ v3.9.37 本地轻任务
             public void run() {
                 JSONObject o = new JSONObject();
                 try {
@@ -919,7 +919,9 @@ public class Bridge {
     /** 返回所有源（含启停状态），源管理页用 */
     @JavascriptInterface
     public void listSources() {
-        Aggregator.singlePool().execute(new Runnable() {
+        // ★ v3.9.37：改走 lightPool —— 这是纯内存操作（毫秒级），之前挤在
+        //   singlePool 里被慢网络任务排队，冷启动首页/源管理几十秒出不来。
+        Aggregator.lightPool().execute(new Runnable() {
             public void run() {
                 callback("onSourceList", BridgeSource.allSourcesJson());
             }
@@ -1097,7 +1099,8 @@ public class Bridge {
 
     /** jar 插件列表 */
     @JavascriptInterface
-    public void listPlugins() {        bg(new Runnable() {
+    public void listPlugins() {
+        Aggregator.lightPool().execute(new Runnable() {   // ★ v3.9.37 本地轻任务
             public void run() {
                 callback("onPluginList", BridgeSource.pluginListJson());
             }
@@ -1411,7 +1414,13 @@ public class Bridge {
         //      这些调用彼此独立，丢给 catPool 并行跑，总耗时 ≈ 最慢的那个源。
         //   2) 加 10 分钟进程内缓存：分类清单基本不变，第二次打开首页直接秒出，
         //      只有真正过期的源才会重新问。
-        Aggregator.searchPool().execute(new Runnable() {
+        //
+        // ★ v3.9.37：两处再提速 ——
+        //   3) 过期缓存也**先用**（stale-while-revalidate）：只要进程里还有上次
+        //      的分类，立刻回给前端渲染，首页不再为慢源等 6 秒；后台再刷新缓存。
+        //   4) 从 searchPool 挪到 lightPool：这个入口是首页/发现的必经之路，
+        //      不能跟聚合搜索的长任务抢线程。
+        Aggregator.lightPool().execute(new Runnable() {
             public void run() {
                 JSONArray arr = new JSONArray();
                 try {
@@ -1429,19 +1438,25 @@ public class Bridge {
                         return;
                     }
 
-                    // ---- 第一轮：能命中缓存的直接取，命不中的收集起来并发问 ----
+                    // ---- 第一轮：有缓存（含过期）的直接取，真没有的收集起来并发问 ----
                     final List<List<com.tingshu.app.source.Category>> results =
                             new java.util.ArrayList<List<com.tingshu.app.source.Category>>();
                     final java.util.List<Integer> missIdx =
                             new java.util.ArrayList<Integer>();
+                    // ★ v3.9.37 记录「用过过期缓存」的源 id：回包后后台刷新
+                    final java.util.List<String> staleIds =
+                            new java.util.ArrayList<String>();
                     long now = System.currentTimeMillis();
                     for (int i = 0; i < bs.size(); i++) {
                         Object[] hit = CAT_CACHE.get(bs.get(i).id());
-                        if (hit != null && (now - ((Long) hit[0])) < CAT_TTL_MS) {
+                        if (hit != null) {
                             @SuppressWarnings("unchecked")
                             List<com.tingshu.app.source.Category> c =
                                     (List<com.tingshu.app.source.Category>) hit[1];
                             results.add(c);
+                            if ((now - ((Long) hit[0])) >= CAT_TTL_MS) {
+                                staleIds.add(bs.get(i).id());
+                            }
                         } else {
                             results.add(null);
                             missIdx.add(i);
@@ -1493,8 +1508,28 @@ public class Bridge {
                         o.put("cats", cats);
                         arr.put(o);
                     }
+                    callback("onDiscoverSources", arr);
+                    // ★ v3.9.37：用过期缓存秒回之后，后台静默刷新这些源的分类，
+                    //   下次进首页看到的就是新数据（用户全程无感）。
+                    //   （放 try 内：bs / staleIds 是这个作用域的局部变量）
+                    if (!staleIds.isEmpty()) {
+                        Aggregator.catPool().execute(new Runnable() {
+                            public void run() {
+                                for (int i = 0; i < bs.size(); i++) {
+                                    if (staleIds.indexOf(bs.get(i).id()) < 0) continue;
+                                    try {
+                                        List<com.tingshu.app.source.Category> c =
+                                                bs.get(i).categories();
+                                        if (c != null) {
+                                            CAT_CACHE.put(bs.get(i).id(), new Object[]{
+                                                    System.currentTimeMillis(), c});
+                                        }
+                                    } catch (Throwable ignored) {}
+                                }
+                            }
+                        });
+                    }
                 } catch (Throwable ignored) {}
-                callback("onDiscoverSources", arr);
             }
         });
     }
@@ -1648,7 +1683,7 @@ public class Bridge {
 
     @JavascriptInterface
     public void homeInfo() {
-        bg(new Runnable() {
+        Aggregator.lightPool().execute(new Runnable() {   // ★ v3.9.37 本地轻任务
             public void run() { BridgeData.homeInfo(web, ui); }
         });
     }

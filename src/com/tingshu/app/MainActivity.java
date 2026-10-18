@@ -793,25 +793,12 @@ public class MainActivity extends Activity
      * 这里把开关回写为「关」并提示一次，避免开关显示为开、实际没球。
      */
     private void syncFloatBall(boolean playing) {
+        // ★ v3.9.37：悬浮球改为**软件内**实现（前端 #player 封面球，可拖动、
+        //   无需任何系统权限），设置页开关现在直接控制它。系统悬浮窗服务
+        //   不再启用 —— 无论什么状态都把可能还挂着的旧系统球摘掉
+        //   （覆盖升级前开过开关的老用户）。
         try {
-            if (!com.tingshu.app.data.Settings.floatBallEnabled()) {
-                com.tingshu.app.player.FloatBallService.hide(this);
-                return;
-            }
-            if (!playing) {
-                com.tingshu.app.player.FloatBallService.hide(this);
-                return;
-            }
-            if (!com.tingshu.app.player.FloatBallService.show(this)) {
-                // 权限没了 —— 回写开关并告知（只提示一次，避免每集都弹）
-                if (!floatPermWarned) {
-                    floatPermWarned = true;
-                    com.tingshu.app.data.Settings.setFloatBallEnabled(false);
-                    callJs("window.onFloatBallDenied && window.onFloatBallDenied()");
-                }
-            } else {
-                floatPermWarned = false;
-            }
+            com.tingshu.app.player.FloatBallService.hide(this);
         } catch (Throwable ignored) {}
     }
 
@@ -870,15 +857,6 @@ public class MainActivity extends Activity
         //   随后前端多半会调 stop()，那时快照会被清空
         syncWidget();
         callJs("window.onEnded()");
-    }
-
-    @Override
-    public void onLyrics(final String lrcText) {
-        // ★ v3.9.34 实验性字幕：把 LRC 文本原样转给前端解析渲染
-        try {
-            String payload = org.json.JSONObject.quote(lrcText == null ? "" : lrcText);
-            callJs("window.onLyrics && window.onLyrics(" + payload + ")");
-        } catch (Throwable ignored) {}
     }
 
     @Override

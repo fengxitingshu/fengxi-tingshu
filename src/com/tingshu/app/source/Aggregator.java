@@ -63,6 +63,20 @@ public final class Aggregator {
         return CAT_POOL;
     }
 
+    /**
+     * ★ v3.9.37：本地轻任务池（2 线程）。
+     * <p>listSources / listPlugins / homeInfo 这类**纯本地内存/文件读**的桥调用，
+     * 之前全挤在 singlePool(4) 里 —— 冷启动时任何一个慢网络任务（聚合搜索/
+     * 备份上传/分类预取）把 4 个线程占满，源列表就要排队等几十秒，首页一直
+     * 是空态。现在这些毫秒级操作走独立小池，绝不再和网络任务抢线程。
+     */
+    private static final ExecutorService LIGHT_POOL =
+            Executors.newFixedThreadPool(2, namedFactory("light"));
+
+    public static ExecutorService lightPool() {
+        return LIGHT_POOL;
+    }
+
     private static java.util.concurrent.ThreadFactory namedFactory(final String tag) {
         return new java.util.concurrent.ThreadFactory() {
             private int n = 0;

@@ -2825,10 +2825,74 @@
     function syncBall() {
         var el = $('player');
         if (!el) return;
+        // ★ v3.9.37：软件内悬浮球开关（设置页「播放悬浮球」）关闭时不显示
+        if (!App._ballOn) { el.classList.remove('show'); return; }
         el.classList.add('show');
         el.classList[(!App.book || App.chapIdx < 0) ? 'add' : 'remove']('empty');
     }
     ui.syncBall = syncBall;
+
+    /**
+     * ★ v3.9.37：App 内悬浮球可拖动。
+     * 位移 < 8px 算点按（照常触发 tapBall 进播放页），拖完松手记住位置；
+     * 位置存 localStorage，下次启动原位恢复，并夹在屏幕内防拖丢。
+     */
+    function initBallDrag() {
+        var el = $('player');
+        if (!el) return;
+        var sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
+        el.addEventListener('touchstart', function (e) {
+            if (e.touches.length !== 1) return;
+            var t = e.touches[0], r = el.getBoundingClientRect();
+            sx = t.clientX; sy = t.clientY;
+            ox = r.left; oy = r.top;
+            moved = false; dragging = true;
+        }, { passive: true });
+        el.addEventListener('touchmove', function (e) {
+            if (!dragging) return;
+            var t = e.touches[0];
+            var dx = t.clientX - sx, dy = t.clientY - sy;
+            if (!moved && (Math.abs(dx) + Math.abs(dy)) < 8) return;
+            moved = true;
+            e.preventDefault();   // 拖球时别让页面跟着滚
+            el.classList.add('dragging');
+            var w = el.offsetWidth || 58, h = el.offsetHeight || 58;
+            var nx = Math.max(4, Math.min(window.innerWidth - w - 4, ox + dx));
+            var ny = Math.max(4, Math.min(window.innerHeight - h - 4, oy + dy));
+            el.style.transition = 'none';
+            el.style.left = nx + 'px';
+            el.style.top = ny + 'px';
+            el.style.right = 'auto';
+            el.style.bottom = 'auto';
+        }, { passive: false });
+        el.addEventListener('touchend', function (e) {
+            if (!dragging) return;
+            dragging = false;
+            el.classList.remove('dragging');
+            el.style.transition = '';
+            if (moved) {
+                e.preventDefault();   // 拖完松手不再触发 click（避免误进播放页）
+                try {
+                    localStorage.setItem('ballPos',
+                        Math.round(parseFloat(el.style.left) || 0) + ',' +
+                        Math.round(parseFloat(el.style.top) || 0));
+                } catch (err) {}
+            }
+        }, { passive: false });
+        // 恢复上次位置（夹回屏幕内：分辨率/方向变了也不丢）
+        try {
+            var p = (localStorage.getItem('ballPos') || '').split(',');
+            if (p.length === 2 && isFinite(+p[0]) && isFinite(+p[1])) {
+                var x = Math.max(4, Math.min(window.innerWidth - 62, +p[0]));
+                var y = Math.max(4, Math.min(window.innerHeight - 62, +p[1]));
+                el.style.left = x + 'px';
+                el.style.top = y + 'px';
+                el.style.right = 'auto';
+                el.style.bottom = 'auto';
+            }
+        } catch (err) {}
+    }
+    ui.initBallDrag = initBallDrag;
 
     function setPTitle(t) {
         if ($('pTitle')) $('pTitle').textContent = t;
@@ -3193,159 +3257,8 @@
 
     window.onProgress = function (cur, dur) {
         setTime(cur || 0, dur || 0);
-        paintLyrics(cur || 0, dur || 0);   // ★ v3.9.35 纯文本字幕也需要 dur 按比例定位
         saveSession();
     };
-
-    // ==================== ★ v3.9.34 字幕（LRC / 文本）→ ★ v3.9.35 升级 → ★ v3.9.36 加开关 ====================
-    App.lyrics = null;      // [[sec, text], ...]（LRC）或 null
-    App.lyricsTxt = null;   // ★ v3.9.35 纯文本模式：[[text, cumChars], ...]（切句 + 累计字数）
-    App._lrcIdx = -1;
-    // ★ v3.9.36 字幕开关（默认开）。关掉后 onLyrics 只缓存不渲染，
-    //   再打开时用缓存立即恢复，不用等下一句进度回调。
-    App._lyricsOn = true;
-    App._lastLyricsPayload = '';
-    try { App._lyricsOn = localStorage.getItem('lyricsOn') !== '0'; } catch (e) {}
-
-    window.onLyrics = function (lrc) {
-        App._lastLyricsPayload = lrc || '';   // 缓存最近一次字幕，供开关切换后恢复
-        if (!App._lyricsOn) { hideLyrics(); return; }
-        App.lyrics = null;
-        App.lyricsTxt = null;
-        App._lrcIdx = -1;
-        var box = $('lyricsBox'), list = $('lyricsList');
-        lrc = lrc || '';
-        if (!lrc) { if (box) box.classList.add('hide'); return; }
-
-        var html = '';
-        if (lrc.indexOf('\u0000txt\u0000') === 0) {
-            // ★ v3.9.35：纯文本字幕不再整段静态展示 —— 切句后按「累计字数占比 ×
-            //   本集时长」动态定位当前句。有声小说语速基本均匀，不需要逐句时间轴；
-            //   且比例取自媒体时间 cur/dur，seek / 倍速都自动适配。
-            App.lyricsTxt = splitSentences(lrc.replace('\u0000txt\u0000', '').replace(/\r/g, ''));
-            if (!App.lyricsTxt.length) { if (box) box.classList.add('hide'); return; }
-            for (var r = 0; r < App.lyricsTxt.length; r++) {
-                html += '<div class="lrc-line" data-i="t' + r + '">' + TS.esc(App.lyricsTxt[r][0]) + '</div>';
-            }
-        } else {
-            var lines = [];
-            var raw = lrc.split(/\r?\n/);
-            for (var i = 0; i < raw.length; i++) {
-                var m = raw[i].match(/^\s*\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\](.*)$/);
-                if (!m) continue;
-                var frac = m[3] ? (parseInt(m[3], 10) / (m[3].length === 2 ? 100 : 1000)) : 0;
-                var t = parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + frac;
-                var txt = m[4].trim();
-                if (txt) lines.push([t, txt]);
-            }
-            lines.sort(function (a, b) { return a[0] - b[0]; });
-            if (!lines.length) { if (box) box.classList.add('hide'); return; }
-            App.lyrics = lines;
-            for (var j = 0; j < lines.length; j++) {
-                html += '<div class="lrc-line" data-i="' + j + '">' + TS.esc(lines[j][1]) + '</div>';
-            }
-        }
-        if (list) list.innerHTML = html;
-        if (box) box.classList.remove('hide');
-    };
-
-    /** ★ v3.9.36：收起字幕区并清状态（开关关闭 / 无字幕时复用） */
-    function hideLyrics() {
-        App.lyrics = null;
-        App.lyricsTxt = null;
-        App._lrcIdx = -1;
-        var box = $('lyricsBox');
-        if (box) box.classList.add('hide');
-    }
-
-    /** ★ v3.9.36：字幕开关（播放页「更多」菜单入口）。
-     *  打开时若当前书没有字幕文本，顺手告诉用户 txt 要放哪 ——
-     *  「TXT 文本在哪」是字幕功能被发现的第一道门槛。 */
-    ui.toggleLyrics = function () {
-        App._lyricsOn = !App._lyricsOn;
-        try { localStorage.setItem('lyricsOn', App._lyricsOn ? '1' : '0'); } catch (e) {}
-        if (!App._lyricsOn) {
-            hideLyrics();
-            TS.toast('字幕已关闭');
-            return;
-        }
-        if (App._lastLyricsPayload) {
-            window.onLyrics(App._lastLyricsPayload);
-            TS.toast('字幕已开启');
-        } else {
-            TS.toast('已开启，但当前没有字幕文本：把同名 txt 或整本小说 txt 放进音频所在文件夹');
-        }
-    };
-
-    /** ★ v3.9.35：把纯文本切句。句末标点断句（吞掉紧跟的引号/省略号）；
-     *  无标点长句在逗号/顿号处兜底；返回 [text, cumChars]，cumChars 为
-     *  到本句末为止的累计字数（含标点——标点也对应朗读停顿，占比更准）。 */
-    function splitSentences(txt) {
-        var BREAK = '。！？；!?;…\n';
-        var SOFT = '，,、 ';
-        var QUOTE = '”』」"\')]';
-        var out = [], buf = '', i = 0;
-        while (i < txt.length) {
-            var ch = txt.charAt(i);
-            buf += ch; i++;
-            if (BREAK.indexOf(ch) >= 0) {
-                // 「……」「！！」等连续标点并进同一句；再吞引号/括号收尾
-                while (i < txt.length && BREAK.indexOf(txt.charAt(i)) >= 0 && txt.charAt(i) !== '\n') {
-                    buf += txt.charAt(i); i++;
-                }
-                while (i < txt.length && QUOTE.indexOf(txt.charAt(i)) >= 0) {
-                    buf += txt.charAt(i); i++;
-                }
-                var s = buf.replace(/^\s+|\s+$/g, '');
-                if (s) out.push([s, 0]);
-                buf = '';
-            } else if (buf.length >= 36 && SOFT.indexOf(ch) >= 0) {
-                var s2 = buf.replace(/^\s+|\s+$/g, '');
-                if (s2) out.push([s2, 0]);
-                buf = '';
-            }
-        }
-        var tail = buf.replace(/^\s+|\s+$/g, '');
-        if (tail) out.push([tail, 0]);
-        var cum = 0;
-        for (var j = 0; j < out.length; j++) { cum += out[j][0].length + 1; out[j][1] = cum; }
-        return out;
-    }
-
-    /** 按 curSec 高亮当前句并滚动居中。
-     *  ★ v3.9.35：LRC 用精确时间；纯文本用「进度比例 × 累计字数」估算定位。 */
-    function paintLyrics(cur, dur) {
-        var T = App.lyricsTxt;
-        var idx = -1;
-        if (T && T.length) {
-            if (!(dur > 0)) return;   // 时长未知（未 onMetaData）先不动
-            var target = (cur / dur) * T[T.length - 1][1];
-            for (var i = 0; i < T.length; i++) {
-                if (target <= T[i][1]) { idx = i; break; }
-            }
-            if (idx < 0) idx = T.length - 1;
-        } else {
-            var L = App.lyrics;
-            if (!L || !L.length) return;
-            idx = 0;
-            for (var k = 0; k < L.length; k++) {
-                if (cur >= L[k][0]) idx = k; else break;
-            }
-        }
-        if (idx === App._lrcIdx) return;
-        App._lrcIdx = idx;
-        var list = $('lyricsList');
-        if (!list) return;
-        var els = list.children;
-        for (var j = 0; j < els.length; j++) {
-            els[j].className = 'lrc-line' + (j === idx ? ' on' : '');
-        }
-        var curEl = els[idx];
-        var box = $('lyricsBox');
-        if (curEl && box) {
-            box.scrollTop = curEl.offsetTop - (box.clientHeight / 2) + (curEl.offsetHeight / 2);
-        }
-    }
 
     window.onEnded = function () {
         // 只有 native 判定"整本最后一集也播完了"才会走到这里
@@ -4361,11 +4274,6 @@
                 // ★ v3.8.2 跳过片尾：放到结尾前自动收尾（片尾曲/结尾广告）
                 label: '跳过片尾', icon: '⏩', val: skipOutroLabel(),
                 pick: function () { ui.moreSkipOutro(); }
-            },
-            {
-                // ★ v3.9.36 字幕开关：lrc/txt 文本跟随显示
-                label: '字幕', icon: '💬', val: App._lyricsOn ? '开' : '关',
-                pick: function () { ui.closeMore(); ui.toggleLyrics(); }
             }
         ];
         App._moreOpen = true;
@@ -7512,39 +7420,43 @@
         c.innerHTML = h;
     };
 
-    // ==================== ★ v2.8 播放悬浮球 ====================
+    // ==================== ★ v2.8 播放悬浮球 → ★ v3.9.37 改为软件内悬浮球 ====================
+    //
+    // 之前的「悬浮球」开关控制的是**系统级**悬浮窗（FloatBallService，要
+    // 「显示在其他应用上层」权限）。用户反馈要的是**软件内**的悬浮球 ——
+    // 也就是右下角那个封面球，现在这个开关直接控制它，不再需要任何系统权限。
+    // 系统悬浮窗服务不再启用（原生侧同步停用）。
+    App._ballOn = true;
+    try { App._ballOn = localStorage.getItem('ballOn') !== '0'; } catch (e) {}
 
-    /** 开关：先问原生（可能拉起系统授权页），结果由 onFloatBallState 回推 */
+    /** 开关：软件内悬浮球显隐（本地记忆，不走原生） */
     ui.toggleFloatBall = function (on) {
-        TS.call('setFloatBall', !!on);
+        App._ballOn = !!on;
+        try { localStorage.setItem('ballOn', App._ballOn ? '1' : '0'); } catch (e) {}
+        syncBall();
+        TS.toast(App._ballOn ? '悬浮球已开启' : '悬浮球已关闭');
     };
 
-    /** 原生回推的悬浮球状态 */
+    /** 设置页开关的初始勾选状态（进入设置页时同步） */
+    function paintFloatBallSetting() {
+        var el = $('setFloatBall');
+        if (el) el.checked = App._ballOn;
+    }
+    ui.paintFloatBallSetting = paintFloatBallSetting;
+
+    /** 原生回推的悬浮球状态（保留兼容：只同步勾选框） */
     window.onFloatBallState = function (o) {
-        o = o || {};
-        App.floatBall = o;
-        var el = $('setFloatBall');
-        if (el) el.checked = !!o.enabled;
-        // 想开但没授权 → 说明用户被弹去了授权页，给一句提示
-        if (o.enabled && !o.canDraw) {
-            TS.toast('请在系统设置里允许「显示在其他应用上层」');
-        }
+        paintFloatBallSetting();
     };
 
-    /** 从授权页返回后的复查结果 */
+    /** 从授权页返回后的复查结果（系统悬浮窗已废弃，仅同步勾选框） */
     window.onFloatBallStateRefresh = function (canDraw) {
-        // 主动拉一次完整状态（含 enabled），前端开关便能同步
-        TS.call('floatBallState');
-        if (canDraw && App.floatBall && App.floatBall.enabled && !App.floatBall.canDraw) {
-            TS.toast('悬浮窗权限已开启');
-        }
+        paintFloatBallSetting();
     };
 
-    /** 权限失效时的降级提示 */
+    /** 权限失效时的降级提示（系统悬浮窗已废弃，理论上不再触发） */
     window.onFloatBallDenied = function () {
-        var el = $('setFloatBall');
-        if (el) el.checked = false;
-        TS.toast('悬浮窗权限已失效，悬浮球已关闭');
+        paintFloatBallSetting();
     };
 
     /** 点悬浮球回到 App → 直接进全屏播放页 */
@@ -7650,7 +7562,7 @@
 
     // ==================== 设置 ====================
 
-    function syncSettings() { TS.call('getSettings'); }
+    function syncSettings() { TS.call('getSettings'); paintFloatBallSetting(); }
 
     window.onSettings = function (o) {
         o = o || {};
@@ -8722,26 +8634,21 @@
 
     var CHANGELOG = [
         {
-            ver: '3.9.36',
+            ver: '3.9.37',
             date: '2026-10-18',
             fixes: [
-                '★ 字幕开关：播放页「更多」菜单新增「字幕」项，可开/关字幕显示',
-                '   · 关闭后立即隐藏；再打开自动恢复当前字幕',
-                '★ 开启字幕但没有找到文本时，会提示 txt 文件的放置方法',
-                '   · 字幕文本需自己准备：把「同名 txt」或「整本小说 txt」放进',
-                '     音频所在的文件夹（App 不会自动联网下载文本）'
-            ]
-        },
-        {
-            ver: '3.9.35',
-            date: '2026-10-18',
-            fixes: [
-                '★ 字幕升级：没有 LRC 也能看字幕',
-                '   · 同名 .txt 文本自动切句，按朗读进度估算时间，逐句高亮跟随；',
-                '     拖进度 / 调倍速都自动适配',
-                '   · 支持整本小说 txt：和音频放同一目录（目录里只有这一个 txt 即可），',
-                '     按音频文件名里的集数自动截取对应章节（如「012.mp3」→「第12章」）',
-                '   · 文本编码 GBK / UTF-8 自动识别；同名 .lrc 仍最优先'
+                '★ 移除字幕功能（上一版的实验性字幕，包括 LRC/txt 与开关）',
+                '★ 修复：首页有时很久加载不出书源',
+                '   · 源列表/首页信息等本地轻操作挪到独立线程池，不再被',
+                '     搜索/备份等慢任务排队卡住',
+                '   · 首页分类清单优先用已有缓存秒出（含过期缓存），后台静默刷新',
+                '★ 悬浮球改为软件内实现',
+                '   · 设置里的「播放悬浮球」开关现在控制的是 App 内右下角的封面球，',
+                '     不再需要「显示在其他应用上层」权限',
+                '   · 软件内悬浮球支持拖动，位置自动记忆，点按仍回播放页',
+                '★ 修复：坚果云「测试连接正常但备份报没有权限（403）」',
+                '   · WebDAV 路径里的中文/空格等现在会正确编码',
+                '   · 403 时把服务器返回的具体原因附在提示里（限流/流量用超一目了然）'
             ]
         },
         {
@@ -8757,9 +8664,7 @@
                 '     没设置过的书跟随全局默认',
                 '★ 「关于」页移除已修复问题的诊断入口（源加载诊断/小组件诊断），',
                 '   保留崩溃日志',
-                '★ 历史列表：最后一次播放的书加「上次播放」标识',
-                '★ 实验性字幕：本地音频同名 .lrc 自动加载，播放页逐句高亮跟随',
-                '  （同名 .txt 也支持，按纯文本展示）；网络书暂不支持'
+                '★ 历史列表：最后一次播放的书加「上次播放」标识'
             ]
         },
         {
@@ -9519,6 +9424,8 @@
         goTab('home');
         // 悬浮球常驻：先按当前状态摆好（没内容时是灰球）
         syncBall();
+        // ★ v3.9.37：软件内悬浮球支持拖动 + 位置记忆
+        initBallDrag();
         // 恢复上次播放会话：有记录就把球点亮，等用户点
         TS.call('resumeSession');
         // 主页下拉刷新（替代原来的右上角刷新按钮）

@@ -2798,13 +2798,5 @@ body.multi-on .chk { display: block; }
     vertical-align: 1px;
 }
 
-/* ============================================================
-   ★ v3.9.34 实验性字幕（LRC，本地音频同名 .lrc）
-   ============================================================ */
-.lyrics-box {
-    max-height: 108px; overflow-y: auto; margin: 10px auto 2px;
-    text-align: center; padding: 0 16px; -webkit-mask-image: none;
-}
-.lyrics-box.hide { display: none; }
-.lrc-line { font-size: 13px; line-height: 1.9; color: var(--text); opacity: .42; transition: opacity .3s; }
-.lrc-line.on { opacity: 1; font-weight: 600; }
+/* ★ v3.9.37 App 内悬浮球拖动态：跟手一点、盖住其它内容 */
+.player.dragging { opacity: .92; z-index: 90; }

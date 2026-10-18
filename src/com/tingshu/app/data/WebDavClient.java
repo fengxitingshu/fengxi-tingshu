@@ -51,6 +51,38 @@ public final class WebDavClient {
 
     private WebDavClient() {}
 
+    /**
+     * ★ v3.9.37：把 URL 的 path 段逐段编码（scheme://host 原样保留）。
+     * 已编码的段（%XX 形式）先解码再编码，避免二次编码。
+     * 空格编码成 %20 而不是 +（URLEncoder 是表单语义，WebDAV path 要 RFC 3986）。
+     */
+    static String encodeDavUrl(String url) {
+        if (url == null) return null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            int port = u.getPort();
+            String hostPart = u.getProtocol() + "://" + u.getHost()
+                    + (port > 0 ? ":" + port : "");
+            String path = u.getPath() == null ? "" : u.getPath();
+            String query = u.getQuery() == null ? "" : "?" + u.getQuery();
+            String[] segs = path.split("/", -1);
+            StringBuilder sb = new StringBuilder(hostPart);
+            for (String seg : segs) {
+                if (seg.length() == 0) { sb.append('/'); continue; }
+                String dec;
+                try { dec = java.net.URLDecoder.decode(seg, "UTF-8"); }
+                catch (Throwable e) { dec = seg; }
+                try {
+                    sb.append(java.net.URLEncoder.encode(dec, "UTF-8").replace("+", "%20"));
+                } catch (Throwable e) { sb.append(seg); }
+            }
+            return sb.toString() + query;
+        } catch (Throwable t) {
+            return url;   // 不是合法 URL 就原样交出去，让后面的请求自己报错
+        }
+    }
+
+
     private static final int CONNECT_TIMEOUT = 12000;
     private static final int READ_TIMEOUT = 30000;
 
@@ -317,6 +349,12 @@ public final class WebDavClient {
     private static Result request(String method, String url, String user, String pass,
                                   File bodyFile, byte[] bodyBytes, String depth,
                                   boolean wantText, int readTimeout, String authType) {
+        // ★ v3.9.37：URL 路径段统一编码。
+        //   之前目录名/文件名里的中文、空格、#、? 等是原样拼进 URL 的——
+        //   坚果云（dav.jianguoyun.com）对未编码路径直接回 403/404，表现就是
+        //   「测试连接正常（探针文件名是纯 ASCII）但一备份就报没有权限」。
+        url = encodeDavUrl(url);
+
         // 初始认证头：digest 模式先不带头（等 401 质询），其余先发 Basic
         String initAuth = AUTH_DIGEST.equals(authType) ? null : basicHeader(user, pass);
 
@@ -436,13 +474,23 @@ public final class WebDavClient {
                     bo.write(buf, 0, n);
                 }
                 r.bytes = bo.toByteArray();
-                if (wantText) {
+                // ★ v3.9.37：403/507 时也解码 body —— 「没有权限」的真正原因
+                //   （限流/流量用超）往往就写在响应体里，不能只看状态码。
+                if (wantText || r.code == 403 || r.code == 507) {
                     r.body = decode(bo.toByteArray(), conn.getContentEncoding());
                 }
             }
 
             r.ok = (r.code >= 200 && r.code < 300);
-            if (!r.ok) r.error = httpError(r.code);
+            if (!r.ok) {
+                r.error = httpError(r.code);
+                // ★ v3.9.37：403/507 时带上服务器响应里的人话片段。
+                //   坚果云限流/流量用超时，body 会写明原因，只看状态码永远在猜。
+                if (r.code == 403 || r.code == 507) {
+                    String hint = bodyHint(r.body);
+                    if (hint.length() > 0) r.error += "。服务器返回：" + hint;
+                }
+            }
             return r;
         } catch (Throwable t) {
             r.error = explain(t);
@@ -911,6 +959,18 @@ public final class WebDavClient {
     }
 
     // ==================== 错误文案 ====================
+
+    /**
+     * ★ v3.9.37：从错误响应 body 里提取人话片段（去 XML/HTML 标签，取前 80 字）。
+     * 坚果云 403 的 body 形如 {@code <?xml ...><error><message>频率限制</message>...}，
+     * 这段话往往就是「没有权限」的真正原因。
+     */
+    private static String bodyHint(String body) {
+        if (body == null || body.length() == 0) return "";
+        String s = body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
+        if (s.length() == 0) return "";
+        return s.length() > 80 ? s.substring(0, 80) + "…" : s;
+    }
 
     private static String httpError(int code) {
         switch (code) {
