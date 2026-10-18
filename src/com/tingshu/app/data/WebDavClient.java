@@ -165,6 +165,14 @@ public final class WebDavClient {
             byte[] probe = "fengxi-probe".getBytes();
             Result r3 = request("PUT", base + d + "/.fx-probe.txt", user, pass,
                     null, probe, null, false, READ_TIMEOUT, authType);
+            // ★ v3.9.38：坚果云对「刚删除过的路径」常回 410 Gone（删除墓碑），
+            //   而上一轮测试留下的 .fx-probe.txt 恰恰就是这种路径 ——
+            //   表现就是「测试连接报 410」。换个带时间戳的文件名再试一次即可绕开。
+            if (!r3.ok && (r3.code == 410 || r3.code == 409)) {
+                r3 = request("PUT", base + d + "/.fx-probe-"
+                        + (System.currentTimeMillis() % 1000000L) + ".txt", user, pass,
+                        null, probe, null, false, READ_TIMEOUT, authType);
+            }
             if (r3.ok) {
                 request("DELETE", base + d + "/.fx-probe.txt", user, pass,
                         null, null, null, false, READ_TIMEOUT, authType);
@@ -297,8 +305,9 @@ public final class WebDavClient {
     /** 删除远端文件 */
     public static Result delete(String url, String user, String pass, String authType) {
         Result r = request("DELETE", url, user, pass, null, null, null, false, CONNECT_TIMEOUT, authType);
-        // 204/200 都算成功；404 也算「已经没了」→ 当作成功
-        if (r.code == 204 || r.code == 200 || r.code == 404) {
+        // 204/200 都算成功；404/410 也算「已经没了」→ 当作成功
+        //（坚果云对刚删除过的路径常回 410 Gone 而不是 404）
+        if (r.code == 204 || r.code == 200 || r.code == 404 || r.code == 410) {
             r.ok = true;
             r.error = "";
         }
@@ -476,7 +485,8 @@ public final class WebDavClient {
                 r.bytes = bo.toByteArray();
                 // ★ v3.9.37：403/507 时也解码 body —— 「没有权限」的真正原因
                 //   （限流/流量用超）往往就写在响应体里，不能只看状态码。
-                if (wantText || r.code == 403 || r.code == 507) {
+                // ★ v3.9.38：410/404 同理 —— 坚果云的删除墓碑/目录消失原因也在 body。
+                if (wantText || r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404) {
                     r.body = decode(bo.toByteArray(), conn.getContentEncoding());
                 }
             }
@@ -486,7 +496,8 @@ public final class WebDavClient {
                 r.error = httpError(r.code);
                 // ★ v3.9.37：403/507 时带上服务器响应里的人话片段。
                 //   坚果云限流/流量用超时，body 会写明原因，只看状态码永远在猜。
-                if (r.code == 403 || r.code == 507) {
+                // ★ v3.9.38：410/404 同样带原因。
+                if (r.code == 403 || r.code == 507 || r.code == 410 || r.code == 404) {
                     String hint = bodyHint(r.body);
                     if (hint.length() > 0) r.error += "。服务器返回：" + hint;
                 }
@@ -991,6 +1002,10 @@ public final class WebDavClient {
                         + "③触发频率限制时等 30 分钟再试（免费版每 30 分钟 600 次）";
             case 404:
                 return "目录不存在（404）：请检查地址与备份目录";
+            case 410:
+                return "资源已不存在（410）：服务器上的目录或文件已被删除或移动。"
+                        + "坚果云用户请检查网页端备份目录是否还在；"
+                        + "若刚删除过同名文件，稍等片刻再试";
             case 405:
                 return "服务端不允许该操作（405）";
             case 409:

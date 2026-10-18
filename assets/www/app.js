@@ -325,6 +325,12 @@
     function loadHome() {
         // 继续收听 / 收藏 / 历史统计仍走原生，用于底部「继续收听」和空态提示
         TS.call('homeInfo');
+        // ★ v3.9.38：classic 模式先用启动快照重放上次首页（零网络），
+        //   等 discoverSources 回来后 paintHomeSources 仍走重放路径，不闪屏。
+        if (App._homeMode === 'classic' && !App._homeSnapDone) {
+            App._homeSnapDone = true;
+            if (restoreHomeSnap()) paintHomeSources();
+        }
         if (!App.homeSources) TS.call('discoverSources');
         else paintHomeSources();
     }
@@ -369,6 +375,9 @@
         var cd = $('discoverCats');
         var cl = $('homeContent');
         if (!cd || !cl) return;
+
+        // ★ v3.9.38：源列表模式且停在「选择页」→ 渲染源列表
+        if (App._homeMode === 'list' && App._homePick) { renderHomePicker(); return; }
 
         // ★ v3.9.3：首页停在本地书源视图 → 走专属渲染，不进分类浏览流程
         if (App.home.src === 'local') { renderHomeLocal(); return; }
@@ -484,6 +493,129 @@
     // 现在把「上次用的源 + 分类」存进 localStorage，冷启动自动选中并直接加载。
 
     var LAST_SRC_KEY = 'fx_last_home_src_v1';
+
+    // ==================== ★ v3.9.38 首页显示方式 ====================
+    //
+    // 'list'    —— 首页先显示「源列表」，点选源后才进分类浏览（现在的首页）；
+    //              左上角源名点击 = 回到源列表换源。
+    // 'classic' —— 保持现在的首页，但把「最后一次浏览的 源+分类+首屏书单」
+    //              存成本地快照，冷启动直接重放（零网络），用户下拉刷新 /
+    //              切分类等操作才真正联网 —— 解决"打开半天什么都不显示"。
+    App._homeMode = 'classic';
+    App._homePick = false;          // list 模式下：是否停在「源列表选择页」
+    App._homeSnapDone = false;      // 本次启动是否已恢复过快照（只恢复一次）
+    try { App._homeMode = localStorage.getItem('homeMode') === 'list' ? 'list' : 'classic'; } catch (e) {}
+
+    ui.setHomeMode = function (v) {
+        App._homeMode = (v === 'list') ? 'list' : 'classic';
+        try { localStorage.setItem('homeMode', App._homeMode); } catch (e) {}
+        // 切到源列表模式立刻进选择页；切回内容直达立刻恢复内容
+        App._homePick = (App._homeMode === 'list');
+        resetHomePaging();
+        if (App.tab === 'home') paintHomeSources();
+        paintHomeModeSeg();
+    };
+
+    function paintHomeModeSeg() {
+        var ids = { list: 'hmList', classic: 'hmClassic' };
+        for (var k in ids) {
+            var el = $(ids[k]);
+            if (el) el.className = 'seg-item' + (App._homeMode === k ? ' on' : '');
+        }
+    }
+    ui.paintHomeModeSeg = paintHomeModeSeg;
+
+    /** list 模式：首页的「源列表选择页」 */
+    function renderHomePicker() {
+        var cd = $('discoverCats'), cl = $('homeContent');
+        if (!cl) return;
+        if (cd) cd.innerHTML = '';
+        var el = $('homeSrcName');
+        if (el) el.textContent = '选择书源';
+        var list = App.homeSources || [];
+        var localOn = false;
+        for (var s = 0; s < (App.sources || []).length; s++) {
+            var cs = App.sources[s];
+            if (cs && cs.id === 'local' && cs.enabled !== false) localOn = true;
+        }
+        if (!list.length && !localOn) {
+            cl.innerHTML =
+                '<div class="empty nosrc">' +
+                  '<div class="big">📚</div>' +
+                  '<div class="nosrc-t">还没有可用的书源</div>' +
+                  '<div class="nosrc-s">本应用不含内置源，需要你自己导入书源后才可使用</div>' +
+                  '<div class="nosrc-btns">' +
+                    '<button class="mini" onclick="App.ui.goImportSource()">导入书源</button>' +
+                    '<button class="mini ghost" onclick="App.ui.goTab(\'mine\')">书源管理</button>' +
+                  '</div>' +
+                  '<div class="nosrc-tip">正在获取书源清单，稍等片刻会自动出现</div>' +
+                '</div>';
+            if (!list.length && !App._pickerAsked) {
+                App._pickerAsked = true;
+                TS.call('discoverSources');
+            }
+            return;
+        }
+        var h = '<div class="srcgrid">';
+        for (var i = 0; i < list.length; i++) {
+            var n = (list[i].cats || []).length;
+            h += '<div class="srcgrid-item" onclick="App.ui.homePickSrc(\'' +
+                 escAttr(list[i].id) + '\')">' +
+                 '<div class="t">' + TS.esc(list[i].name || list[i].id) + '</div>' +
+                 '<div class="s">' + (n > 0 ? (n + ' 个分类') : '暂无分类') + '</div></div>';
+        }
+        if (localOn) {
+            h += '<div class="srcgrid-item" onclick="App.ui.homePickSrc(\'local\')">' +
+                 '<div class="t">本地书源</div><div class="s">听本机音频</div></div>';
+        }
+        h += '</div>';
+        cl.innerHTML = h;
+    }
+
+    // ==================== ★ v3.9.38 classic 模式：首页启动快照 ====================
+    //
+    // renderHomeList 渲染出首屏后，把「源+分类+首屏书单+分类条」存进
+    // localStorage；冷启动 loadHome 先把快照灌回 App.homeBooks /
+    // App.homeSources，paintHomeSources 会走 v3.7.6 的累积重放路径 ——
+    // 一行网络请求都不发就能看到上次的首页。用户下拉刷新 / 切分类 /
+    // 换源时走原有联网逻辑，快照随之更新。
+    var HOME_SNAP_KEY = 'fx_home_snap_v1';
+
+    function saveHomeSnap(all, srcId, catId) {
+        if (App._homeMode !== 'classic') return;
+        try {
+            var cfg = null, list = App.homeSources || [];
+            for (var i = 0; i < list.length; i++) if (list[i].id === srcId) cfg = list[i];
+            localStorage.setItem(HOME_SNAP_KEY, JSON.stringify({
+                src: srcId,
+                cat: catId,
+                books: all.slice(0, 48),          // 只存首屏，控制体积
+                cats: (cfg && cfg.cats) || [],
+                srcName: (cfg && cfg.name) || '',
+                hasMore: !!App.homeHasMore,
+                ts: Date.now()
+            }));
+        } catch (e) {}
+    }
+
+    /** 冷启动恢复快照。成功返回 true（App.home / homeBooks / homeSources 已就位） */
+    function restoreHomeSnap() {
+        try {
+            var snap = JSON.parse(localStorage.getItem(HOME_SNAP_KEY) || 'null');
+            if (!snap || !snap.src || !snap.books || !snap.books.length) return false;
+            if (App.homeBooks[snap.cat] && App.homeBooks[snap.cat].length) return false;
+            App.home.src = snap.src;
+            App.home.cat = snap.cat || '';
+            App.home.page = 1;
+            App.homeBooks[snap.cat] = snap.books;
+            App.homePage[snap.cat] = 1;
+            App.homeHasMore = !!snap.hasMore;
+            if (!App.homeSources) {
+                App.homeSources = [{ id: snap.src, name: snap.srcName || snap.src, cats: snap.cats || [] }];
+            }
+            return true;
+        } catch (e) { return false; }
+    }
 
     /** 记住当前首页选中的源与分类 */
     function saveLastHomeSource(sid) {
@@ -733,6 +865,8 @@
             head += '<div class="home-more" id="homeMore"></div>';
             head += '<div id="homeContinue"></div>';
             cl.innerHTML = head;
+            // ★ v3.9.38：首屏渲染完成 → 存启动快照（classic 模式下次打开秒显）
+            saveHomeSnap(all, srcId, catId);
         } else {
             var more = $('homeMore');
             if (more && fresh.length) {
@@ -954,6 +1088,14 @@
     /** 左上角源名称 → 在按钮正下方拉出悬浮下拉 */
     ui.homeSrcToggle = function (ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
+        // ★ v3.9.38：源列表模式下，点源名 = 回「源列表选择页」换源
+        if (App._homeMode === 'list') {
+            ui.closeSrcPop();
+            App._homePick = true;
+            App._pickerAsked = false;
+            paintHomeSources();
+            return;
+        }
         var pop = $('homeSrcPop');
         if (pop && !pop.classList.contains('hide')) { ui.closeSrcPop(); return; }
 
@@ -1017,8 +1159,15 @@
     };
 
     ui.homePickSrc = function (sid) {
+        // ★ v3.9.38：无论哪种模式，点了源就是离开了「源列表选择页」
+        App._homePick = false;
         ui.closeSrcPop();
-        if (App.home.src === sid) return;
+        if (App.home.src === sid) {
+            // list 模式下点当前源 = 进内容；classic 下行为不变（重放也不闪屏）
+            if (sid === 'local') { renderHomeLocal(); return; }
+            paintHomeSources();
+            return;
+        }
         App.home.src = sid;
         App.home.page = 1;
         App.homePending = {};
@@ -8634,6 +8783,21 @@
 
     var CHANGELOG = [
         {
+            ver: '3.9.38',
+            date: '2026-10-18',
+            fixes: [
+                '★ 设置新增「首页显示」开关（外观分组），两种方式：',
+                '   · 源列表：首页先列出全部书源，点选后进入分类浏览；',
+                '     点左上角源名随时回到源列表换源',
+                '   · 内容直达（默认）：打开直接显示上次浏览的首页内容',
+                '     （本地缓存秒出，零网络）；下拉刷新 / 切分类才联网更新',
+                '★ 修复：坚果云「测试连接」报 410',
+                '   · 坚果云对刚删除过的文件路径回 410（删除墓碑），',
+                '     探针文件名改为随机名绕开；删除已不存在的文件也按成功处理',
+                '   · 410/404 报错会附带服务器返回的具体原因'
+            ]
+        },
+        {
             ver: '3.9.37',
             date: '2026-10-18',
             fixes: [
@@ -9422,6 +9586,9 @@
         //   "正在初始化"，等它就绪后 onSourceList 会把 .py 源补齐。
         TS.call('pythonStatus');
         goTab('home');
+        // ★ v3.9.38：首页显示模式 —— 源列表模式冷启动先进「选择页」
+        App._homePick = (App._homeMode === 'list');
+        paintHomeModeSeg();
         // 悬浮球常驻：先按当前状态摆好（没内容时是灰球）
         syncBall();
         // ★ v3.9.37：软件内悬浮球支持拖动 + 位置记忆

@@ -2800,3 +2800,15 @@ body.multi-on .chk { display: block; }
 
 /* ★ v3.9.37 App 内悬浮球拖动态：跟手一点、盖住其它内容 */
 .player.dragging { opacity: .92; z-index: 90; }
+
+/* ★ v3.9.38 源列表模式：首页「选择书源」网格 */
+.srcgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 4px 2px 16px; }
+.srcgrid-item {
+    background: var(--card); border-radius: 12px; padding: 14px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .06); cursor: pointer;
+    transition: transform .15s;
+}
+.srcgrid-item:active { transform: scale(.96); }
+.srcgrid-item .t { font-size: 14px; font-weight: 600; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srcgrid-item .s { font-size: 11.5px; color: var(--text2, #999); margin-top: 4px; }
