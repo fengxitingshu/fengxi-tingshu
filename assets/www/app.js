@@ -594,7 +594,8 @@
     }
 
     /** ★ v3.9.39：源列表里点了「仅搜索」源 → 跳搜索页（结果可按来源筛选）。
-     *  ★ v3.9.40：跳过去后自动聚焦搜索框，输入关键词立即搜这个源。 */
+     *  ★ v3.9.41：点完直接弹关键词输入，确认后立即搜索并自动筛选到该源 ——
+     *  一条流走完，不再让用户自己再去搜索页敲字、翻筛选。 */
     ui.homePickSearchSrc = function (sid) {
         App._homePick = false;
         var nm = sid;
@@ -604,12 +605,16 @@
                 break;
             }
         }
-        goTab('search');
-        TS.toast('「' + nm + '」没有分类页，输入关键词立即搜索');
-        setTimeout(function () {
-            var kw = $('kw');
-            if (kw) { try { kw.focus(); } catch (e) {} }
-        }, 150);
+        ui.inputSheet('搜索「' + nm + '」', '', function (kw) {
+            kw = (kw || '').trim();
+            if (!kw) return;
+            goTab('search');
+            var el = $('kw');
+            if (el) el.value = kw;
+            ui.doSearch();
+            // 结果回来后自动把筛选切到这个源（见 paintSearchChips）
+            App._searchFocusSrc = sid;
+        });
     };
 
     // ==================== ★ v3.9.38 classic 模式：首页启动快照 ====================
@@ -1668,6 +1673,16 @@
     function paintSearchChips() {
         var el = $('searchChips');
         if (!el) return;
+        // ★ v3.9.41：从首页源列表点「仅搜索」源进来 → 结果一到就自动筛选到该源
+        if (App._searchFocusSrc) {
+            var foc = App._searchFocusSrc, fg = App.searchBySource || {};
+            if (fg[foc] && fg[foc].length) {
+                App._searchFocusSrc = null;
+                ui.filterSearch(foc);
+                return;
+            }
+            if (!App.searchRunning) App._searchFocusSrc = null;   // 该源没结果，放弃
+        }
         var grp = App.searchBySource || {};
         var ids = [];
         for (var k in grp) if (grp[k] && grp[k].length) ids.push(k);
@@ -8822,6 +8837,18 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.41',
+            date: '2026-10-18',
+            fixes: [
+                '★ 修复：坚果云「测试连接正常但备份报 403 OperationNotAllowed」',
+                '   · 坚果云不允许第三方应用建目录（对已存在目录的建目录请求',
+                '     也回 403）—— 现在遇到 403 会先确认目录是否已在服务器上，',
+                '     在就直接上传；不在才提示去网页端先建文件夹',
+                '★ 源列表点「仅搜索」源：弹出关键词输入，确认后立即搜索',
+                '   并自动筛选到该源，一步出结果'
+            ]
+        },
         {
             ver: '3.9.40',
             date: '2026-10-18',

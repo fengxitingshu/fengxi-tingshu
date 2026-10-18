@@ -240,6 +240,19 @@ public final class WebDavClient {
                 last.ok = true;
                 continue;
             }
+            // ★ v3.9.41：坚果云对「已存在的目录」MKCOL 也回 403
+            //   OperationNotAllowed（而不是 RFC 的 405）—— 它根本不允许第三方
+            //   应用 MKCOL，哪怕目录已经在那里。用 PROPFIND 验证目录是否真的
+            //   存在：在 → 继续下一步；不在 → 才是真没权限。
+            if (r.code == 403 || r.code == 410) {
+                Result p = request("PROPFIND", acc.toString(), user, pass,
+                        null, null, "0", false, CONNECT_TIMEOUT, authType);
+                if (p.ok || p.code == 207) {
+                    last = p;
+                    last.ok = true;
+                    continue;
+                }
+            }
             // 409 = 父目录不存在（理论上不会，因为逐级建）
             return r;
         }

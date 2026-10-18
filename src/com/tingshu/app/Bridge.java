@@ -3005,16 +3005,24 @@ public class Bridge {
                                     false, ls, versionName(), versionCodeInt());
 
                             // 2) 确保远端目录存在
+                            // ★ v3.9.41：建目录失败不再直接中断 —— 坚果云禁止
+                            //   第三方应用 MKCOL（对已存在目录也回 403），目录
+                            //   已在服务器上时 PUT 本来就能成功；PUT 才是关键。
                             com.tingshu.app.data.WebDavClient.Result dr =
                                     com.tingshu.app.data.WebDavClient.ensureDir(base, user, pass, dir, auth);
-                            if (!dr.ok) throw new IllegalStateException(
-                                    "创建远端目录失败：" + dr.error);
+                            String dirWarn = dr.ok ? "" :
+                                    ("建目录被服务器拒绝（" + dr.error + "）；"
+                                     + "若目录已在坚果云里建好可忽略此提示，"
+                                     + "否则请先在坚果云网页端创建该文件夹。");
 
                             // 3) 上传
                             String target = com.tingshu.app.data.WebDavClient.joinUrl(base, dir) + name;
                             com.tingshu.app.data.WebDavClient.Result ur =
                                     com.tingshu.app.data.WebDavClient.put(target, user, pass, tmp, auth);
-                            if (!ur.ok) throw new IllegalStateException("上传失败：" + ur.error);
+                            if (!ur.ok) {
+                                throw new IllegalStateException("上传失败：" + ur.error
+                                        + (dr.ok ? "" : ("。" + dirWarn)));
+                            }
 
                             o.put("ok", true);
                             o.put("name", name);
