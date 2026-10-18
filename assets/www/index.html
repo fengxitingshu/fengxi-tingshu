@@ -384,16 +384,8 @@
 
     <!-- ★ v3.7.15-fix：诊断 —— 源加载自检 + 崩溃日志，截图即可反馈 -->
     <div class="chapter-hd"><span>问题诊断</span></div>
-    <div class="setrow" onclick="App.ui.openDiag()">
-      <div class="setlabel">源加载诊断<span class="setdesc">JS 源「不见了」时先看这里</span></div>
-      <div class="setval">&#8250;</div>
-    </div>
     <div class="setrow" onclick="App.ui.openCrashLog()">
       <div class="setlabel">崩溃日志<span class="setdesc">闪退记录，反馈时请附上</span></div>
-      <div class="setval">&#8250;</div>
-    </div>
-    <div class="setrow" onclick="App.ui.openWgDiag()">
-      <div class="setlabel">小组件诊断<span class="setdesc">桌面小组件异常时看这里</span></div>
       <div class="setval">&#8250;</div>
     </div>
 
@@ -799,6 +791,9 @@
           <span id="fDur">00:00</span>
         </div>
       </div>
+
+      <!-- ★ v3.9.34 实验性字幕（LRC）：本地音频同名 .lrc 自动加载并跟随播放 -->
+      <div id="lyricsBox" class="lyrics-box hide"><div id="lyricsList"></div></div>
 
       <!-- 播放控制：尺寸与厚度见 style.css .fctrl .pbtn -->
       <div class="fctrl">

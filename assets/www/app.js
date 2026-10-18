@@ -2342,9 +2342,11 @@
             var it = arr[i];
             var b = it.book || {};
             var cur = Math.round((it.lastPosMs || 0) / 1000);
+            // ★ v3.9.34：最后播放的一本高亮标识（列表已按时间倒序，第一本即最近）
+            var lastCls = (i === 0) ? ' bookcard-last' : '';
             // ★ v3.7.11：去掉右上角的删除「✕」——改为**长按卡片**在按点弹菜单
             //   （删除 / 换源 / 搜索），触屏上更干净、也更不容易误删。
-            h += '<div class="bookcard" data-hist-key="' + escAttr(b.key || '') +
+            h += '<div class="bookcard' + lastCls + '" data-hist-key="' + escAttr(b.key || '') +
                  '" onclick="App.ui.openHistoryItem(\'' + escAttr(b.key || '') + '\')">';
             h += '<img src="' + TS.esc(b.cover) + '" onerror="TS.imgFail(this)" loading="lazy">';
             h += '<div class="info">';
@@ -3130,6 +3132,15 @@
         //   期间若恢复播放（迟到的自救成功 / 用户手动点播成功）则取消停止；
         //   15 秒仍无法播放才真正 stop（释放播放器/撤通知/清队列）。
         if (App._graceStopTimer) { clearTimeout(App._graceStopTimer); App._graceStopTimer = null; }
+        // ★ v3.9.34 抽搐修复：同一个播放按钮周期里反复「失败→恢复→失败」
+        //  会让图标来回跳（抽搐）。连续第 3 次失败不再给缓冲窗，直接停止。
+        App._graceFails = (App._graceFails || 0) + 1;
+        if (App._graceFails >= 3) {
+            App._graceFails = 0;
+            TS.call('stop');
+            TS.toast('「' + name + '」无法播放，已停止');
+            return;
+        }
         TS.toast('「' + name + '」播放失败，15 秒后自动停止');
         App._graceStopTimer = setTimeout(function () {
             App._graceStopTimer = null;
@@ -3147,6 +3158,8 @@
             clearTimeout(App._graceStopTimer);
             App._graceStopTimer = null;
         }
+        // ★ v3.9.34：真播起来了 → 连续失败计数清零
+        if (p) App._graceFails = 0;
         // 拿到真值就说明 native 那边已经有结论了（在播 or 已停），
         // 不管哪种都不该再转圈。
         setBuffering(false);
@@ -3178,7 +3191,77 @@
         resumeAndPlay();
     };
 
-    window.onProgress = function (cur, dur) { setTime(cur || 0, dur || 0); saveSession(); };
+    window.onProgress = function (cur, dur) {
+        setTime(cur || 0, dur || 0);
+        paintLyrics(cur || 0);   // ★ v3.9.34 字幕跟随
+        saveSession();
+    };
+
+    // ==================== ★ v3.9.34 实验性字幕（LRC / 同名 txt） ====================
+    App.lyrics = null;      // [[sec, text], ...]（LRC）或 null
+    App.lyricsTxt = null;   // 纯文本模式（无时间轴）的整段文字
+    App._lrcIdx = -1;
+
+    window.onLyrics = function (lrc) {
+        App.lyrics = null;
+        App.lyricsTxt = null;
+        App._lrcIdx = -1;
+        var box = $('lyricsBox'), list = $('lyricsList');
+        lrc = lrc || '';
+        if (!lrc) { if (box) box.classList.add('hide'); return; }
+
+        var html = '';
+        if (lrc.indexOf('\u0000txt\u0000') === 0) {
+            // 同名 .txt：无时间轴的纯文本字幕，整段展示
+            App.lyricsTxt = lrc.replace('\u0000txt\u0000', '').replace(/\r/g, '');
+            var rows = App.lyricsTxt.split('\n');
+            for (var r = 0; r < rows.length; r++) {
+                if (rows[r].trim()) html += '<div class="lrc-line on">' + TS.esc(rows[r]) + '</div>';
+            }
+        } else {
+            var lines = [];
+            var raw = lrc.split(/\r?\n/);
+            for (var i = 0; i < raw.length; i++) {
+                var m = raw[i].match(/^\s*\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\](.*)$/);
+                if (!m) continue;
+                var frac = m[3] ? (parseInt(m[3], 10) / (m[3].length === 2 ? 100 : 1000)) : 0;
+                var t = parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + frac;
+                var txt = m[4].trim();
+                if (txt) lines.push([t, txt]);
+            }
+            lines.sort(function (a, b) { return a[0] - b[0]; });
+            if (!lines.length) { if (box) box.classList.add('hide'); return; }
+            App.lyrics = lines;
+            for (var j = 0; j < lines.length; j++) {
+                html += '<div class="lrc-line" data-i="' + j + '">' + TS.esc(lines[j][1]) + '</div>';
+            }
+        }
+        if (list) list.innerHTML = html;
+        if (box) box.classList.remove('hide');
+    };
+
+    /** 按 curSec 高亮当前句并滚动居中 */
+    function paintLyrics(cur) {
+        var L = App.lyrics;
+        if (!L || !L.length) return;   // 纯文本模式不高亮
+        var idx = 0;
+        for (var i = 0; i < L.length; i++) {
+            if (cur >= L[i][0]) idx = i; else break;
+        }
+        if (idx === App._lrcIdx) return;
+        App._lrcIdx = idx;
+        var list = $('lyricsList');
+        if (!list) return;
+        var els = list.children;
+        for (var j = 0; j < els.length; j++) {
+            els[j].className = 'lrc-line' + (j === idx ? ' on' : '');
+        }
+        var curEl = els[idx];
+        var box = $('lyricsBox');
+        if (curEl && box) {
+            box.scrollTop = curEl.offsetTop - (box.clientHeight / 2) + (curEl.offsetHeight / 2);
+        }
+    }
 
     window.onEnded = function () {
         // 只有 native 判定"整本最后一集也播完了"才会走到这里
@@ -4564,10 +4647,16 @@
         h += '<div class="sleep-row"><select id="sleepMinSel" class="sel" onchange="App.ui.sleepPick(this.value)">' +
              minOpts(cur) + '</select></div>';
 
-        // ---- 按集停止（下拉，选中即生效） ----
+        // ---- 按集停止（下拉 + 自定义集数输入，★ v3.9.34） ----
         h += '<div class="sheet-sec">按集停止</div>';
         h += '<div class="sleep-row"><select id="sleepEpsSel" class="sel" onchange="App.ui.sleepPickEps(this.value)">' +
              epsOpts(eps) + '</select></div>';
+        h += '<div class="sleep-row" id="sleepEpsCustom" style="display:' +
+             (eps > 5 ? 'flex' : 'none') + '">' +
+             '<input id="sleepEpsInput" type="number" min="1" max="99" class="sel" ' +
+             'style="flex:1" placeholder="自定义集数（1~99）" value="' + (eps > 5 ? eps : '') + '">' +
+             '<div class="sheet-item" style="margin:0;padding:10px 14px" ' +
+             'onclick="App.ui.sleepPickEpsInput()">确定</div></div>';
 
         // ---- 时段关闭 ----
         h += '<div class="sheet-sec">可选时段关闭</div>';
@@ -4602,6 +4691,8 @@
     function epsOpts(cur) {
         var opts = [[0, '不启用'], [1, '播完本集'], [2, '再听 2 集'],
                     [3, '再听 3 集'], [5, '再听 5 集']];
+        if (cur > 5) opts.push([cur, '再听 ' + cur + ' 集（自定义）']);
+        opts.push([-1, '自定义集数…']);
         var h = '';
         for (var i = 0; i < opts.length; i++) {
             h += '<option value="' + opts[i][0] + '"' + (cur === opts[i][0] ? ' selected' : '') +
@@ -4658,9 +4749,26 @@
     ui.sleepPickEps = function (nStr) {
         var n = parseInt(nStr, 10);
         if (isNaN(n)) return;
+        var custom = $('sleepEpsCustom');
+        if (n === -1) {   // 自定义：展开输入行，不立即生效
+            if (custom) custom.style.display = 'flex';
+            var inp = $('sleepEpsInput');
+            if (inp) inp.focus();
+            return;
+        }
+        if (custom) custom.style.display = 'none';
         TS.call('setSleepEpisodes', n);
         TS.toast(n > 0 ? ('播完 ' + n + ' 集后自动暂停') : '已取消按集停止');
         paintSleepBtn();
+    };
+
+    /** ★ v3.9.34：自定义集数输入确认 */
+    ui.sleepPickEpsInput = function () {
+        var inp = $('sleepEpsInput');
+        if (!inp) return;
+        var n = parseInt(inp.value, 10);
+        if (isNaN(n) || n < 1 || n > 99) { TS.toast('请输入 1~99 的集数'); return; }
+        ui.sleepPickEps(String(n));
     };
 
     /** 保存时段（不动倒计时） */
@@ -8524,6 +8632,24 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.34',
+            date: '2026-10-18',
+            fixes: [
+                '★ 定时关闭「按集停止」支持自定义集数（1~99，下拉选「自定义集数…」）',
+                '★ 修复：点播放偶发「播放/停止反复抽搐」',
+                '   · 刚失败后 0.8 秒内的连点直接忽略（错误态播放器被拉起会立刻再失败）',
+                '   · 连续 3 次自救失败不再反复给缓冲窗，直接停止',
+                '★ 跳过片头/片尾改为按专辑记录',
+                '   · 播放页「更多」里设置的秒数只对当前书生效，不同书各自记忆；',
+                '     没设置过的书跟随全局默认',
+                '★ 「关于」页移除已修复问题的诊断入口（源加载诊断/小组件诊断），',
+                '   保留崩溃日志',
+                '★ 历史列表：最后一次播放的书加「上次播放」标识',
+                '★ 实验性字幕：本地音频同名 .lrc 自动加载，播放页逐句高亮跟随',
+                '  （同名 .txt 也支持，按纯文本展示）；网络书暂不支持'
+            ]
+        },
         {
             ver: '3.9.32',
             date: '2026-10-18',

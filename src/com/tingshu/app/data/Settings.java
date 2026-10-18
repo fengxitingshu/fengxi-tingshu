@@ -147,6 +147,37 @@ public final class Settings {
         catch (Throwable t) { SP.edit().putInt("skip_intro_sec", v).apply(); }
     }
 
+    /**
+     * ★ v3.9.34 按专辑（书籍）记录的跳过设置。
+     * 播放页「更多 → 跳过片头/片尾」现在写入当前专辑；无记录的书跟随全局。
+     * @return 秒数；无专辑记录时返回 -1（调用方回退全局值）
+     */
+    public static int perBookSkip(String prefix, String bookKey) {
+        if (bookKey == null || bookKey.length() == 0) return -1;
+        int v = SP.getInt(prefix + bookKey, -1);
+        if (v < -1) v = -1;
+        return Math.min(v, 300);
+    }
+
+    public static void setPerBookSkip(String prefix, String bookKey, int sec) {
+        if (bookKey == null || bookKey.length() == 0) return;
+        sec = Math.max(0, Math.min(300, sec));
+        try { SP.edit().putInt(prefix + bookKey, sec).commit(); }
+        catch (Throwable t) { SP.edit().putInt(prefix + bookKey, sec).apply(); }
+    }
+
+    /** 当前专辑的跳过片头秒数（无专辑记录 → 全局值） */
+    public static int skipIntroFor(String bookKey) {
+        int v = perBookSkip("ski_", bookKey);
+        return v < 0 ? skipIntroSec() : v;
+    }
+
+    /** 当前专辑的跳过片尾秒数（无专辑记录 → 全局值） */
+    public static int skipOutroFor(String bookKey) {
+        int v = perBookSkip("sko_", bookKey);
+        return v < 0 ? skipOutroSec() : v;
+    }
+
     // ---------- ★ v3.8.2 跳过片尾 ----------
 
     /**

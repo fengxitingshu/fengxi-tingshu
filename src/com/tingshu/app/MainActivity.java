@@ -873,6 +873,15 @@ public class MainActivity extends Activity
     }
 
     @Override
+    public void onLyrics(final String lrcText) {
+        // ★ v3.9.34 实验性字幕：把 LRC 文本原样转给前端解析渲染
+        try {
+            String payload = org.json.JSONObject.quote(lrcText == null ? "" : lrcText);
+            callJs("window.onLyrics && window.onLyrics(" + payload + ")");
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
     public void onError(final String msg) {
         // ★ v2.2：播放失败先把该集的取链缓存剔掉 ——
         //   直链带时效签名，过期/失效后如果还从缓存里拿，会一直撞同一个死链。

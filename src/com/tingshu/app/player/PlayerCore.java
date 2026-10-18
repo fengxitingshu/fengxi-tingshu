@@ -50,6 +50,9 @@ public class PlayerCore {
 
         /** 出错 */
         void onError(String msg);
+
+        /** ★ v3.9.34 实验性字幕：当前集的 LRC 文本（无则空串） */
+        void onLyrics(String lrcText);
     }
 
     /**
@@ -336,7 +339,7 @@ public class PlayerCore {
                         seekTo = 0;
                     }
                     if (seekTo <= 0) {
-                        int skip = com.tingshu.app.data.Settings.skipIntroSec();
+                        int skip = com.tingshu.app.data.Settings.skipIntroFor(bookKey());
                         if (skip > 0) seekTo = skip * 1000L;
                     }
                     if (seekTo > 0 && seekTo < mp.getDuration()) {
@@ -344,6 +347,8 @@ public class PlayerCore {
                     }
                     mp.start();
                     startProgress();
+                    // ★ v3.9.34 实验性字幕：本地同名 .lrc
+                    loadLyricsIfAny();
                     // ★ 一开播就落一条历史：这样"刚点开听"就能在历史页看到，
                     //   不等 5 秒定时或暂停。之前因为没有 setQueue，这里存不进去。
                     saveProgressNow();
@@ -514,8 +519,12 @@ public class PlayerCore {
         return index + 1;
     }
 
+    /** 最近一次 giveUp 的时间（elapsedRealtime，toggle 防抖用） */
+    private volatile long lastGiveUpAt = 0;
+
     /** 真的救不活了：通知 UI 失败（前端据此自动停止） */
     private void giveUp(String msg) {
+        lastGiveUpAt = android.os.SystemClock.elapsedRealtime();
         if (cb != null) {
             cb.onStateChanged(false);
             cb.onError(msg);
@@ -565,8 +574,73 @@ public class PlayerCore {
     }
 
     public void toggle() {
+        // ★ v3.9.34 抽搐修复：刚 giveUp 后 800ms 内的连点直接忽略 ——
+        //   错误态的 player 被 resume 会立刻再 error，状态来回跳像抽搐
+        if (!isPlaying()) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - lastGiveUpAt < 800) return;
+        }
         if (isPlaying()) pause();
         else resume();
+    }
+
+    /** 当前专辑标识（按专辑记录跳过设置用）：source|bookId（兜底 url） */
+    public String bookKey() {
+        String k = "";
+        try {
+            if (book != null) {
+                String id = (book.bookId == null || book.bookId.length() == 0)
+                        ? book.url : book.bookId;
+                k = (book.source == null ? "" : book.source + "|") + id;
+            }
+        } catch (Throwable ignored) {}
+        sBookKey = k;   // 供静态读取（Bridge 的 PlayerControl 接口拿不到实例）
+        return k;
+    }
+
+    /** 最近一次 bookKey() 的缓存（静态，Bridge 等外部读取用） */
+    private static volatile String sBookKey = "";
+
+    /** 静态读取当前专辑标识（无队列/未播放返回空串） */
+    public static String currentBookKey() {
+        return sBookKey == null ? "" : sBookKey;
+    }
+
+    /**
+     * ★ v3.9.34 实验性字幕：本地音频找同名 .lrc，解析后经 onLyrics 回传。
+     * 网络直链不做探测（避免额外请求）。无字幕回传空串（前端隐藏）。
+     */
+    private void loadLyricsIfAny() {
+        String lrc = null;
+        try {
+            if (audioUrl != null && audioUrl.startsWith("/")) {
+                java.io.File f = new java.io.File(audioUrl);
+                String base = f.getName();
+                int dot = base.lastIndexOf('.');
+                if (dot > 0) base = base.substring(0, dot);
+                String[] exts = {".lrc", ".LRC", ".txt"};
+                for (String ext : exts) {
+                    java.io.File c = new java.io.File(f.getParent(), base + ext);
+                    if (c.isFile() && c.length() > 0 && c.length() < 512 * 1024) {
+                        byte[] b = new byte[(int) c.length()];
+                        java.io.FileInputStream fi = new java.io.FileInputStream(c);
+                        try { fi.read(b); } finally { try { fi.close(); } catch (Throwable ignored) {} }
+                        lrc = new String(b, "UTF-8");
+                        if (ext.equals(".txt")) {
+                            // 纯文本字幕：整段返回，前端按普通文本展示（不按时间）
+                            lrc = "\0txt\0" + lrc;   // 标记为纯文本
+                        }
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable ignored) { lrc = null; }
+        final String payload = lrc;
+        ui.post(new Runnable() {
+            public void run() {
+                if (cb != null) cb.onLyrics(payload);
+            }
+        });
     }
 
     /**
@@ -1131,7 +1205,7 @@ public class PlayerCore {
             //   先 pause 再走 onEnded：pause 之后 MediaPlayer 不会再来
             //   onCompletion，避免同一集被完结两次、连跳两集。
             if (!outroDone) {
-                int outro = com.tingshu.app.data.Settings.skipOutroSec();
+                int outro = com.tingshu.app.data.Settings.skipOutroFor(bookKey());
                 if (outro > 0 && dur > 0 && cur > 0 && cur >= dur - outro) {
                     finishForOutro();
                     return;

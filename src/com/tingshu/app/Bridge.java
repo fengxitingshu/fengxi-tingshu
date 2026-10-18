@@ -787,9 +787,10 @@ public class Bridge {
             public void run() {
                 JSONObject o = new JSONObject();
                 try {
-                    com.tingshu.app.data.Settings.setSkipIntroSec(sec);
+                    String bk = com.tingshu.app.player.PlayerCore.currentBookKey();
+                    com.tingshu.app.data.Settings.setPerBookSkip("ski_", bk, sec);
                     o.put("ok", true);
-                    o.put("sec", com.tingshu.app.data.Settings.skipIntroSec());
+                    o.put("sec", com.tingshu.app.data.Settings.skipIntroFor(bk));
                 } catch (Throwable t) {
                     try { o.put("ok", false); } catch (Throwable ignored) {}
                 }
@@ -806,7 +807,8 @@ public class Bridge {
                 JSONObject o = new JSONObject();
                 try {
                     o.put("ok", true);
-                    o.put("sec", com.tingshu.app.data.Settings.skipIntroSec());
+                    o.put("sec", com.tingshu.app.data.Settings.skipIntroFor(
+                            com.tingshu.app.player.PlayerCore.currentBookKey()));
                 } catch (Throwable ignored) {}
                 callback("onSkipIntro", o);
             }
@@ -828,9 +830,10 @@ public class Bridge {
             public void run() {
                 JSONObject o = new JSONObject();
                 try {
-                    com.tingshu.app.data.Settings.setSkipOutroSec(sec);
+                    String bk = com.tingshu.app.player.PlayerCore.currentBookKey();
+                    com.tingshu.app.data.Settings.setPerBookSkip("sko_", bk, sec);
                     o.put("ok", true);
-                    o.put("sec", com.tingshu.app.data.Settings.skipOutroSec());
+                    o.put("sec", com.tingshu.app.data.Settings.skipOutroFor(bk));
                 } catch (Throwable t) {
                     try { o.put("ok", false); } catch (Throwable ignored) {}
                 }
@@ -847,7 +850,8 @@ public class Bridge {
                 JSONObject o = new JSONObject();
                 try {
                     o.put("ok", true);
-                    o.put("sec", com.tingshu.app.data.Settings.skipOutroSec());
+                    o.put("sec", com.tingshu.app.data.Settings.skipOutroFor(
+                            com.tingshu.app.player.PlayerCore.currentBookKey()));
                 } catch (Throwable ignored) {}
                 callback("onSkipOutro", o);
             }
