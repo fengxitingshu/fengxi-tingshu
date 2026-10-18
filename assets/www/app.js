@@ -8332,6 +8332,9 @@
         App.bk.hasDav = !!o.hasDav;
         App.bk.davUrl = o.davUrl || '';
         App.bk.davDir = o.davDir || '';
+        // ★ v3.9.43：同步「信任自签名证书」开关
+        var ts = $('bkTrustSsl');
+        if (ts) ts.checked = !!o.trustSsl;
 
         var srcCount = c.sources || 0;
         var pluginCount = (c.jsPlugins || 0) + (c.pySources || 0) + (c.jars || 0);
@@ -8597,6 +8600,20 @@
     };
 
     /** 原生：WebDAV 连接测试结果 */
+    /** ★ v3.9.43：信任自签名证书开关（家庭 NAS 的 https:// 必开，默认关） */
+    ui.bkTrustSsl = function (on) {
+        TS.call('setDavTrustSsl', !!on);
+        TS.toast(on ? '已信任自签名证书（仅对 WebDAV 生效）'
+                    : '已恢复严格证书校验');
+    };
+
+    /** 原生：开关状态已更新（回推） */
+    window.onDavTrustSsl = function (o) {
+        o = o || {};
+        var el = $('bkTrustSsl');
+        if (el) el.checked = !!o.on;
+    };
+
     window.onDavTested = function (o) {
         o = o || {};
         var v = $('bkDavTestVal');
@@ -8837,6 +8854,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.44',
+            date: '2026-10-18',
+            fixes: [
+                '★ WebDAV 新增「信任自签名证书」开关（备份页 WebDAV 区）',
+                '   · 飞牛 NAS 的 HTTP 端口(5005)对认证有限制，请改用',
+                '     https://NAS的IP:5006，并开启此开关（自签证书默认拒绝，',
+                '     开启后仅对 WebDAV 生效，其它网络请求不受影响）',
+                '★ 坚果云用 http/https 均可，无需开启此开关（正规证书）'
+            ]
+        },
         {
             ver: '3.9.43',
             date: '2026-10-18',

@@ -598,6 +598,35 @@ public final class WebDavClient {
     /** 建连接 + 基础设置；authHeader 为已算好的 Authorization 头（可为 null） */
     private static HttpURLConnection open(String url, String authHeader) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        // ★ v3.9.43：家庭 NAS（飞牛/群晖等）的 HTTPS 全是自签名证书。
+        //   默认仍然严格校验（安全底线，见类注释）；只有用户在备份页明确开启
+        //   「信任自签名证书」后才放宽 —— 且只影响 WebDAV 这一条连接。
+        if (url != null && url.toLowerCase(java.util.Locale.ROOT).startsWith("https")
+                && com.tingshu.app.data.Settings.davTrustAllSsl()
+                && conn instanceof javax.net.ssl.HttpsURLConnection) {
+            javax.net.ssl.HttpsURLConnection hc = (javax.net.ssl.HttpsURLConnection) conn;
+            try {
+                javax.net.ssl.TrustManager[] tm = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public void checkClientTrusted(
+                                java.security.cert.X509Certificate[] chain, String authType) {}
+                        public void checkServerTrusted(
+                                java.security.cert.X509Certificate[] chain, String authType) {}
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+                    }
+                };
+                javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                sc.init(null, tm, new java.security.SecureRandom());
+                hc.setSSLSocketFactory(sc.getSocketFactory());
+                hc.setHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
+                    public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                        return true;   // 自签证书的 NAS 常用 IP 直连，主机名校验必然失败
+                    }
+                });
+            } catch (Throwable ignored) {}
+        }
         conn.setConnectTimeout(CONNECT_TIMEOUT);
         conn.setInstanceFollowRedirects(false);   // WebDAV 的 301/302 语义特殊，自己处理更稳
         conn.setUseCaches(false);

@@ -2696,6 +2696,7 @@ public class Bridge {
                     o.put("davDir", com.tingshu.app.data.BackupCred.dir());
                     o.put("autoBackups", com.tingshu.app.data.BackupRepo.autoBackupList());
                     o.put("versionName", versionName());
+                    o.put("trustSsl", com.tingshu.app.data.Settings.davTrustAllSsl());
                 } catch (Throwable t) {
                     try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
                     catch (Throwable ignored) {}
@@ -2915,6 +2916,22 @@ public class Bridge {
         bg(new Runnable() {
             public void run() {
                 callback("onDavConfig", com.tingshu.app.data.BackupCred.load());
+            }
+        });
+    }
+
+    /** ★ v3.9.43：信任自签名证书开关（家庭 NAS 的 HTTPS 全是自签，需用户主动开启） */
+    @JavascriptInterface
+    public void setDavTrustSsl(final boolean on) {
+        com.tingshu.app.data.Settings.setDavTrustAllSsl(on);
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    org.json.JSONObject o = new org.json.JSONObject();
+                    o.put("ok", true);
+                    o.put("on", on);
+                    callback("onDavTrustSsl", o);
+                } catch (Throwable ignored) {}
             }
         });
     }

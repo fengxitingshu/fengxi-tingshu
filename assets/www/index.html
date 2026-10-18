@@ -501,6 +501,12 @@
       <div class="setlabel">测试连接</div>
       <div class="setval" id="bkDavTestVal">&#8250;</div>
     </div>
+    <!-- ★ v3.9.43 信任自签名证书（家庭 NAS 的 HTTPS 全是自签） -->
+    <div class="setrow">
+      <div class="setlabel">信任自签名证书<span class="setdesc">用 https:// 访问飞牛/群晖等 NAS 时需开启（http:// 不受影响）</span></div>
+      <label class="sw"><input id="bkTrustSsl" type="checkbox"
+        onchange="App.ui.bkTrustSsl(this.checked)"><i></i></label>
+    </div>
     <div class="diag-act">
       <button class="mini" id="bkDavUpBtn" disabled onclick="App.ui.bkDavBackup()">备份到网盘</button>
       <button class="mini ghost" onclick="App.ui.bkDavRefresh()">网盘备份列表</button>

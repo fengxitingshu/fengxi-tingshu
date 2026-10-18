@@ -500,6 +500,21 @@ public final class Settings {
         // 未知 key：忽略
     }
 
+    // ==================== ★ v3.9.43 WebDAV 自签名证书 ====================
+
+    /**
+     * 家庭 NAS（飞牛/群晖等）的 HTTPS 全是自签名证书。默认拒绝（安全底线）；
+     * 只有用户在备份页明确开启「信任自签名证书」后才放宽——且只影响
+     * WebDAV 这条连接，不波及 App 其它网络请求。
+     */
+    public static boolean davTrustAllSsl() {
+        try { return sp().getBoolean("dav_trust_ssl", false); } catch (Throwable t) { return false; }
+    }
+
+    public static void setDavTrustAllSsl(boolean on) {
+        try { sp().edit().putBoolean("dav_trust_ssl", on).apply(); } catch (Throwable ignored) {}
+    }
+
     private static boolean b(String v) {
         return v != null && ("true".equalsIgnoreCase(v) || "1".equals(v));
     }
