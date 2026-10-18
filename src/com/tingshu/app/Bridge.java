@@ -3058,26 +3058,34 @@ public class Bridge {
                         o.put("error", "还没有配置服务器地址");
                         o.put("items", new org.json.JSONArray());
                     } else {
-                        java.util.List<com.tingshu.app.data.WebDavClient.DavFile> all =
-                                com.tingshu.app.data.WebDavClient.list(base, user, pass, dir, auth);
-                        org.json.JSONArray arr = new org.json.JSONArray();
-                        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat(
-                                "MM-dd HH:mm", java.util.Locale.getDefault());
-                        for (com.tingshu.app.data.WebDavClient.DavFile f : all) {
-                            if (f == null || f.dir) continue;
-                            if (!f.name.toLowerCase(java.util.Locale.ROOT).endsWith(
-                                    com.tingshu.app.data.BackupCodec.EXT)) continue;
-                            JSONObject it = new JSONObject();
-                            it.put("name", f.name);
-                            it.put("size", f.size);
-                            it.put("at", f.lastModified);
-                            it.put("atText", f.lastModified > 0
-                                    ? fmt.format(new java.util.Date(f.lastModified)) : "");
-                            arr.put(it);
+                        // ★ v3.9.42：改用 listWithErr —— 列表失败（网络/权限/路径）
+                        //   不再被吞成空列表，恢复界面会直接显示失败原因
+                        com.tingshu.app.data.WebDavClient.Result lr =
+                                com.tingshu.app.data.WebDavClient.listWithErr(base, user, pass, dir, auth);
+                        if (!lr.ok) {
+                            o.put("ok", false);
+                            o.put("error", "读取备份列表失败：" + lr.error);
+                            o.put("items", new org.json.JSONArray());
+                        } else {
+                            org.json.JSONArray arr = new org.json.JSONArray();
+                            java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat(
+                                    "MM-dd HH:mm", java.util.Locale.getDefault());
+                            for (com.tingshu.app.data.WebDavClient.DavFile f : lr.files) {
+                                if (f == null || f.dir) continue;
+                                if (!f.name.toLowerCase(java.util.Locale.ROOT).endsWith(
+                                        com.tingshu.app.data.BackupCodec.EXT)) continue;
+                                JSONObject it = new JSONObject();
+                                it.put("name", f.name);
+                                it.put("size", f.size);
+                                it.put("at", f.lastModified);
+                                it.put("atText", f.lastModified > 0
+                                        ? fmt.format(new java.util.Date(f.lastModified)) : "");
+                                arr.put(it);
+                            }
+                            o.put("ok", true);
+                            o.put("dir", dir);
+                            o.put("items", arr);
                         }
-                        o.put("ok", true);
-                        o.put("dir", dir);
-                        o.put("items", arr);
                     }
                 } catch (Throwable t) {
                     try {

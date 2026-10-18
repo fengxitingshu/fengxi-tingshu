@@ -122,6 +122,8 @@ public final class WebDavClient {
         public String wwwAuth;
         /** ★ v3.9.25 服务端响应头 Server（识别到底连到了什么服务） */
         public String server;
+        /** ★ v3.9.42：PROPFIND 解析出的目录内容（listWithErr 用） */
+        public final java.util.List<DavFile> files = new java.util.ArrayList<DavFile>();
     }
 
     // ==================== 对外接口 ====================
@@ -361,20 +363,35 @@ public final class WebDavClient {
      * <p>部分服务端不支持 Depth:1，此时返回空列表（调用方降级处理，不阻塞主流程）。
      */
     public static List<DavFile> list(String baseUrl, String user, String pass, String dir, String authType) {
-        List<DavFile> out = new ArrayList<DavFile>();
-        String url = joinUrl(baseUrl, dir);
-        Result r = request("PROPFIND", url, user, pass, null, null, "1", true, READ_TIMEOUT, authType);
-        if (!r.ok && r.code != 207) return out;
+        return listWithErr(baseUrl, user, pass, dir, authType).files;
+    }
+
+    /**
+     * ★ v3.9.42：列目录（带错误信息版）。
+     * <p>老 {@link #list} 在失败时返回空列表 —— 「服务器报错」和「目录真的是空」
+     * 表现一模一样，恢复界面「刷不到记录」时根本无法定位。这个版本把失败原因
+     * （含 HTTP 状态码）放进 {@link Result#error}，调用方展示给用户。
+     */
+    public static Result listWithErr(String baseUrl, String user, String pass, String dir, String authType) {
+        Result r = request("PROPFIND", joinUrl(baseUrl, dir), user, pass,
+                null, null, "1", true, READ_TIMEOUT, authType);
+        r.ok = (r.ok || r.code == 207);
+        if (!r.ok) {
+            if (r.error == null || r.error.length() == 0) {
+                r.error = "HTTP " + r.code;
+            }
+            return r;   // 失败原因如实上抛，不再吞成空列表
+        }
         String xml = r.body;
-        if (xml == null || xml.length() == 0) return out;
+        if (xml == null || xml.length() == 0) return r;   // 目录确实是空
         try {
-            parseMultiStatus(xml, out);
+            parseMultiStatus(xml, r.files);
         } catch (Throwable t) {
             // Pull 解析器异常 → 降级正则
-            parseByRegex(xml, out);
+            parseByRegex(xml, r.files);
         }
-        if (out.isEmpty()) parseByRegex(xml, out);
-        return out;
+        if (r.files.isEmpty()) parseByRegex(xml, r.files);
+        return r;
     }
 
     /** base + dir 拼成完整 URL（都做斜杠归一） */
