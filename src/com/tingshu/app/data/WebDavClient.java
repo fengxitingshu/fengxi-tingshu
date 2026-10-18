@@ -422,13 +422,19 @@ public final class WebDavClient {
             if (finishList(r3)) return r3;
 
             // ④ 列根目录 Depth:1，按 /<dir>/ 前缀过滤 —— 目录本身不可列时，
-            //    只要父目录可列，照样能拿到目标目录下的文件清单
+            //    只要父目录可列，照样能拿到目标目录下的文件清单。
+            //    ★ v3.9.46b：过滤后为空不提前返回 —— 根目录可列但 /<dir>/ 下
+            //    一无所有，很可能就是「目录不存在」这个 405 的最常见诱因，
+            //    必须落到⑤自动建目录后再正式重试，否则用户会看到"恢复列表
+            //    成功但永远是空的"这个假象。
             Result r4 = request("PROPFIND", joinUrl(baseUrl, ""), user, pass,
                     null, null, "1", true, READ_TIMEOUT, authType);
             diag.append(" P1根:").append(codeOf(r4));
             if (finishList(r4)) {
                 filterByDir(r4, d);
-                return r4;
+                if (!r4.files.isEmpty()) return r4;
+                // 根目录下没有该子树：记下这次结果，继续⑤（建目录后重试①）
+                diag.append("(空)");
             }
 
             // ⑤ 目录可能压根不存在：确保目录后回到标准形式重试最后一次
