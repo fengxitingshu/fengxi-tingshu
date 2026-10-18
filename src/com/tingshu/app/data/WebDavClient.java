@@ -450,6 +450,13 @@ public final class WebDavClient {
                     + " auth=" + (r.wwwAuth == null ? "?" : r.wwwAuth)
                     + " passLen=" + (pass == null ? 0 : pass.length())
                     + " cred=" + credB64);
+            // ★ v3.9.42：把实际发送的凭据直接回显在错误里 —— 「密码没错却
+            //   一直 401」的排查，九成时间花在「App 里存的凭据到底是不是
+            //   你以为的那份」上。截图这个提示即可当场核对（凭据 base64
+            //   任意工具解码即可看到完整 账号:密码）。
+            r.error += "\n[凭据核对] 账号=\"" + (user == null ? "" : user)
+                    + "\" 密码长度=" + (pass == null ? 0 : pass.length())
+                    + " 发送的凭据base64=" + credB64;
         }
         return r;
     }
