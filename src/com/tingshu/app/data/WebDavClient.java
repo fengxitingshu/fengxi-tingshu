@@ -55,6 +55,12 @@ public final class WebDavClient {
      * ★ v3.9.37：把 URL 的 path 段逐段编码（scheme://host 原样保留）。
      * 已编码的段（%XX 形式）先解码再编码，避免二次编码。
      * 空格编码成 %20 而不是 +（URLEncoder 是表单语义，WebDAV path 要 RFC 3986）。
+     *
+     * <p>★ v3.9.40 重大修复：v3.9.37~39 的实现把 {@code /dav/} 编码成了
+     * {@code //dav/}（开头空段多补了一个斜杠）—— 坚果云的 nginx 对双斜杠
+     * 路径一律回 410 Gone，这就是这几版「坚果云测试连接报 410、
+     * 诊断链 MKCOL/PROPFIND/PUT 全 410」的真正原因。
+     * 现在按「每段前放一个分隔符」重建，空段/尾斜杠结构原样保留。
      */
     static String encodeDavUrl(String url) {
         if (url == null) return null;
@@ -65,10 +71,13 @@ public final class WebDavClient {
                     + (port > 0 ? ":" + port : "");
             String path = u.getPath() == null ? "" : u.getPath();
             String query = u.getQuery() == null ? "" : "?" + u.getQuery();
-            String[] segs = path.split("/", -1);
+            if (!path.startsWith("/")) path = "/" + path;
+            String[] segs = path.substring(1).split("/", -1);
             StringBuilder sb = new StringBuilder(hostPart);
-            for (String seg : segs) {
-                if (seg.length() == 0) { sb.append('/'); continue; }
+            for (int i = 0; i < segs.length; i++) {
+                sb.append('/');
+                String seg = segs[i];
+                if (seg.length() == 0) continue;
                 String dec;
                 try { dec = java.net.URLDecoder.decode(seg, "UTF-8"); }
                 catch (Throwable e) { dec = seg; }
