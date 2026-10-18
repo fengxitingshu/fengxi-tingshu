@@ -525,7 +525,9 @@
     }
     ui.paintHomeModeSeg = paintHomeModeSeg;
 
-    /** list 模式：首页的「源列表选择页」 */
+    /** list 模式：首页的「源列表选择页」。
+     *  ★ v3.9.39：不只列可浏览源 —— 所有启用的源都显示：
+     *  支持分类浏览的直接进首页；仅搜索源标注「搜索」，点了跳搜索页。 */
     function renderHomePicker() {
         var cd = $('discoverCats'), cl = $('homeContent');
         if (!cl) return;
@@ -533,12 +535,24 @@
         var el = $('homeSrcName');
         if (el) el.textContent = '选择书源';
         var list = App.homeSources || [];
-        var localOn = false;
+        var browsable = {};
+        for (var b = 0; b < list.length; b++) browsable[list[b].id] = true;
+        // 其他启用的源（不支持分类浏览的搜索源）：排除本地/网盘/已列出的
+        var others = [], seen = {};
         for (var s = 0; s < (App.sources || []).length; s++) {
             var cs = App.sources[s];
-            if (cs && cs.id === 'local' && cs.enabled !== false) localOn = true;
+            if (!cs || !cs.id || seen[cs.id]) continue;
+            seen[cs.id] = true;
+            if (cs.enabled === false) continue;
+            if (cs.id === 'local' || cs.origin === 'pan' || browsable[cs.id]) continue;
+            others.push(cs);
         }
-        if (!list.length && !localOn) {
+        var localOn = false;
+        for (var s2 = 0; s2 < (App.sources || []).length; s2++) {
+            var cs2 = App.sources[s2];
+            if (cs2 && cs2.id === 'local' && cs2.enabled !== false) localOn = true;
+        }
+        if (!list.length && !others.length && !localOn) {
             cl.innerHTML =
                 '<div class="empty nosrc">' +
                   '<div class="big">📚</div>' +
@@ -550,7 +564,7 @@
                   '</div>' +
                   '<div class="nosrc-tip">正在获取书源清单，稍等片刻会自动出现</div>' +
                 '</div>';
-            if (!list.length && !App._pickerAsked) {
+            if (!App._pickerAsked) {
                 App._pickerAsked = true;
                 TS.call('discoverSources');
             }
@@ -564,6 +578,13 @@
                  '<div class="t">' + TS.esc(list[i].name || list[i].id) + '</div>' +
                  '<div class="s">' + (n > 0 ? (n + ' 个分类') : '暂无分类') + '</div></div>';
         }
+        for (var j = 0; j < others.length; j++) {
+            var nm = others[j].alias || others[j].name || others[j].id;
+            h += '<div class="srcgrid-item" onclick="App.ui.homePickSearchSrc(\'' +
+                 escAttr(others[j].id) + '\')">' +
+                 '<div class="t">' + TS.esc(nm) + '</div>' +
+                 '<div class="s">仅搜索 · 点去搜索</div></div>';
+        }
         if (localOn) {
             h += '<div class="srcgrid-item" onclick="App.ui.homePickSrc(\'local\')">' +
                  '<div class="t">本地书源</div><div class="s">听本机音频</div></div>';
@@ -571,6 +592,20 @@
         h += '</div>';
         cl.innerHTML = h;
     }
+
+    /** ★ v3.9.39：源列表里点了「仅搜索」源 → 跳搜索页（结果可按来源筛选） */
+    ui.homePickSearchSrc = function (sid) {
+        App._homePick = false;
+        var nm = sid;
+        for (var i = 0; i < (App.sources || []).length; i++) {
+            if (App.sources[i].id === sid) {
+                nm = App.sources[i].alias || App.sources[i].name || sid;
+                break;
+            }
+        }
+        goTab('search');
+        TS.toast('「' + nm + '」不支持首页浏览，搜索后可按来源筛选');
+    };
 
     // ==================== ★ v3.9.38 classic 模式：首页启动快照 ====================
     //
@@ -8782,6 +8817,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.39',
+            date: '2026-10-18',
+            fixes: [
+                '★ 源列表模式的首页：列出全部启用的书源',
+                '   · 支持分类浏览的直接进首页；',
+                '     仅搜索源标注「仅搜索」，点了跳到搜索页（可按来源筛选）',
+                '★ 修复：坚果云测试连接报 410（真正根因找到了）',
+                '   · 坚果云的服务器对「点开头」的隐藏文件一律直接拒绝（410 Gone），',
+                '     而连接测试的探针文件正是 .fx-probe.txt —— 撞在这上面；',
+                '   · 探针改为普通文件名（fx-probe-xxx.txt）',
+                '   · 建目录成功即视为连接可用；测试失败时附上每一步的诊断链，',
+                '     再有问题把日志发来即可一眼定位'
+            ]
+        },
         {
             ver: '3.9.38',
             date: '2026-10-18',

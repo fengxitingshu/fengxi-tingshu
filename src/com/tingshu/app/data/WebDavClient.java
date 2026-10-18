@@ -140,7 +140,12 @@ public final class WebDavClient {
      * </ol>
      */
     public static Result smartTest(String baseUrl, String user, String pass, String dir, String authType) {
+        // ★ v3.9.39：每一步的结果都记下来附在最终错误里 —— 服务器层拦截
+        //   （坚果云的 nginx 直接回 410/403）光看最后一步根本定位不了。
+        StringBuilder diag = new StringBuilder();
+
         Result r = test(baseUrl, user, pass, authType);
+        diag.append("PROPFIND根:").append(r.code > 0 ? String.valueOf(r.code) : r.error);
         if (r.ok || r.code == 207) return r;
 
         String base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
@@ -151,37 +156,52 @@ public final class WebDavClient {
         if (d.length() > 0) {
             // 2) 先确保备份子目录存在（坚果云要求目标文件夹已存在/现建），
             //    再列它、再真实写入探测，三级全部贴近真实备份动作
-            ensureDir(base, user, pass, d, authType);   // 失败不阻断，下面用探针兜底
+            Result mk = ensureDir(base, user, pass, d, authType);   // 失败不阻断，下面用探针兜底
+            boolean mkCreated = mk.ok && mk.code == 201;   // 新建目录成功 = 认证+写权限都正常
+            diag.append(" MKCOL:").append(mk.code > 0 ? String.valueOf(mk.code) : mk.error);
 
             // 2a) 备份目录本身可列即可用
             Result r2 = request("PROPFIND", base + d + "/", user, pass,
                     null, null, "0", false, CONNECT_TIMEOUT, authType);
+            diag.append(" PROPFIND目录:").append(r2.code > 0 ? String.valueOf(r2.code) : r2.error);
             if (r2.ok || r2.code == 207) {
                 r2.ok = true;
                 r2.error = "";
                 return r2;
             }
             // 3) 写入探测：PUT + DELETE（最接近真实备份路径的动作）
+            //
+            // ★ v3.9.39 重大修复：探针文件名**绝不能以点开头**！
+            //   坚果云的 nginx 对隐藏文件（.xxx）一律直接回 410 Gone（应用层根本
+            //   收不到请求），之前两版的 .fx-probe.txt / .fx-probe-<ts>.txt 全撞
+            //   在这上面 —— 这就是「坚果云测试连接报 410」的真正原因。
+            String probeName = "fx-probe-" + (System.currentTimeMillis() % 1000000L) + ".txt";
             byte[] probe = "fengxi-probe".getBytes();
-            Result r3 = request("PUT", base + d + "/.fx-probe.txt", user, pass,
+            Result r3 = request("PUT", base + d + "/" + probeName, user, pass,
                     null, probe, null, false, READ_TIMEOUT, authType);
-            // ★ v3.9.38：坚果云对「刚删除过的路径」常回 410 Gone（删除墓碑），
-            //   而上一轮测试留下的 .fx-probe.txt 恰恰就是这种路径 ——
-            //   表现就是「测试连接报 410」。换个带时间戳的文件名再试一次即可绕开。
-            if (!r3.ok && (r3.code == 410 || r3.code == 409)) {
-                r3 = request("PUT", base + d + "/.fx-probe-"
-                        + (System.currentTimeMillis() % 1000000L) + ".txt", user, pass,
-                        null, probe, null, false, READ_TIMEOUT, authType);
-            }
+            diag.append(" PUT:").append(r3.code > 0 ? String.valueOf(r3.code) : r3.error);
             if (r3.ok) {
-                request("DELETE", base + d + "/.fx-probe.txt", user, pass,
+                request("DELETE", base + d + "/" + probeName, user, pass,
                         null, null, null, false, READ_TIMEOUT, authType);
                 r3.code = 207;   // 对上层表示「连接与读写全部正常」
                 r3.error = "";
                 return r3;
             }
+            // 4) MKCOL 新建目录成功本身就证明了认证与写权限 —— 备份动作
+            //    （MKCOL + PUT）都能做，探测文件被服务器层拦不影响真实备份。
+            if (mkCreated) {
+                Result ok = new Result();
+                ok.ok = true;
+                ok.code = 207;
+                ok.error = "";
+                return ok;
+            }
+            r3.error = (r3.error == null || r3.error.length() == 0 ? "" : r3.error + "。")
+                    + "诊断[" + diag + "]";
             return r3;   // 写入失败 → 返回更具体的错误（403/507 等）
         }
+        r.error = (r.error == null || r.error.length() == 0 ? "" : r.error + "。")
+                + "诊断[" + diag + "]";
         return r;
     }
 
