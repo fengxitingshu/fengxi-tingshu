@@ -444,10 +444,20 @@ public final class WebDavClient {
             diag.append(" MKCOL后P1:").append(codeOf(r5));
             if (finishList(r5)) return r5;
 
+            // ★ v3.9.47：失败提示按服务商分流 —— 坚果云给排查清单，
+            //   自建 NAS（飞牛等）解释 501/405 是服务端限制，别再让坚果云用户
+            //   看到「飞牛」提示一头雾水。
+            boolean isJgy = baseUrl != null && baseUrl.toLowerCase(java.util.Locale.ROOT)
+                    .contains("jianguoyun");
             r.error = (r.error == null || r.error.length() == 0 ? "HTTP " + r.code : r.error)
                     + "。已自动尝试 5 种列表形式均失败[" + diag + "]。"
-                    + "飞牛 NAS 用户请先手动执行一次「备份」让 App 建好远端目录，"
-                    + "再回来刷新恢复列表";
+                    + (isJgy
+                        ? "坚果云排查：① 地址须为 https://dav.jianguoyun.com/dav/；"
+                          + "② 密码须用「应用密码」（网页端 账户信息→安全选项 里生成），不是登录密码；"
+                          + "③ 目录会自动创建，若提示无权限请先在坚果云网页端建好该文件夹"
+                        : "自建 NAS：请先手动执行一次「备份」让 App 建好远端目录再刷新恢复列表；"
+                          + "501/405 表示服务器或其网关未实现该方法（服务端限制，客户端无法绕过），"
+                          + "可换用坚果云等支持完整 WebDAV 的服务");
             com.tingshu.app.core.DiagLog.add("[dav-list] " + diag + " dir=" + d);
             return r;
         }
