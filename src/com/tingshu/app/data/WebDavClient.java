@@ -378,19 +378,91 @@ public final class WebDavClient {
      * <p>老 {@link #list} 在失败时返回空列表 —— 「服务器报错」和「目录真的是空」
      * 表现一模一样，恢复界面「刷不到记录」时根本无法定位。这个版本把失败原因
      * （含 HTTP 状态码）放进 {@link Result#error}，调用方展示给用户。
+     *
+     * <p>★ v3.9.46：多形式自动降级。飞牛等自建 WebDAV 对「列出备份目录」回
+     * 405 Method Not Allowed 的实测（v3.9.45 用户反馈：根目录 Depth:0 探测
+     * 207 正常、列表 Depth:1 却 405，服务器 body 是裸文本 "Method Not
+     * Allowed"）可能对应多种服务端怪癖：目标目录不存在（自建实现对不存在
+     * 路径常回 405 而非 RFC 的 404）、不认尾斜杠、拒绝带请求体、或对子目录
+     * 禁用 Depth:1。这里按概率依次尝试 5 种形式，任何一种 207 即成功：
+     * <ol>
+     *   <li>PROPFIND Depth:1 → {@code <base>/<dir>/}（带标准请求体）</li>
+     *   <li>同上去掉尾斜杠</li>
+     *   <li>同①但不带请求体</li>
+     *   <li>PROPFIND Depth:1 → 根目录，按 {@code /<dir>/} 前缀过滤出目标内容</li>
+     *   <li>MKCOL 确保目录存在后重试①（目录不存在正是 405 的最常见原因）</li>
+     * </ol>
+     * 每一步的状态码都记进 diag，全部失败时原样附在错误里 —— 用户截图即可
+     * 一次性定位到具体是哪种形式被拒。
      */
     public static Result listWithErr(String baseUrl, String user, String pass, String dir, String authType) {
-        Result r = request("PROPFIND", joinUrl(baseUrl, dir), user, pass,
+        String d = dir == null ? "" : dir.trim();
+        while (d.startsWith("/")) d = d.substring(1);
+        while (d.endsWith("/")) d = d.substring(0, d.length() - 1);
+
+        StringBuilder diag = new StringBuilder();
+
+        // ① 标准形式：Depth:1 打 <base>/<dir>/（带标准请求体）
+        Result r = request("PROPFIND", joinUrl(baseUrl, d), user, pass,
                 null, null, "1", true, READ_TIMEOUT, authType);
+        diag.append("P1目录:").append(codeOf(r));
+        if (finishList(r)) return r;
+
+        if (d.length() > 0) {
+            // ② 去掉尾斜杠再试（部分实现的集合路由只认无斜杠形式）
+            Result r2 = request("PROPFIND", stripTrailingSlash(joinUrl(baseUrl, d)), user, pass,
+                    null, null, "1", true, READ_TIMEOUT, authType);
+            diag.append(" P1无斜杠:").append(codeOf(r2));
+            if (finishList(r2)) return r2;
+
+            // ③ 不带请求体再试（个别实现把带 body 的 PROPFIND 当非法请求）
+            Result r3 = requestX("PROPFIND", joinUrl(baseUrl, d), user, pass,
+                    null, null, "1", true, READ_TIMEOUT, authType, false);
+            diag.append(" P1无体:").append(codeOf(r3));
+            if (finishList(r3)) return r3;
+
+            // ④ 列根目录 Depth:1，按 /<dir>/ 前缀过滤 —— 目录本身不可列时，
+            //    只要父目录可列，照样能拿到目标目录下的文件清单
+            Result r4 = request("PROPFIND", joinUrl(baseUrl, ""), user, pass,
+                    null, null, "1", true, READ_TIMEOUT, authType);
+            diag.append(" P1根:").append(codeOf(r4));
+            if (finishList(r4)) {
+                filterByDir(r4, d);
+                return r4;
+            }
+
+            // ⑤ 目录可能压根不存在：确保目录后回到标准形式重试最后一次
+            ensureDir(baseUrl, user, pass, d, authType);
+            Result r5 = request("PROPFIND", joinUrl(baseUrl, d), user, pass,
+                    null, null, "1", true, READ_TIMEOUT, authType);
+            diag.append(" MKCOL后P1:").append(codeOf(r5));
+            if (finishList(r5)) return r5;
+
+            r.error = (r.error == null || r.error.length() == 0 ? "HTTP " + r.code : r.error)
+                    + "。已自动尝试 5 种列表形式均失败[" + diag + "]。"
+                    + "飞牛 NAS 用户请先手动执行一次「备份」让 App 建好远端目录，"
+                    + "再回来刷新恢复列表";
+            com.tingshu.app.core.DiagLog.add("[dav-list] " + diag + " dir=" + d);
+            return r;
+        }
+
+        r.error = (r.error == null || r.error.length() == 0 ? "HTTP " + r.code : r.error)
+                + "。已自动尝试[" + diag + "]";
+        com.tingshu.app.core.DiagLog.add("[dav-list] " + diag);
+        return r;
+    }
+
+    /** 列表请求收尾：判定成功、解析 207 Multi-Status（Pull 失败降级正则） */
+    private static boolean finishList(Result r) {
         r.ok = (r.ok || r.code == 207);
         if (!r.ok) {
             if (r.error == null || r.error.length() == 0) {
                 r.error = "HTTP " + r.code;
             }
-            return r;   // 失败原因如实上抛，不再吞成空列表
+            return false;
         }
         String xml = r.body;
-        if (xml == null || xml.length() == 0) return r;   // 目录确实是空
+        if (xml == null || xml.length() == 0) return true;   // 目录确实是空
         try {
             parseMultiStatus(xml, r.files);
         } catch (Throwable t) {
@@ -398,7 +470,40 @@ public final class WebDavClient {
             parseByRegex(xml, r.files);
         }
         if (r.files.isEmpty()) parseByRegex(xml, r.files);
-        return r;
+        return true;
+    }
+
+    /** diag 用：有状态码显示状态码，没有（网络层异常）显示错误 */
+    private static String codeOf(Result r) {
+        return r.code > 0 ? String.valueOf(r.code)
+                : (r.error == null || r.error.length() == 0 ? "?" : r.error);
+    }
+
+    /** 只去掉末尾一个斜杠（根路径 "/" 不动） */
+    private static String stripTrailingSlash(String url) {
+        if (url != null && url.length() > 1 && url.endsWith("/")) {
+            return url.substring(0, url.length() - 1);
+        }
+        return url;
+    }
+
+    /**
+     * 从根目录列表里筛出 {@code /<dir>/} 子树下的条目（降级④的配套）。
+     * href 可能是完整 URL 也可能是绝对路径，统一解码后按前缀匹配。
+     */
+    private static void filterByDir(Result r, String dir) {
+        String prefix = "/" + dir + "/";
+        List<DavFile> keep = new ArrayList<DavFile>();
+        for (DavFile f : r.files) {
+            if (f == null) continue;
+            String href = f.href == null ? "" : f.href;
+            String dec;
+            try { dec = java.net.URLDecoder.decode(href, "UTF-8"); }
+            catch (Throwable t) { dec = href; }
+            if (dec.contains(prefix)) keep.add(f);
+        }
+        r.files.clear();
+        r.files.addAll(keep);
     }
 
     /** base + dir 拼成完整 URL（都做斜杠归一） */
@@ -424,6 +529,21 @@ public final class WebDavClient {
     private static Result request(String method, String url, String user, String pass,
                                   File bodyFile, byte[] bodyBytes, String depth,
                                   boolean wantText, int readTimeout, String authType) {
+        return requestX(method, url, user, pass, bodyFile, bodyBytes, depth,
+                wantText, readTimeout, authType, true);
+    }
+
+    /**
+     * ★ 带认证协议处理的请求（含 autoPropBody 开关的完整版）。
+     *
+     * @param autoPropBody 是否给无请求体的 PROPFIND 自动补标准请求体
+     *                     （v3.9.45 引入；v3.9.46 的列表降级③需要关掉它来试
+     *                     「无请求体」形式，其余调用方一律 true）
+     */
+    private static Result requestX(String method, String url, String user, String pass,
+                                  File bodyFile, byte[] bodyBytes, String depth,
+                                  boolean wantText, int readTimeout, String authType,
+                                  boolean autoPropBody) {
         // ★ v3.9.37：URL 路径段统一编码。
         //   之前目录名/文件名里的中文、空格、#、? 等是原样拼进 URL 的——
         //   坚果云（dav.jianguoyun.com）对未编码路径直接回 403/404，表现就是
@@ -433,7 +553,7 @@ public final class WebDavClient {
         // ★ v3.9.45：PROPFIND 必须带请求体。RFC 4918 允许无 body（等同 allprop），
         //   但飞牛等部分实现对无请求体的 PROPFIND 直接回 405 Method Not Allowed
         //   —— 表现就是「备份上传成功、恢复列表却刷不出来」。统一补标准 prop 请求体。
-        if ("PROPFIND".equals(method) && bodyFile == null && bodyBytes == null) {
+        if (autoPropBody && "PROPFIND".equals(method) && bodyFile == null && bodyBytes == null) {
             try { bodyBytes = PROPFIND_BODY.getBytes("UTF-8"); } catch (Throwable ignored) {}
         }
 
