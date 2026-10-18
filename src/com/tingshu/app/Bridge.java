@@ -3045,6 +3045,51 @@ public class Bridge {
                             o.put("name", name);
                             o.put("size", tmp.length());
                             o.put("remote", target);
+
+                            // ★ v3.9.49：维护远端清单（GET 旧→合并→PUT 新）。
+                            //   恢复列表在 PROPFIND 被链路拦成 501 的环境下，
+                            //   靠这个清单文件兜底（GET/PUT 标准方法畅通）。
+                            //   清单失败绝不影响备份本身。
+                            try {
+                                long fsize = tmp.length();
+                                long nowAt = System.currentTimeMillis();
+                                org.json.JSONArray arr = new org.json.JSONArray();
+                                com.tingshu.app.data.WebDavClient.Result mg =
+                                        com.tingshu.app.data.WebDavClient.getManifest(
+                                                base, user, pass, dir, auth);
+                                if (mg.ok && mg.bytes != null) {
+                                    try {
+                                        org.json.JSONObject mj = new org.json.JSONObject(
+                                                new String(mg.bytes, "UTF-8"));
+                                        org.json.JSONArray old = mj.optJSONArray("files");
+                                        if (old != null) {
+                                            for (int i = 0; i < old.length(); i++) {
+                                                org.json.JSONObject e = old.optJSONObject(i);
+                                                if (e == null) continue;
+                                                // 同名条目由本次备份覆盖
+                                                if (name.equals(e.optString("name"))) continue;
+                                                arr.put(e);
+                                            }
+                                        }
+                                    } catch (Throwable ignored) {}
+                                }
+                                org.json.JSONObject cur = new org.json.JSONObject();
+                                cur.put("name", name);
+                                cur.put("size", fsize);
+                                cur.put("at", nowAt);
+                                arr.put(cur);
+                                // 只保留最近 20 条，防清单无限膨胀
+                                org.json.JSONArray trimmed = new org.json.JSONArray();
+                                for (int i = Math.max(0, arr.length() - 20); i < arr.length(); i++) {
+                                    trimmed.put(arr.get(i));
+                                }
+                                org.json.JSONObject mo = new org.json.JSONObject();
+                                mo.put("ver", 1);
+                                mo.put("files", trimmed);
+                                com.tingshu.app.data.WebDavClient.putManifest(
+                                        base, user, pass, dir, auth,
+                                        mo.toString().getBytes("UTF-8"));
+                            } catch (Throwable ignored) {}
                         } catch (Throwable t) {
                             try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
                             catch (Throwable ignored) {}
@@ -3080,6 +3125,45 @@ public class Bridge {
                         com.tingshu.app.data.WebDavClient.Result lr =
                                 com.tingshu.app.data.WebDavClient.listWithErr(base, user, pass, dir, auth);
                         if (!lr.ok) {
+                            // ★ v3.9.49：PROPFIND 被链路拦成 501 时的兜底 ——
+                            //   GET 远端清单文件（标准方法，畅通）。
+                            try {
+                                com.tingshu.app.data.WebDavClient.Result mg =
+                                        com.tingshu.app.data.WebDavClient.getManifest(
+                                                base, user, pass, dir, auth);
+                                if (mg.ok && mg.bytes != null) {
+                                    org.json.JSONObject mj = new org.json.JSONObject(
+                                            new String(mg.bytes, "UTF-8"));
+                                    org.json.JSONArray fl = mj.optJSONArray("files");
+                                    org.json.JSONArray marr = new org.json.JSONArray();
+                                    java.text.SimpleDateFormat mfmt = new java.text.SimpleDateFormat(
+                                            "MM-dd HH:mm", java.util.Locale.getDefault());
+                                    if (fl != null) {
+                                        for (int i = 0; i < fl.length(); i++) {
+                                            org.json.JSONObject e = fl.optJSONObject(i);
+                                            if (e == null) continue;
+                                            String nm = e.optString("name", "");
+                                            if (nm.length() == 0) continue;
+                                            if (!nm.toLowerCase(java.util.Locale.ROOT).endsWith(
+                                                    com.tingshu.app.data.BackupCodec.EXT)) continue;
+                                            JSONObject it = new JSONObject();
+                                            it.put("name", nm);
+                                            it.put("size", e.optLong("size", -1));
+                                            long at = e.optLong("at", 0);
+                                            it.put("at", at);
+                                            it.put("atText", at > 0
+                                                    ? mfmt.format(new java.util.Date(at)) : "");
+                                            marr.put(it);
+                                        }
+                                    }
+                                    o.put("ok", true);
+                                    o.put("dir", dir);
+                                    o.put("items", marr);
+                                    o.put("via", "manifest");
+                                    callback("onDavList", o);
+                                    return;
+                                }
+                            } catch (Throwable ignored) {}
                             o.put("ok", false);
                             o.put("error", "读取备份列表失败：" + lr.error);
                             o.put("items", new org.json.JSONArray());
@@ -3181,6 +3265,32 @@ public class Bridge {
                     o.put("ok", r.ok);
                     o.put("name", safe);
                     if (!r.ok) o.put("error", r.error);
+                    // ★ v3.9.49：删除成功后同步从清单里移除该条目（GET→过滤→PUT）
+                    if (r.ok) {
+                        try {
+                            com.tingshu.app.data.WebDavClient.Result mg =
+                                    com.tingshu.app.data.WebDavClient.getManifest(
+                                            base, user, pass, dir, auth);
+                            if (mg.ok && mg.bytes != null) {
+                                org.json.JSONObject mj = new org.json.JSONObject(
+                                        new String(mg.bytes, "UTF-8"));
+                                org.json.JSONArray old = mj.optJSONArray("files");
+                                org.json.JSONArray kept = new org.json.JSONArray();
+                                if (old != null) {
+                                    for (int i = 0; i < old.length(); i++) {
+                                        org.json.JSONObject e = old.optJSONObject(i);
+                                        if (e == null) continue;
+                                        if (safe.equals(e.optString("name"))) continue;
+                                        kept.put(e);
+                                    }
+                                }
+                                mj.put("files", kept);
+                                com.tingshu.app.data.WebDavClient.putManifest(
+                                        base, user, pass, dir, auth,
+                                        mj.toString().getBytes("UTF-8"));
+                            }
+                        } catch (Throwable ignored) {}
+                    }
                 } catch (Throwable t) {
                     try { o.put("ok", false); o.put("error", String.valueOf(t.getMessage())); }
                     catch (Throwable ignored) {}

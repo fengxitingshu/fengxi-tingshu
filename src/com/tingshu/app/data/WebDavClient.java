@@ -554,6 +554,31 @@ public final class WebDavClient {
         return d.length() == 0 ? b : b + d + "/";
     }
 
+    /**
+     * ★ v3.9.49：远端备份清单文件名。
+     *
+     * <p>实测（v3.9.48 诊断码实锤）：部分网络链路/网关会把 PROPFIND 一律拦成
+     * 501（PUT/GET/DELETE 畅通），恢复列表因此全灭。清单文件是兜底——
+     * 每次「备份到网盘」时用 GET(旧清单)→合并→PUT(新清单) 维护，
+     * 恢复列表在 PROPFIND 失败时用 GET 读它。全程只用标准方法，
+     * 任何放行 PUT/GET 的链路都能跑通完整备份/恢复。
+     */
+    public static final String MANIFEST_NAME = "fengxi-manifest.json";
+
+    /** GET 远端清单（404 = 还没有清单 = 空列表） */
+    public static Result getManifest(String baseUrl, String user, String pass,
+                                     String dir, String authType) {
+        return request("GET", joinUrl(baseUrl, dir) + MANIFEST_NAME, user, pass,
+                null, null, null, true, READ_TIMEOUT, authType);
+    }
+
+    /** PUT 远端清单（每次备份/删除后由 Bridge 维护，失败不影响主流程） */
+    public static Result putManifest(String baseUrl, String user, String pass,
+                                     String dir, String authType, byte[] body) {
+        return request("PUT", joinUrl(baseUrl, dir) + MANIFEST_NAME, user, pass,
+                null, body, null, false, READ_TIMEOUT, authType);
+    }
+
     // ==================== 核心请求 ====================
 
     /**
