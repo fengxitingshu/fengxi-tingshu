@@ -447,17 +447,37 @@ public final class WebDavClient {
             // ★ v3.9.47：失败提示按服务商分流 —— 坚果云给排查清单，
             //   自建 NAS（飞牛等）解释 501/405 是服务端限制，别再让坚果云用户
             //   看到「飞牛」提示一头雾水。
+            // ★ v3.9.48：识别「方法被链路拦截」特征 —— 实测坚果云与飞牛两家
+            //   无关服务商返回了完全相同的 [501,501,403,501,501]，且 PUT/GET
+            //   畅通、唯独 PROPFIND 全灭（测试连接靠 PUT 探针照常「正常」）。
+            //   这是手机与服务器之间存在 HTTP 方法拦截层的铁证：常见于
+            //   VPN/网络加速器/抓包工具/广告过滤/「私人DNS」等。501 的响应
+            //   来自拦截层而非真实服务商（diag 里的 S:xxx 是响应 Server 头，
+            //   与服务商官方标识不符即实锤）。
             boolean isJgy = baseUrl != null && baseUrl.toLowerCase(java.util.Locale.ROOT)
                     .contains("jianguoyun");
-            r.error = (r.error == null || r.error.length() == 0 ? "HTTP " + r.code : r.error)
-                    + "。已自动尝试 5 种列表形式均失败[" + diag + "]。"
-                    + (isJgy
-                        ? "坚果云排查：① 地址须为 https://dav.jianguoyun.com/dav/；"
+            String ds = diag.toString();
+            int n501 = 0, idx = 0;
+            while ((idx = ds.indexOf("501", idx)) >= 0) { n501++; idx += 3; }
+            String hint;
+            if (n501 >= 3) {
+                hint = "⚠️ 检测到「WebDAV 方法被链路拦截」的典型特征："
+                        + "PROPFIND 列目录请求全部被回 501，而上传/删除（PUT/DELETE）"
+                        + "畅通 —— 拦截发生在你手机与服务器之间，常见于 VPN、网络加速器、"
+                        + "抓包工具、广告过滤、私人DNS 等软件或网关。请关闭相关软件，"
+                        + "或在 WiFi/移动数据之间切换后重试（diag 里 S: 开头的是响应"
+                        + " Server 头，若与服务商官方标识不符即为拦截者身份）";
+            } else if (isJgy) {
+                hint = "坚果云排查：① 地址须为 https://dav.jianguoyun.com/dav/；"
                           + "② 密码须用「应用密码」（网页端 账户信息→安全选项 里生成），不是登录密码；"
-                          + "③ 目录会自动创建，若提示无权限请先在坚果云网页端建好该文件夹"
-                        : "自建 NAS：请先手动执行一次「备份」让 App 建好远端目录再刷新恢复列表；"
+                          + "③ 目录会自动创建，若提示无权限请先在坚果云网页端建好该文件夹";
+            } else {
+                hint = "自建 NAS：请先手动执行一次「备份」让 App 建好远端目录再刷新恢复列表；"
                           + "501/405 表示服务器或其网关未实现该方法（服务端限制，客户端无法绕过），"
-                          + "可换用坚果云等支持完整 WebDAV 的服务");
+                          + "可换用坚果云等支持完整 WebDAV 的服务";
+            }
+            r.error = (r.error == null || r.error.length() == 0 ? "HTTP " + r.code : r.error)
+                    + "。已自动尝试 5 种列表形式均失败[" + diag + "]。" + hint;
             com.tingshu.app.core.DiagLog.add("[dav-list] " + diag + " dir=" + d);
             return r;
         }
@@ -489,10 +509,12 @@ public final class WebDavClient {
         return true;
     }
 
-    /** diag 用：有状态码显示状态码，没有（网络层异常）显示错误 */
+    /** diag 用：有状态码显示状态码，没有（网络层异常）显示错误；带 Server 头暴露拦截者 */
     private static String codeOf(Result r) {
-        return r.code > 0 ? String.valueOf(r.code)
+        String c = r.code > 0 ? String.valueOf(r.code)
                 : (r.error == null || r.error.length() == 0 ? "?" : r.error);
+        if (r.server != null && r.server.length() > 0) c += "S:" + r.server;
+        return c;
     }
 
     /** 只去掉末尾一个斜杠（根路径 "/" 不动） */
