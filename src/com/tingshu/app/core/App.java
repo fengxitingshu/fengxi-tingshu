@@ -19,6 +19,8 @@ public class App extends Application {
     public void onCreate() {
         super.onCreate();
         CTX = this;
+        // ★ v4.0.0：防盗版签名校验（内部模块）—— 最先跑，毫秒级，正版无感
+        try { Guard.check(this); } catch (Throwable ignored) {}
         // ★ v3.9.5：崩溃处理器必须**最先**装 —— 原来它在 App.onCreate 里、
         //   但排在它后面的任何一步（Settings.init / Net.loadCookies /
         //   SourceRegistry.registerAll / PythonHost…）一旦抛异常，

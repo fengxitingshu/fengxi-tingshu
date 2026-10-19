@@ -49,6 +49,9 @@ public class MainActivity extends Activity
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // ★ v4.0.0：防盗版签名校验第二道入口（Application 里已有一道）
+        try { com.tingshu.app.core.Guard.check(this); } catch (Throwable ignored) {}
+
         // ★ v3.7.15：崩溃日志落盘。
         //
         //   用户反馈"概率闪退"，但拿不到 logcat —— 没有堆栈就只能盲猜。
