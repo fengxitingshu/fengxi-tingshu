@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- ★ v3.8.2：自适应图标背景色，取自用户上传图标的四角色彩 -->
-    <color name="ic_launcher_background">#F7F8F1</color>
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>
