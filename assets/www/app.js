@@ -636,7 +636,7 @@
         var sel = !!(App.homeSrcSel && App.homeSrcSel[id]);
         if (App.homeSrcBatch) {
             return '<div class="srcgrid-item srcgrid-item-manage' + (sel ? ' srcgrid-item-sel' : '') +
-                   '" onclick="App.ui.homeSrcSelToggle(\'' + escAttr(id) + '\')">' +
+                   '" onclick="App.ui.homeSrcSelToggle(\'' + escAttr(id) + '\', this)">' +
                    '<div class="pickbox' + (sel ? ' on' : '') + '"></div>' +
                    '<div class="t">' + title + '</div>' +
                    '<div class="s">' + sub + '</div></div>';
@@ -683,12 +683,23 @@
         return false;
     };
 
-    /** 管理态：勾选/取消勾选 */
-    ui.homeSrcSelToggle = function (id) {
+    /** 管理态：勾选/取消勾选 —— ★ v3.9.52 就地更新，不整页重绘（整绘卡） */
+    ui.homeSrcSelToggle = function (id, el) {
         if (!App.homeSrcSel) App.homeSrcSel = {};
-        if (App.homeSrcSel[id]) delete App.homeSrcSel[id];
-        else App.homeSrcSel[id] = true;
-        renderHomePicker();
+        var on = !App.homeSrcSel[id];
+        if (on) App.homeSrcSel[id] = true; else delete App.homeSrcSel[id];
+        if (el) {
+            el.classList[on ? 'add' : 'remove']('srcgrid-item-sel');
+            var box = el.querySelector('.pickbox');
+            if (box) box.classList[on ? 'add' : 'remove']('on');
+        }
+        var bar = $('homeBatchBar');
+        if (bar) {
+            var n = 0, k;
+            for (k in App.homeSrcSel) if (App.homeSrcSel[k]) n++;
+            var c = bar.querySelector('.sbb-cnt');
+            if (c) c.innerHTML = '已选 <b>' + n + '</b>';
+        }
     };
 
     /** 管理态：全选 / 反选 */
@@ -753,8 +764,8 @@
         for (var i = 0; i < todo.length; i++) TS.call('setSourceEnabled', todo[i], !!on);
         App.homeSrcSel = {};
         TS.toast((on ? '正在启用 ' : '正在停用 ') + todo.length + ' 个源…');
-        // ★ v3.9.51：拉一份权威清单，被停用的源确保从首页列表移除
-        setTimeout(function () { TS.call('discoverSources'); }, 600);
+        // ★ v3.9.52：不再重复拉清单 —— onSourceChanged 批量完成时已统一
+        //   调度一次 discoverSources，这里再加一次就是双倍重绘（卡）。
     };
 
     /** 管理态：批量删除（内置源删不掉会如实报 0，可改用「停用」） */
@@ -8455,21 +8466,30 @@
 
     /** 执行记录（只在本页面生命周期内累积，不落盘） */
     var _bkLog = [];
+    var _bkLogFlushTok = null;
 
     function bkLog(line) {
         var t = new Date();
         var hh = t.getHours(), mm = t.getMinutes(), ss = t.getSeconds();
         function p2(n) { return n < 10 ? '0' + n : '' + n; }
         _bkLog.push('[' + p2(hh) + ':' + p2(mm) + ':' + p2(ss) + '] ' + line);
-        if (_bkLog.length > 200) _bkLog.shift();
-        var el = $('bkLog');
-        if (el) {
-            el.textContent = _bkLog.join('\n');
-            el.scrollTop = el.scrollHeight;
-        }
+        // ★ v3.9.52：诊断码行很长，200 行全量重写 textNode 每条都触发一次
+        //   大面积 reflow（备份页因此发卡）。改成：只留 60 条 + 250ms 节流
+        //   合并刷新 —— 连续写日志时 DOM 只动一次。
+        if (_bkLog.length > 60) _bkLog.shift();
+        if (_bkLogFlushTok) return;
+        _bkLogFlushTok = setTimeout(function () {
+            _bkLogFlushTok = null;
+            var el = $('bkLog');
+            if (el) {
+                el.textContent = _bkLog.join('\n');
+                el.scrollTop = el.scrollHeight;
+            }
+        }, 250);
     }
 
     ui.bkClearLog = function () {
+        if (_bkLogFlushTok) { clearTimeout(_bkLogFlushTok); _bkLogFlushTok = null; }
         _bkLog = [];
         var el = $('bkLog');
         if (el) el.textContent = '（暂无）';
@@ -9056,6 +9076,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.52',
+            date: '2026-10-19',
+            fixes: [
+                '★ 性能清理：修复弹层/列表操作发卡',
+                '   · 首页源管理勾选改为就地更新（之前每点一次整页重绘网格）',
+                '   · 去掉重复的源清单刷新调用（一次操作触发两次全量重绘）',
+                '   · 备份页「执行记录」改为节流合并刷新 + 只保留最近 60 条',
+                '     （之前每条日志全量重写 200 行长文本，连续写日志时明显卡）'
+            ]
+        },
         {
             ver: '3.9.51',
             date: '2026-10-19',
