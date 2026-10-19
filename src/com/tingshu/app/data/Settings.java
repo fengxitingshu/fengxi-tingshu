@@ -115,13 +115,13 @@ public final class Settings {
     public static int gain() {
         int v = SP.getInt("gain_pct", 100);
         if (v < 50) return 50;
-        if (v > 200) return 200;
+        if (v > 300) return 300;
         return v;
     }
 
     public static void setGain(int v) {
         if (v < 50) v = 50;
-        if (v > 200) v = 200;
+        if (v > 300) v = 300;
         SP.edit().putInt("gain_pct", v).apply();
     }
 

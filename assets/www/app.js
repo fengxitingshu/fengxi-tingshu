@@ -3925,6 +3925,13 @@
         TS.toast((delta > 0 ? '快进 ' : '快退 ') + Math.abs(delta) + ' 秒');
     };
 
+    // ★ v3.9.53：快进/快退按钮改用设置里的步长（5 秒一档，默认 30）。
+    //   之前按钮写死 ±30，设置里的「快进快退步长」形同虚设。
+    ui.jumpDir = function (dir) {
+        var s = parseInt(App.ff, 10); if (isNaN(s) || s <= 0) s = 30;
+        ui.jump(dir * s);
+    };
+
     // ==================== 选集（播放页/全屏页通用） ====================
 
     /**
@@ -4876,7 +4883,7 @@
     //   200 = 放大到 200%（原生走 LoudnessEnhancer 响度增强）
     // 滑杆内部同样用整数档位（步进 10），避免浮点漂移。
     var GAIN_MIN = 50;    // 50%
-    var GAIN_MAX = 200;   // ★ v3.9.7：300 → 200，高档位实际是爆音不是增益
+    var GAIN_MAX = 300;   // ★ v3.9.53：恢复 300（换算改对数式后 300% 仅 +9.5dB，安全）
     var GAIN_STEP = 10;   // 每档 10%
 
     /** 与倍速一致的整数档位思路：档位 = 百分比本身（都是整数，无需换算） */
@@ -4903,7 +4910,7 @@
             '" id="' + cid + '_r" oninput="App.ui.onGainInput(this.value)">' +
             '<div class="sp-val" id="' + cid + '_v">' + gainLabel(step) + '</div>' +
             '<div class="gain-ticks"><span>50%</span><span>100%</span>' +
-            '<span>150%</span><span>200%</span></div>' +
+            '<span>150%</span><span>200%</span><span>300%</span></div>' +
             '</div>';
     }
 
@@ -7998,6 +8005,25 @@
         setCheck('setWifiCache', o.wifiCacheOnly);
         setCheck('setAutoCache', o.autoCacheEnabled);
         setVal('setAutoCacheCount', o.autoCacheCount || 3);
+        // ★ v3.9.53：预读集数不在预设档位里（自定义值）→ 下拉显示「自定义」
+        App.autoCacheCount = parseInt(o.autoCacheCount, 10) || 3;
+        (function () {
+            var sel = $('setAutoCacheCount');
+            if (!sel) return;
+            var v = String(o.autoCacheCount || 3), has = false;
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === v) { has = true; break; }
+            }
+            sel.value = has ? v : 'custom';
+        })();
+        // ★ v3.9.53：快进步长同步进全局（播放页按钮用），自定义值不在选项里时显示「自定义」
+        App.ff = parseInt(o.ffSeconds, 10) || 30;
+        var ffSel = $('setFf');
+        if (ffSel) {
+            var hasOpt = false, oo = ffSel.options, oi;
+            for (oi = 0; oi < oo.length; oi++) if (oo[oi].value === String(App.ff)) hasOpt = true;
+            if (!hasOpt) ffSel.value = 'custom';
+        }
         setVal('setCacheLimit', o.cacheLimitMb || 2048);
         setVal('setFf', o.ffSeconds || 30);
         App.playOnFull = (o.playOnFull !== false);
@@ -8016,6 +8042,37 @@
     ui.setNumber = function (key, v) {
         var n = parseInt(v, 10);
         if (!isNaN(n)) TS.call('setSetting', key, String(n));
+    };
+
+    // ★ v3.9.53：预读集数选择 —— 预设档位直接生效；「自定义…」弹输入框（1~50）
+    ui.autoCacheCountPick = function (v) {
+        if (v === 'custom') {
+            var cur = App.autoCacheCount || 3;
+            ui.inputSheet('自定义预读集数（1~50）', String(cur), function (txt) {
+                var n = parseInt((txt || '').trim(), 10);
+                if (isNaN(n) || n < 1 || n > 50) {
+                    TS.toast('请输入 1~50 之间的整数');
+                    return;
+                }
+                TS.call('setSetting', 'auto_cache_count', String(n));
+                App.autoCacheCount = n;
+                var sel = $('setAutoCacheCount');
+                if (sel) {
+                    var has = false;
+                    for (var i = 0; i < sel.options.length; i++) {
+                        if (sel.options[i].value === String(n)) { has = true; break; }
+                    }
+                    sel.value = has ? String(n) : 'custom';
+                }
+                TS.toast('预读集数：' + n);
+            });
+            return;
+        }
+        var n = parseInt(v, 10);
+        if (!isNaN(n)) {
+            TS.call('setSetting', 'auto_cache_count', String(n));
+            App.autoCacheCount = n;
+        }
     };
 
     // ==================== 存储占用（★ v3.7.18） ====================
@@ -9076,6 +9133,21 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.53',
+            date: '2026-10-19',
+            fixes: [
+                '★★ 修复「音量增益几乎没有效果」：换算从线性改为对数式（dB 正确换算）',
+                '   · 之前 200% 只有 +1.8dB（v3.9.7 为防爆音砍半的结果），几乎听不出',
+                '   · 现在 200% = +6dB（真·音量翻倍）、300% = +9.5dB，增益上限恢复 300',
+                '   · 300% 也比旧换算的 300%（+12dB 必爆音）温和，LoudnessEnhancer',
+                '     硬限 2000mB 内安全；弱音听不清的集数可以放心往上拉',
+                '★ 快进/快退步长细化：5 秒一档（5~60 秒），播放页快进快退按钮',
+                '   真正使用该步长（之前按钮写死 ±30，设置形同虚设，一并修复）',
+                '★ 自动预读集数：预设档位扩展到 50 集（1/2/3/5/10/20/30/50），',
+                '   并新增「自定义…」输入（1~50 任意整数）'
+            ]
+        },
         {
             ver: '3.9.52',
             date: '2026-10-19',

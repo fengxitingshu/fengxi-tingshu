@@ -197,9 +197,11 @@
       <div class="setval" id="focusModeVal">不处理</div>
     </div>
     <div class="setrow">
-      <div class="setlabel">快进快退步长<span class="setdesc">单位：秒</span></div>
+      <div class="setlabel">快进快退步长<span class="setdesc">5 秒一档，播放页快进/快退按钮用它</span></div>
       <select id="setFf" onchange="App.ui.setNumber('ff_seconds',this.value)">
-        <option>15</option><option>30</option><option>60</option>
+        <option>5</option><option>10</option><option>15</option><option>20</option>
+        <option>25</option><option>30</option><option>35</option><option>40</option>
+        <option>45</option><option>50</option><option>55</option><option>60</option>
       </select>
     </div>
     <div class="setrow">
@@ -228,9 +230,11 @@
         onchange="App.ui.setBool('auto_cache_enabled',this.checked)"><i></i></label>
     </div>
     <div class="setrow">
-      <div class="setlabel">预读集数</div>
-      <select id="setAutoCacheCount" onchange="App.ui.setNumber('auto_cache_count',this.value)">
-        <option>1</option><option>2</option><option>3</option><option>5</option><option>10</option>
+      <div class="setlabel">预读集数<span class="setdesc">最多 50，可选「自定义」输入</span></div>
+      <select id="setAutoCacheCount" onchange="App.ui.autoCacheCountPick(this.value)">
+        <option>1</option><option>2</option><option>3</option><option>5</option>
+        <option>10</option><option>20</option><option>30</option><option>50</option>
+        <option value="custom">自定义…</option>
       </select>
     </div>
     <div class="setrow">
@@ -791,7 +795,7 @@
         <div class="pbtn" onclick="App.ui.prev()">
           <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
         </div>
-        <div class="pbtn sm" onclick="App.ui.jump(-30)">
+        <div class="pbtn sm" onclick="App.ui.jumpDir(-1)">
           <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
         </div>
         <!-- 主按钮：外圈那条会转的弧线 = 取链/缓冲中的加载动画 -->
@@ -802,7 +806,7 @@
           </svg>
           <svg id="fPlayIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </div>
-        <div class="pbtn sm" onclick="App.ui.jump(30)">
+        <div class="pbtn sm" onclick="App.ui.jumpDir(1)">
           <svg viewBox="0 0 24 24"><path d="M13 6v12l8.5-6L13 6zM4 18l8.5-6L4 6v12z"/></svg>
         </div>
         <div class="pbtn" onclick="App.ui.next()">

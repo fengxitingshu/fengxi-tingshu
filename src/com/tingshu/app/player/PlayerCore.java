@@ -681,9 +681,11 @@ public class PlayerCore {
 
     private static int clampGain(int pct) {
         if (pct < 50) return 50;
-        // ★ v3.9.7：上限 300 → 200。实测 300%（+12dB）在大多数设备上
-        //   已经严重削波爆音，用户反馈"增益太高"。200%（+3dB）是安全上限。
-        if (pct > 200) return 200;
+        // ★ v3.9.53：上限恢复 300。v3.9.7 砍到 200 是因为旧线性换算
+        //   （每 1% 记 6mB）在 300% 时高达 1200mB（+12dB）会削波爆音；
+        //   现在换算改成了对数式（见 applyGainInternal），300% 也只有
+        //   954mB（+9.5dB），在 LoudnessEnhancer 2000mB 硬限内安全。
+        if (pct > 300) return 300;
         return pct;
     }
 
@@ -709,10 +711,18 @@ public class PlayerCore {
 
             // 增幅：音量拉满 + 响度增强
             mp.setVolume(1f, 1f);
-            // ★ v3.9.7：系数 6 → 3。原来 200% 就是 +6dB，拉到上限基本必爆音。
-            //   现在 150% ≈ +1.5dB、200% ≈ +3dB —— 温和放大，弱音听得清又不劈。
-            //   LoudnessEnhancer 上限 2000mB，200% 时仅 300mB，余量充足。
-            int mb = (gainPct - 100) * 3;
+            // ★ v3.9.53：换算改为对数式 —— 修复"增益几乎没效果"。
+            //   LoudnessEnhancer 的单位是毫贝（100mB = 1dB，音量翻倍 = +6dB）。
+            //   百分比增幅对应的正确 dB 是 20·log10(pct/100)，即
+            //   mB = 2000·log10(pct/100)：
+            //     150% ≈ +3.5dB（352mB）、200% ≈ +6dB（602mB）、300% ≈ +9.5dB（954mB）。
+            //   旧版 v3.9.7 的线性系数 3 让 200% 只有 300mB（+1.8dB）——
+            //   这就是用户反馈「增益几乎没有增大音量」的直接原因。
+            //   300% 也只有 954mB，远在 LoudnessEnhancer 2000mB 硬限内，
+            //   且比旧线性版 300%（1200mB，必爆音）温和。
+            int mb = (int) Math.round(2000.0 * Math.log10(gainPct / 100.0));
+            if (mb < 0) mb = 0;
+            if (mb > 2000) mb = 2000;
             ensureEnhancer(mp, mb);
         } catch (Throwable ignored) {
             // 个别 ROM 不支持 audiofx，静默降级为「增益无效但播放正常」
