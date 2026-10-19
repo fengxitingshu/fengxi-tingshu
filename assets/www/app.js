@@ -54,9 +54,12 @@
         // ★ v3.9.1：源分组批量管理（显式进入，不与长按手势冲突）
         srcBatch: false,
         srcSel: {},             // 源 id -> true
-        // ★ v3.9.1：源分组批量管理（显式进入，不与长按手势冲突）
-        srcBatch: false,
-        srcSel: {},             // 源 id -> true
+        // ★ v3.9.50：首页源列表长按管理（长按任意源进入；批量/单选，
+        //   删除 + 启停，停用或删除后源从首页列表移除）
+        homeSrcBatch: false,
+        homeSrcSel: {},         // 源 id -> true
+        _homePressTok: null,    // 长按定时器
+        _homePressFired: false, // 长按已触发标记（吞掉随后的 click）
         // ★ v2.9：当前下载目录（设置页显示用）
         dlDirName: '',
         dlDirUri: '',
@@ -233,6 +236,12 @@
         // ★ v3.9.1：源分组处于批量管理态时，返回键先退出批量
         //   （"返回 = 收起当前展开的东西"，与倍速面板同一套直觉）
         if (App.srcBatch) { App.srcBatch = false; App.srcSel = {}; paintSrcGroup(); return true; }
+        // ★ v3.9.50：首页源列表管理态，返回键先退出管理
+        if (App.homeSrcBatch) {
+            App.homeSrcBatch = false; App.homeSrcSel = {};
+            if (App.page === TABS.home) renderHomePicker();
+            return true;
+        }
         // ★ v3.9.1：源分组处于批量管理态时，返回键先退出批量
         //   （"返回 = 收起当前展开的东西"，与倍速面板同一套直觉）
         if (App.srcBatch) { App.srcBatch = false; App.srcSel = {}; paintSrcGroup(); return true; }
@@ -536,7 +545,11 @@
         if (el) el.textContent = '选择书源';
         var list = App.homeSources || [];
         var browsable = {};
-        for (var b = 0; b < list.length; b++) browsable[list[b].id] = true;
+        // ★ v3.9.50：停用的源不出现在首页源列表（管理态里关掉即从列表移除）
+        for (var b = 0; b < list.length; b++) {
+            if (list[b] && list[b].enabled === false) continue;
+            browsable[list[b].id] = true;
+        }
         // 其他启用的源（不支持分类浏览的搜索源）：排除本地/网盘/已列出的
         var others = [], seen = {};
         for (var s = 0; s < (App.sources || []).length; s++) {
@@ -570,33 +583,193 @@
             }
             return;
         }
-        var h = '<div class="srcgrid">';
+        // ★ v3.9.50：管理态顶栏（批量/单选：启用/停用/删除/全选/反选/完成）
+        var h = '';
+        if (App.homeSrcBatch) {
+            var nsel = 0, k;
+            for (k in App.homeSrcSel) if (App.homeSrcSel[k]) nsel++;
+            h += '<div class="homebatchbar" id="homeBatchBar">' +
+                 '<span class="sbb-cnt">已选 <b>' + nsel + '</b></span>' +
+                 '<button class="mini ghost" onclick="App.ui.homeSrcSelAll(true)">全选</button>' +
+                 '<button class="mini ghost" onclick="App.ui.homeSrcSelInverse()">反选</button>' +
+                 '<button class="mini" onclick="App.ui.homeSrcSelEnable(true)">启用</button>' +
+                 '<button class="mini" onclick="App.ui.homeSrcSelEnable(false)">停用</button>' +
+                 '<button class="mini" onclick="App.ui.homeSrcSelDelete()">删除</button>' +
+                 '<button class="mini ghost" onclick="App.ui.homeSrcBatchExit()">完成</button>' +
+                 '</div>';
+        }
+        h += '<div class="srcgrid">';
         for (var i = 0; i < list.length; i++) {
             var n = (list[i].cats || []).length;
-            h += '<div class="srcgrid-item" onclick="App.ui.homePickSrc(\'' +
-                 escAttr(list[i].id) + '\')">' +
-                 '<div class="t">' + TS.esc(list[i].name || list[i].id) + '</div>' +
-                 '<div class="s">' + (n > 0 ? (n + ' 个分类') : '暂无分类') + '</div></div>';
+            h += homeSrcCard(list[i].id,
+                    TS.esc(list[i].name || list[i].id),
+                    n > 0 ? (n + ' 个分类') : '暂无分类',
+                    "App.ui.homePickSrc('" + escAttr(list[i].id) + "')");
         }
         for (var j = 0; j < others.length; j++) {
             var nm = others[j].alias || others[j].name || others[j].id;
-            h += '<div class="srcgrid-item" onclick="App.ui.homePickSearchSrc(\'' +
-                 escAttr(others[j].id) + '\')">' +
-                 '<div class="t">' + TS.esc(nm) + '</div>' +
-                 '<div class="s">仅搜索 · 点去搜索</div></div>';
+            h += homeSrcCard(others[j].id,
+                    TS.esc(nm), '仅搜索 · 点去搜索',
+                    "App.ui.homePickSearchSrc('" + escAttr(others[j].id) + "')");
         }
         if (localOn) {
-            h += '<div class="srcgrid-item" onclick="App.ui.homePickSrc(\'local\')">' +
-                 '<div class="t">本地书源</div><div class="s">听本机音频</div></div>';
+            h += homeSrcCard('local', '本地书源', '听本机音频',
+                    "App.ui.homePickSrc('local')");
         }
         h += '</div>';
         cl.innerHTML = h;
     }
 
+    /** ★ v3.9.50：生成一张源卡片 —— 普通态支持长按进管理，管理态是勾选卡 */
+    function homeSrcCard(id, title, sub, tapJs) {
+        var sel = !!(App.homeSrcSel && App.homeSrcSel[id]);
+        if (App.homeSrcBatch) {
+            return '<div class="srcgrid-item srcgrid-item-manage' + (sel ? ' srcgrid-item-sel' : '') +
+                   '" onclick="App.ui.homeSrcSelToggle(\'' + escAttr(id) + '\')">' +
+                   '<div class="pickbox' + (sel ? ' on' : '') + '"></div>' +
+                   '<div class="t">' + title + '</div>' +
+                   '<div class="s">' + sub + '</div></div>';
+        }
+        // 长按 480ms 进管理模式；touchmove/touchend 取消（滑动不算长按）。
+        // 长按触发后 _homePressFired 会吞掉随后那次 click。
+        return '<div class="srcgrid-item" ' +
+               'ontouchstart="App.ui.homeSrcPress(\'' + escAttr(id) + '\')" ' +
+               'ontouchend="App.ui.homeSrcPressEnd()" ' +
+               'ontouchmove="App.ui.homeSrcPressEnd()" ' +
+               'ontouchcancel="App.ui.homeSrcPressEnd()" ' +
+               'onclick="' + tapJs + '">' +
+               '<div class="t">' + title + '</div>' +
+               '<div class="s">' + sub + '</div></div>';
+    }
+
+    // ==================== ★ v3.9.50 首页源列表长按管理 ====================
+
+    /** 长按开始：480ms 后进入管理模式并勾住按住的这个源 */
+    ui.homeSrcPress = function (id) {
+        ui.homeSrcPressEnd();
+        App._homePressFired = false;
+        App._homePressTok = setTimeout(function () {
+            App._homePressTok = null;
+            App._homePressFired = true;         // 吞掉 touchend 后的 click
+            App.homeSrcBatch = true;
+            App.homeSrcSel = {};
+            App.homeSrcSel[id] = true;
+            try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
+            renderHomePicker();
+            TS.toast('已进入管理：点选多个源后用顶部按钮批量启停/删除');
+        }, 480);
+    };
+
+    /** 长按结束/滑动：取消定时器 */
+    ui.homeSrcPressEnd = function () {
+        if (App._homePressTok) { clearTimeout(App._homePressTok); App._homePressTok = null; }
+    };
+
+    /** 普通态点击卡片前的统一闸门：吞掉长按后的 click；管理态里改为勾选 */
+    ui.homeSrcCardGuard = function () {
+        if (App._homePressFired) { App._homePressFired = false; return true; }
+        if (App.homeSrcBatch) return true;      // 管理态卡片 onclick 已是勾选，不走这里
+        return false;
+    };
+
+    /** 管理态：勾选/取消勾选 */
+    ui.homeSrcSelToggle = function (id) {
+        if (!App.homeSrcSel) App.homeSrcSel = {};
+        if (App.homeSrcSel[id]) delete App.homeSrcSel[id];
+        else App.homeSrcSel[id] = true;
+        renderHomePicker();
+    };
+
+    /** 管理态：全选 / 反选 */
+    ui.homeSrcSelAll = function (on) {
+        App.homeSrcSel = {};
+        if (on) {
+            var ids = homeSrcManageIds();
+            for (var i = 0; i < ids.length; i++) App.homeSrcSel[ids[i]] = true;
+        }
+        renderHomePicker();
+    };
+    ui.homeSrcSelInverse = function () {
+        var ids = homeSrcManageIds(), next = {};
+        for (var i = 0; i < ids.length; i++) {
+            if (!App.homeSrcSel[ids[i]]) next[ids[i]] = true;
+        }
+        App.homeSrcSel = next;
+        renderHomePicker();
+    };
+
+    /** 当前页面上可管理的源 id（与渲染逻辑一致） */
+    function homeSrcManageIds() {
+        var ids = [];
+        var list = App.homeSources || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].id && list[i].enabled !== false) ids.push(list[i].id);
+        }
+        var seen = {}, browsable = {};
+        for (var b = 0; b < list.length; b++) {
+            if (list[b] && list[b].id) { seen[list[b].id] = true; browsable[list[b].id] = true; }
+        }
+        for (var s = 0; s < (App.sources || []).length; s++) {
+            var cs = App.sources[s];
+            if (!cs || !cs.id || seen[cs.id]) continue;
+            seen[cs.id] = true;
+            if (cs.enabled === false) continue;
+            if (cs.id === 'local' || cs.origin === 'pan' || browsable[cs.id]) continue;
+            ids.push(cs.id);
+        }
+        var localOn = false;
+        for (var s2 = 0; s2 < (App.sources || []).length; s2++) {
+            if (App.sources[s2] && App.sources[s2].id === 'local' &&
+                App.sources[s2].enabled !== false) localOn = true;
+        }
+        if (localOn) ids.push('local');
+        return ids;
+    }
+
+    /** 管理态：退出（清空勾选，不留隐形状态） */
+    ui.homeSrcBatchExit = function () {
+        App.homeSrcBatch = false;
+        App.homeSrcSel = {};
+        renderHomePicker();
+    };
+
+    /** 管理态：批量启用/停用（复用 _bulkSw 批量提示，回调里会重画首页） */
+    ui.homeSrcSelEnable = function (on) {
+        var todo = [];
+        for (var k in App.homeSrcSel) if (App.homeSrcSel[k]) todo.push(k);
+        if (!todo.length) { TS.toast('还没有勾选任何源'); return; }
+        App._bulkSw = { left: todo.length, total: todo.length, on: !!on };
+        for (var i = 0; i < todo.length; i++) TS.call('setSourceEnabled', todo[i], !!on);
+        App.homeSrcSel = {};
+        TS.toast((on ? '正在启用 ' : '正在停用 ') + todo.length + ' 个源…');
+    };
+
+    /** 管理态：批量删除（内置源删不掉会如实报 0，可改用「停用」） */
+    ui.homeSrcSelDelete = function () {
+        var todo = [];
+        for (var k in App.homeSrcSel) if (App.homeSrcSel[k]) todo.push(k);
+        if (!todo.length) { TS.toast('还没有勾选任何源'); return; }
+        ui.confirmSheet('确定删除选中的 ' + todo.length + ' 个源？删除后需要重新导入；' +
+                        '内置源不可删除（可改用「停用」）。', function () {
+            for (var i = 0; i < todo.length; i++) TS.call('removeSourceById', todo[i]);
+            App.homeSrcSel = {};
+            TS.toast('正在删除 ' + todo.length + ' 个源…');
+            // 删除回调只刷管理页；这里主动重拉源清单并重画首页源列表
+            setTimeout(function () {
+                App.homeSrcBatch = false;
+                App.homeSrcSel = {};
+                TS.call('discoverSources');
+            }, 600);
+        });
+    };
+
     /** ★ v3.9.39：源列表里点了「仅搜索」源 → 跳搜索页（结果可按来源筛选）。
      *  ★ v3.9.41：点完直接弹关键词输入，确认后立即搜索并自动筛选到该源 ——
      *  一条流走完，不再让用户自己再去搜索页敲字、翻筛选。 */
     ui.homePickSearchSrc = function (sid) {
+        // ★ v3.9.50：管理态/长按吞 click（同 homePickSrc）
+        if (App.homeSrcBatch) { ui.homeSrcSelToggle(sid); return; }
+        if (ui.homeSrcCardGuard()) return;
         App._homePick = false;
         var nm = sid;
         for (var i = 0; i < (App.sources || []).length; i++) {
@@ -1204,6 +1377,10 @@
     };
 
     ui.homePickSrc = function (sid) {
+        // ★ v3.9.50：管理态点卡片 = 勾选（渲染时 onclick 已换，这里兜底）；
+        //   长按触发后的那次 click 直接吞掉
+        if (App.homeSrcBatch) { ui.homeSrcSelToggle(sid); return; }
+        if (ui.homeSrcCardGuard()) return;
         // ★ v3.9.38：无论哪种模式，点了源就是离开了「源列表选择页」
         App._homePick = false;
         ui.closeSrcPop();
@@ -8854,6 +9031,20 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.50',
+            date: '2026-10-19',
+            fixes: [
+                '★ 新功能：首页源列表长按管理',
+                '   · 在首页「选择书源」长按任意源 → 进入管理模式（带震动反馈）',
+                '   · 管理模式：点卡片单选/再点取消，支持全选/反选批量操作',
+                '   · 操作：启用 / 停用 / 删除；停用或删除后源立即从列表移除',
+                '   · 返回键先退出管理模式，不误触其他行为',
+                '★ 备份恢复收尾：恢复列表失败时，若远端清单不存在（404）会明确',
+                '  提示「先点一次备份到网盘」——清单走 GET/PUT，生成后恢复列表',
+                '  不再受 PROPFIND 拦截影响'
+            ]
+        },
         {
             ver: '3.9.49',
             date: '2026-10-18',

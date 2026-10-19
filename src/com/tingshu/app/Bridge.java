@@ -3127,10 +3127,15 @@ public class Bridge {
                         if (!lr.ok) {
                             // ★ v3.9.49：PROPFIND 被链路拦成 501 时的兜底 ——
                             //   GET 远端清单文件（标准方法，畅通）。
+                            // ★ v3.9.50：清单不存在（404）时给出明确引导 ——
+                            //   「先备份一次」是唯一前置步骤，别让用户对着
+                            //   501 诊断码发呆。
+                            int mgCode = -1;
                             try {
                                 com.tingshu.app.data.WebDavClient.Result mg =
                                         com.tingshu.app.data.WebDavClient.getManifest(
                                                 base, user, pass, dir, auth);
+                                mgCode = mg.code;
                                 if (mg.ok && mg.bytes != null) {
                                     org.json.JSONObject mj = new org.json.JSONObject(
                                             new String(mg.bytes, "UTF-8"));
@@ -3165,7 +3170,14 @@ public class Bridge {
                                 }
                             } catch (Throwable ignored) {}
                             o.put("ok", false);
-                            o.put("error", "读取备份列表失败：" + lr.error);
+                            o.put("error", "读取备份列表失败：" + lr.error
+                                    + (mgCode == 404
+                                        ? "。远端还没有清单文件：请先点一次「备份到网盘」，"
+                                          + "成功后恢复列表即可用（清单走 GET/PUT，"
+                                          + "不受 PROPFIND 拦截影响）"
+                                        : (mgCode > 0
+                                            ? "。清单文件读取也失败（HTTP " + mgCode + "）"
+                                            : "")));
                             o.put("items", new org.json.JSONArray());
                         } else {
                             org.json.JSONArray arr = new org.json.JSONArray();
