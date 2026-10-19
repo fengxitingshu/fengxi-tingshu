@@ -545,9 +545,20 @@
         if (el) el.textContent = '选择书源';
         var list = App.homeSources || [];
         var browsable = {};
-        // ★ v3.9.50：停用的源不出现在首页源列表（管理态里关掉即从列表移除）
+        // ★ v3.9.50：停用的源不出现在首页源列表（管理态里关掉即从列表移除）。
+        //   ★ v3.9.51：homeSources 是 discoverSources 的缓存，setSourceEnabled
+        //   后不会自动带 enabled 字段 —— 用 App.sources（onSourceChanged 实时
+        //   同步）交叉校验，停用立即从列表消失，不等下一次 discoverSources。
+        var enMap = {};
+        for (var q = 0; q < (App.sources || []).length; q++) {
+            enMap[App.sources[q].id] = App.sources[q].enabled !== false;
+        }
         for (var b = 0; b < list.length; b++) {
             if (list[b] && list[b].enabled === false) continue;
+            if (list[b] && enMap[list[b].id] === false) continue;
+            // ★ v3.9.51：全量表里已经没有这个 id = 已被删除，从列表移除
+            if (list[b] && (App.sources || []).length > 0 &&
+                !(list[b].id in enMap)) continue;
             browsable[list[b].id] = true;
         }
         // 其他启用的源（不支持分类浏览的搜索源）：排除本地/网盘/已列出的
@@ -742,6 +753,8 @@
         for (var i = 0; i < todo.length; i++) TS.call('setSourceEnabled', todo[i], !!on);
         App.homeSrcSel = {};
         TS.toast((on ? '正在启用 ' : '正在停用 ') + todo.length + ' 个源…');
+        // ★ v3.9.51：拉一份权威清单，被停用的源确保从首页列表移除
+        setTimeout(function () { TS.call('discoverSources'); }, 600);
     };
 
     /** 管理态：批量删除（内置源删不掉会如实报 0，可改用「停用」） */
@@ -6756,6 +6769,14 @@
     };
 
     window.onSourceChanged = function (o) {
+        // ★ v3.9.51：同步进 App.homeSources —— 首页「源列表选择页」渲染用的
+        //   是这份缓存，之前只同步 App.sources 导致「停用了列表里还在」
+        var syncHome = function (sid, en) {
+            var hs = App.homeSources || [];
+            for (var h = 0; h < hs.length; h++) {
+                if (hs[h] && hs[h].id === sid) hs[h].enabled = !!en;
+            }
+        };
         // ★ v3.7.5：批量开关期间不逐个提示，等全部回完统一报一次
         var bulk = App._bulkSw;
         if (bulk && bulk.left > 0) {
@@ -6765,6 +6786,7 @@
                 for (var m = 0; m < arrB.length; m++) {
                     if (arrB[m].id === o.id) arrB[m].enabled = !!o.enabled;
                 }
+                syncHome(o.id, o.enabled);
             }
             if (bulk.left <= 0) {
                 TS.toast(bulk.on ? '已全部开启' : '已全部关闭');
@@ -6773,6 +6795,8 @@
                 if (App.page === SUBS.sources) paintSources();
                 if (App.page === SUBS.srcGroup) paintSrcGroup();
                 if (App.page === TABS.home) paintHomeSources();
+                // ★ v3.9.51：向原生要一份权威源清单，首页列表与实际状态严格一致
+                setTimeout(function () { TS.call('discoverSources'); }, 300);
             }
             return;
         }
@@ -6784,6 +6808,7 @@
             for (var i = 0; i < arr.length; i++) {
                 if (arr[i].id === o.id) arr[i].enabled = !!o.enabled;
             }
+            syncHome(o.id, o.enabled);
             paintSourceEntry();
             if (App.page === SUBS.sources) paintSources();
             // ★ v3.7.7：分组页里单独开关某个源，也要把顶栏「全开/全关」的
@@ -9031,6 +9056,19 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '3.9.51',
+            date: '2026-10-19',
+            fixes: [
+                '★ 修复：首页源管理「提示成功但未生效」',
+                '   · 根因：原生侧停用/删除其实已生效（实时写库），但首页列表用的',
+                '     源缓存（homeSources）从不跟随更新 —— 现在停用/删除后立即从',
+                '     列表移除，并向原生拉取权威清单二次校准',
+                '★ 「我的」页去重：我的下载 / 备份与恢复 / 更新公告 三个入口与',
+                '  「设置」页重复，全部移除（设置页里保留）',
+                '★ 备份恢复清单兜底方案实测通过（用户确认备份问题已修复）'
+            ]
+        },
         {
             ver: '3.9.50',
             date: '2026-10-19',

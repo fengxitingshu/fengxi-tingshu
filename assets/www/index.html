@@ -144,31 +144,10 @@
       </div>
       <div class="setval">&#8250;</div>
     </div>
-    <div class="setrow" onclick="App.ui.openDlManage()">
-      <div class="setlabel">我的下载<span class="setdesc">查看 / 删除已下载的音频</span></div>
-      <div class="setval" id="dlEntryVal">&#8250;</div>
-    </div>
-
-    <!-- ★ v3.8.0：备份与恢复入口。本机备份 + WebDAV 网盘备份 -->
-    <div class="entry-card" onclick="App.ui.openBackup()">
-      <div class="eicon">&#128190;</div>
-      <div class="einfo">
-        <div class="et">备份与恢复</div>
-        <div class="es" id="bkEntrySub">本机备份 / 网盘备份（WebDAV）</div>
-      </div>
-      <div class="setval">&#8250;</div>
-    </div>
+    <!-- ★ v3.9.51：「我的下载」「备份与恢复」「更新公告」与设置页重复，
+         「我的」页只保留 设置 这一个偏好入口（去重，见用户反馈） -->
 
     <div class="chapter-hd"><span>其它</span></div>
-    <!-- ★ v3.7.3：更新公告入口。只讲「修了什么 / 加了什么」，不写实现细节 -->
-    <div class="entry-card" onclick="App.ui.openChangelog()">
-      <div class="eicon">&#128226;</div>
-      <div class="einfo">
-        <div class="et">更新公告</div>
-        <div class="es" id="clEntrySub">查看本版修复与新增功能</div>
-      </div>
-      <div class="setval">&#8250;</div>
-    </div>
     <div class="setrow" onclick="App.ui.shareApp()">
       <div class="setlabel">推荐给朋友</div>
       <div class="setval">&#8250;</div>
