@@ -3833,13 +3833,18 @@
 
         // ★ v4.8.0：把 native 给出的具体失败原因带出来（Cookie 失效 /
         //   直链未返回等），不再只说「播放失败」让用户猜
-        if (o && o.error) {
-            setTimeout(function () { TS.toast('原因：' + o.error); }, 1300);
+        // ★ v4.9.1：native 播放器层报错的字段是 reason（不是 error）——
+        //   之前只读 error，解码失败的原因一直没显示出来
+        var failReason = (o && (o.error || o.reason)) || '';
+        if (failReason) {
+            setTimeout(function () { TS.toast('原因：' + failReason); }, 1300);
         }
         // ★ v4.8.0：WMA 是 Windows 音频格式，很多手机的系统播放器解不了
         //   （这是网盘书最常见的「播不起来」原因）——明确告诉用户怎么办
+        // ★ v4.9.1：原因里标了 FFmpeg 内核 → 说明已经用软解放过，不是格式
+        //   问题，别再误导用户去转格式
         var chName = ((ch && ch.title) || (o && o.title) || '') + '';
-        if (/\.wma(\?|$)/i.test(chName)) {
+        if (/\.wma(\?|$)/i.test(chName) && failReason.indexOf('FFmpeg') < 0) {
             setTimeout(function () {
                 TS.toast('这个文件是 WMA 格式，多数手机系统播放器不支持，建议转成 MP3 后再放网盘');
             }, 2800);
@@ -5892,10 +5897,34 @@
 
     function panState(pid) {
         var p = App.custom.pan[pid];
-        if (!p) { p = { shareUrl: '', files: [], picked: {}, scanBooks: null, scanScanning: false }; App.custom.pan[pid] = p; }
+        if (!p) {
+            p = { shareUrl: '', files: [], picked: {}, scanBooks: null, scanScanning: false };
+            App.custom.pan[pid] = p;
+            // ★ v4.9.1：盘内扫描结果落盘恢复——之前扫描结果只存内存，
+            //   重启/重开 App 就没了，得重新扫描（用户反馈：首页网盘源
+            //   再次打开要重新搜索）。读回的 books 自带 files，直接能播。
+            try {
+                var raw = localStorage.getItem('pan_scan_' + pid);
+                if (raw) {
+                    var recovered = JSON.parse(raw);
+                    if (recovered && recovered.length) p.scanBooks = recovered;
+                }
+            } catch (e) {}
+        }
         if (p.scanBooks === undefined) p.scanBooks = null;
         if (p.scanScanning === undefined) p.scanScanning = false;
         return p;
+    }
+
+    /** 盘内扫描结果落盘（v4.9.1） */
+    function panScanSave(pid, books) {
+        try {
+            if (books && books.length) {
+                localStorage.setItem('pan_scan_' + pid, JSON.stringify(books));
+            } else {
+                localStorage.removeItem('pan_scan_' + pid);
+            }
+        } catch (e) {}
     }
 
     /** App.sources 里的本地书源对象（启用/停用开关要读它的 enabled） */
@@ -6503,6 +6532,8 @@
         if (o.ok) {
             st.scanBooks = o.books || [];
             st.error = '';
+            // ★ v4.9.1：结果落盘，重启后不用重新扫描
+            panScanSave(pid, st.scanBooks);
             TS.toast(st.scanBooks.length
                 ? '扫描到 ' + st.scanBooks.length + ' 本有声书'
                 : '没扫到有声书（网盘里没有音频文件夹）');
@@ -9648,6 +9679,15 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.9.1',
+            date: '2026-10-26',
+            items: [
+                '修复：盘内扫描结果重启就没了、每次都要重新扫——现在结果落盘保存，重开 App 书架还在，直接点播放',
+                '修复：播放失败的「原因」提示一直没显示出来（native 传的字段名对不上）——现在能看到具体原因和所用内核（系统/FFmpeg）',
+                '说明：如果失败原因显示「内核：FFmpeg」，说明已用软解放 WMA 仍失败，与格式无关，请把原因文字发来定位',
+            ],
+        },
         {
             ver: '4.9.0',
             date: '2026-10-26',
