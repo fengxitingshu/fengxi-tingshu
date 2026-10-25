@@ -5788,12 +5788,12 @@
         pan_tianyi: '天翼云盘', pan_115: '115网盘', pan_uc: 'UC网盘'
     };
     var PAN_TIPS = {
-        pan_ali: '公开分享可直接解析，一般无需配置',
-        pan_baidu: '需登录 Cookie（无公开登录接口），浏览器 F12 复制',
-        pan_quark: '需登录 Cookie（无公开登录接口），浏览器 F12 复制',
-        pan_tianyi: '支持账号密码登录（推荐），也可粘贴 Cookie',
-        pan_115: '支持扫码登录（推荐），也可粘贴 Cookie',
-        pan_uc: '需登录 Cookie（无公开登录接口），浏览器 F12 复制'
+        pan_ali: '网页登录自动抓取，也可粘贴 Cookie 兜底',
+        pan_baidu: '网页登录自动抓取，也可粘贴 Cookie 兜底',
+        pan_quark: '网页登录自动抓取，也可粘贴 Cookie 兜底',
+        pan_tianyi: '网页登录 / 密码登录均可，自动抓取',
+        pan_115: '网页登录 / 扫码登录均可，自动抓取',
+        pan_uc: '网页登录自动抓取，也可粘贴 Cookie 兜底'
     };
 
     function panState(pid) {
@@ -5910,9 +5910,9 @@
             h += '<div class="cu-bd">';
             h += '<div class="cu-desc">' + TS.esc(PAN_TIPS[pid]) + '</div>';
             h += '<div class="cu-ops">';
-            // ★ v4.2.0：115 支持官方扫码登录、天翼支持账号密码登录 ——
-            //   免去打开电脑 F12 抄 Cookie 的麻烦；其余平台无公开登录
-            //   接口，「配置 Cookie」仍是唯一兜底。
+            // ★ v4.4.0：全部网盘支持「网页登录」——内嵌 WebView 打开官方登录页，
+            //   登录成功自动抓 Cookie；115 扫码、天翼密码登录仍保留。
+            h += '<button class="mini" onclick="App.ui.customPanWebLogin(\'' + pid + '\')">网页登录</button>';
             if (pid === 'pan_115') {
                 h += '<button class="mini" onclick="App.ui.customPanQr(\'' + pid + '\')">扫码登录</button>';
             }
@@ -6179,6 +6179,14 @@
      * 115 扫码登录：弹窗显示二维码，native 后台轮询，确认后自动存 Cookie。
      * 关闭弹窗时通过 closeSheet 统一停掉轮询（App.qrLogin 标记）。
      */
+    /**
+     * ★ v4.4.0：网盘「网页登录」——弹内嵌 WebView 打开官方登录页，
+     * 登录成功后原生自动抓 Cookie 并回调 onPanSaved（toast + 刷新状态）。
+     */
+    ui.customPanWebLogin = function (pid) {
+        TS.call('panWebLogin', pid);
+    };
+
     ui.customPanQr = function (pid) {
         App.qrLogin = { pid: pid };
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
@@ -9425,6 +9433,15 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.4.0',
+            date: '2026-10-25',
+            items: [
+                '网盘登录大升级：全部 6 家网盘新增「网页登录」——点一下弹出登录页，正常登录后 Cookie 自动抓取保存，无需再抄 Cookie',
+                '115 扫码登录、天翼密码登录保留，三种方式任选',
+                '登录页支持缩放，登录成功自动关闭返回',
+            ],
+        },
         {
             ver: '4.3.0',
             date: '2026-10-25',
