@@ -161,6 +161,8 @@ public final class Models {
         public String intro;
         public List<Chapter> chapters = new ArrayList<Chapter>();
         public int total;
+        /** ★ v4.1：加载失败原因（成功时为 null）—— 前端据此给出可行动的错误提示 */
+        public String error;
 
         public BookDetail() {}
 
@@ -178,6 +180,7 @@ public final class Models {
                 for (Chapter c : chapters) ca.put(c.toJson());
                 o.put("chapters", ca);
                 o.put("total", chapters.size());
+                if (error != null && error.length() > 0) o.put("error", error);
             } catch (Throwable ignored) {}
             return o;
         }
