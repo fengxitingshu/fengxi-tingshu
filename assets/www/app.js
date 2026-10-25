@@ -387,6 +387,9 @@
         // ★ v3.9.3：首页停在本地书源视图 → 走专属渲染，不进分类浏览流程
         if (App.home.src === 'local') { renderHomeLocal(); return; }
 
+        // ★ v4.6.0：首页停在网盘源视图 → 展示盘内扫描的有声书书架
+        if (App.home.src && App.home.src.indexOf('pan_') === 0) { renderHomePan(); return; }
+
         // ★ v3.7.6：这里原来**无条件**复位「加载更多」状态。
         //   但 paintHomeSources 会在很多"非换源"场景被调到（discoverSources 回调、
         //   从别的页面回首页、详情返回等），每次都会把 homeHasMore 清成 false、
@@ -1372,11 +1375,14 @@
                  '<span class="tick">✓</span></div>';
         }
         // ★ v3.9.3：自定义源（本地书源）开启后也进下拉，方便直接选。
-        //   网盘源没有"可浏览列表"（本质是分享链接解析），不往首页放。
-        var custom = [];
+        // ★ v4.6.0：已启用的网盘源也进下拉——盘内扫描让网盘源有了「书架」，
+        //   可以像书源一样当首页源用（点进去就是该网盘的有声书列表）。
+        var custom = [], pans = [];
         for (var s = 0; s < (App.sources || []).length; s++) {
             var cs = App.sources[s];
-            if (cs && cs.id === 'local' && cs.enabled !== false) custom.push(cs);
+            if (!cs || cs.enabled === false) continue;
+            if (cs.id === 'local') custom.push(cs);
+            else if (cs.origin === 'pan' || (cs.id && cs.id.indexOf('pan_') === 0)) pans.push(cs);
         }
         if (custom.length) {
             h += '<div class="srcdd-sep">自定义源</div>';
@@ -1386,6 +1392,17 @@
                      '" data-id="' + escAttr(custom[c2].id) + '"' +
                      ' onclick="App.ui.homePickSrc(\'' + escAttr(custom[c2].id) + '\')">' +
                      '<span>' + TS.esc(custom[c2].alias || custom[c2].name || '本地书源') + '</span>' +
+                     '<span class="tick">✓</span></div>';
+            }
+        }
+        if (pans.length) {
+            h += '<div class="srcdd-sep">网盘源</div>';
+            for (var p2 = 0; p2 < pans.length; p2++) {
+                var pOn = App.home.src === pans[p2].id;
+                h += '<div class="srcdd-item' + (pOn ? ' on' : '') +
+                     '" data-id="' + escAttr(pans[p2].id) + '"' +
+                     ' onclick="App.ui.homePickSrc(\'' + escAttr(pans[p2].id) + '\')">' +
+                     '<span>' + TS.esc(pans[p2].alias || pans[p2].name || pans[p2].id) + '</span>' +
                      '<span class="tick">✓</span></div>';
             }
         }
@@ -1488,6 +1505,7 @@
         if (App.home.src === sid) {
             // list 模式下点当前源 = 进内容；classic 下行为不变（重放也不闪屏）
             if (sid === 'local') { renderHomeLocal(); return; }
+            if (sid && sid.indexOf('pan_') === 0) { renderHomePan(); return; }
             paintHomeSources();
             return;
         }
@@ -1501,6 +1519,12 @@
         if (sid === 'local') {
             saveLastHomeSource(sid);
             renderHomeLocal();
+            return;
+        }
+        // ★ v4.6.0：网盘源走专属视图（列出盘内扫描到的有声书）
+        if (sid && sid.indexOf('pan_') === 0) {
+            saveLastHomeSource(sid);
+            renderHomePan();
             return;
         }
         var list = App.homeSources || [];
@@ -1517,6 +1541,57 @@
      * ★ v3.9.3：首页的「本地书源」视图。
      * 本地书源没有分类可浏览，直接列出扫描到的本地书（点开即详情）。
      */
+    /**
+     * ★ v4.6.0：首页的「网盘源」视图。
+     * 列出该网盘盘内扫描到的有声书（文件夹=书），点书直接整本入队播放。
+     * 没扫过/结果为空时给出扫描入口；扫描中显示进行中状态。
+     */
+    function renderHomePan() {
+        var cd = $('discoverCats');
+        var cl = $('homeContent');
+        if (!cl) return;
+        if (cd) cd.innerHTML = '';
+        var pid = App.home.src;
+        var el = $('homeSrcName');
+        var nm = '';
+        for (var s = 0; s < (App.sources || []).length; s++) {
+            if (App.sources[s].id === pid) { nm = App.sources[s].alias || App.sources[s].name; break; }
+        }
+        if (!nm) nm = PAN_NAMES[pid] || pid;
+        if (el) el.textContent = nm;
+        saveLastHomeSource(pid);
+
+        var st = panState(pid);
+        var h = '';
+        var books = st.scanBooks || [];
+        if (st.scanScanning) {
+            h += '<div class="empty nosrc"><div class="big">☁️</div>' +
+                 '<div class="nosrc-t">正在扫描网盘目录…</div>' +
+                 '<div class="nosrc-s">按文件夹找有声书，最多翻 3 层，稍等片刻</div></div>';
+        } else if (books.length) {
+            h += '<div class="homebatchbar" style="margin:0 0 8px">' +
+                 '<span class="sbb-cnt">' + nm + ' · ' + books.length + ' 本有声书</span>' +
+                 '<button class="mini ghost" onclick="App.ui.customPanScan(\'' + pid + '\')">重新扫描</button>' +
+                 '</div><div class="srcgrid">';
+            for (var i = 0; i < books.length; i++) {
+                var bk = books[i];
+                var n = bk.files ? bk.files.length : 0;
+                h += homeSrcCard('pb_' + i, TS.esc(bk.name),
+                        n + ' 集 · 点按播放',
+                        "App.ui.customPanDiskPlay('" + escAttr(pid) + "'," + i + ")");
+            }
+            h += '</div>';
+        } else {
+            h += '<div class="empty nosrc"><div class="big">☁️</div>' +
+                 '<div class="nosrc-t">' + TS.esc(nm) + '还没有扫描到有声书</div>' +
+                 '<div class="nosrc-s">网盘里存的有声书文件夹（里面是 mp3 等音频）会自动整理成书</div>' +
+                 '<div class="nosrc-btns">' +
+                 '<button class="mini" onclick="App.ui.customPanScan(\'' + pid + '\')">扫描盘内书</button>' +
+                 '</div></div>';
+        }
+        cl.innerHTML = h;
+    }
+
     function renderHomeLocal() {
         var cd = $('discoverCats');
         var cl = $('homeContent');
@@ -5930,15 +6005,21 @@
             h += '<button class="mini ghost" onclick="App.ui.customPanClear(\'' + pid + '\')">清除</button>';
             h += '</div>';
 
-            // ---- 盘内有声书扫描结果（v4.5.0） ----
+            // ---- 盘内有声书扫描结果（v4.5.0；v4.6.0 重排：独立行布局，
+            //      书名+集数左、播放按钮右，不再挤进 cu-hd 标题行） ----
             if (st2.scanBooks && st2.scanBooks.length) {
-                h += '<div class="cu-parse"><div style="font-size:12px;opacity:.75;margin-bottom:6px">盘内扫描到 ' +
-                     st2.scanBooks.length + ' 本有声书（文件夹里全是音频才收录）：</div>';
+                h += '<div class="panbook-hd">盘内扫到 ' + st2.scanBooks.length +
+                     ' 本有声书（文件夹里全是音频才收录）</div>';
+                h += '<div class="panbook-list">';
                 for (var bi = 0; bi < st2.scanBooks.length; bi++) {
                     var bk = st2.scanBooks[bi];
-                    h += '<div class="cu-hd" style="font-size:13px">' + TS.esc(bk.name) +
-                         '<span class="cu-badge">' + (bk.files ? bk.files.length : 0) + ' 集</span>' +
-                         '<button class="mini" onclick="App.ui.customPanDiskPlay(\'' + pid + '\',' + bi + ')">播放</button></div>';
+                    h += '<div class="panbook-row">' +
+                         '<div class="panbook-main">' +
+                         '<div class="panbook-name">' + TS.esc(bk.name) + '</div>' +
+                         '<div class="panbook-sub">' + (bk.files ? bk.files.length : 0) + ' 集</div>' +
+                         '</div>' +
+                         '<button class="mini" onclick="App.ui.customPanDiskPlay(\'' + pid + '\',' + bi + ')">▶ 播放</button>' +
+                         '</div>';
                 }
                 h += '</div>';
             } else if (st2.scanScanning) {
@@ -6334,6 +6415,15 @@
         st.parsing = true;
         paintCustom();
         TS.call('panParse', pid, url);
+        // ★ v4.6.0：解析超时兜底——原生 45 秒还没回包（网络卡死/接口挂了）
+        //   就解除「解析中」状态并提示，不再让按钮永远灰着像没反应。
+        clearTimeout(st._pt);
+        st._pt = setTimeout(function () {
+            if (!st.parsing) return;
+            st.parsing = false;
+            paintCustom();
+            TS.toast('解析超时，请检查网络后重试');
+        }, 45000);
     };
 
     ui.customPanPick = function (pid, fi, on) {
@@ -6393,6 +6483,8 @@
             TS.toast('扫描失败：' + (o.error || '未知错误'));
         }
         paintCustom();
+        // ★ v4.6.0：首页正停在这个网盘的视图上 → 同步刷新书架
+        if (App.tab === 'home' && App.home.src === o.platform) renderHomePan();
     };
 
     window.onPanFiles = function (o) {
@@ -6412,6 +6504,9 @@
             st.files = [];
             st.picked = {};
             st.error = o.error || '解析失败';
+            // ★ v4.6.0：解析失败必须弹提示——原来错误只写在卡片底部，
+            //   用户看不到，感觉就是「解析没反应」
+            TS.toast('解析失败：' + st.error);
         }
         paintCustom();
     };
@@ -8346,7 +8441,7 @@
 
     // ==================== 设置 ====================
 
-    function syncSettings() { TS.call('getSettings'); paintFloatBallSetting(); }
+    function syncSettings() { TS.call('getSettings'); paintFloatBallSetting(); paintHomeColsSeg(); }
 
     window.onSettings = function (o) {
         o = o || {};
@@ -8825,9 +8920,32 @@
             if (App.homeCols === 2) el.classList.add('home-grid-2');
             if (App.homeCols === 3) el.classList.add('home-grid-3');
         }
-        var btn = $('homeColsBtn');
-        if (btn) btn.textContent = App.homeCols + '列';
+        paintHomeColsSeg();
     }
+
+    /** ★ v4.6.0：列数选择挪到设置页（顶栏「1列」按钮已删） */
+    function paintHomeColsSeg() {
+        var ids = { 1: 'hc1', 2: 'hc2', 3: 'hc3' };
+        for (var k in ids) {
+            var el = $(ids[k]);
+            if (el) el.className = 'seg-item' + (String(App.homeCols) === k ? ' on' : '');
+        }
+    }
+    ui.paintHomeColsSeg = paintHomeColsSeg;
+
+    ui.setHomeCols = function (n) {
+        n = parseInt(n, 10);
+        if (n < 1 || n > 3) n = 1;
+        App.homeCols = n;
+        localStorage.setItem('homeCols', String(n));
+        applyHomeCols();
+    };
+
+    /** ★ v4.6.0：设置页 → 自定义源（本地书源 + 网盘接口） */
+    ui.openCustomFromSettings = function () {
+        App.tab = 'home';
+        ui.openSrcGroup('custom');
+    };
     applyHomeCols();
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
@@ -9493,6 +9611,17 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.6.0',
+            date: '2026-10-25',
+            items: [
+                '修复：盘内扫描的书播放时串到别的资源——书名含「/」等字符时书的 id 会互相冲突导致历史/缓存串书，已修；且网盘书播放只走网盘直链，绝不换到其他源',
+                '修复：分享链接解析失败时没有提示像「没反应」，现在失败立即弹错误、45 秒无响应提示超时',
+                '新增：首页左上角下拉新增「网盘源」分组——已启用的网盘源可当首页源，点进去就是该网盘的有声书书架',
+                '优化：盘内扫描书列表重新排版（书名+集数+播放一行一 book，不再错乱）',
+                '调整：首页顶栏「1列」分列按钮移除，列数选择移到 设置 → 首页列数；自定义源入口也移到设置页',
+            ],
+        },
         {
             ver: '4.5.0',
             date: '2026-10-25',
