@@ -67,6 +67,9 @@ public final class LocalSource extends AbsSource {
     /** ★ v4.2.0：扫描结果持久化文件（filesDir 下，重开 App 免重扫） */
     private static final String CACHE_FILE = "local_scan_cache.json";
 
+    /** ★ v4.2.1：磁盘恢复是否已尝试（进程内一次，防空库反复 IO） */
+    private static volatile boolean restoreTried = false;
+
     private static volatile String lastError = "";
 
     /**
@@ -110,6 +113,11 @@ public final class LocalSource extends AbsSource {
             CACHE.clear();
             FILES.clear();
             scanAt = 0L;
+            // ★ v4.2.1：旧目录的持久化文件一并作废（root 校验本来也会拦，
+            //   删掉更干净），并允许下次空库时重新尝试恢复
+            java.io.File f = cacheFile();
+            if (f != null && f.exists()) f.delete();
+            restoreTried = false;
         }
         return v;
     }
@@ -130,6 +138,11 @@ public final class LocalSource extends AbsSource {
     /** 缓存里的书（未扫描过返回空表） */
     public static List<Book> cached() {
         synchronized (LOCK) {
+            // ★ v4.2.1：内存缓存为空时先试一次磁盘恢复 —— 之前恢复只挂在
+            //   scan(false) 里，而重启后前端列表走 localBooks → cached()，
+            //   拿到的是空表，「重开 App 不用重扫」形同虚设。恢复进程内
+            //   只试一次（失败就不再反复读盘，等真正扫描覆盖）。
+            if (CACHE.isEmpty() && !restoreTried) restoreFromDisk();
             return new ArrayList<Book>(CACHE.values());
         }
     }
@@ -275,6 +288,7 @@ public final class LocalSource extends AbsSource {
      */
     private static boolean restoreFromDisk() {
         synchronized (LOCK) {
+            restoreTried = true;   // 进程内只试一次（成功/失败都不再反复读盘）
             if (!CACHE.isEmpty()) return true;
             java.io.File f = cacheFile();
             if (f == null || !f.exists()) return false;
