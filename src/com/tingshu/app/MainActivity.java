@@ -374,12 +374,20 @@ public class MainActivity extends Activity
      */
     public void requestStoragePermission() {
         try {
-            String perm = Build.VERSION.SDK_INT >= 33
-                    ? "android.permission.READ_MEDIA_AUDIO"
-                    : "android.permission.READ_EXTERNAL_STORAGE";
-            if (checkSelfPermission(perm)
+            java.util.List<String> need = new java.util.ArrayList<String>();
+            // ★ v4.1：两类权限一起补 —— targetSdk=28 的旧式存储在 Android 13+
+            //   上有些 ROM 只认 READ_EXTERNAL_STORAGE，有些只认 READ_MEDIA_AUDIO；
+            //   都在清单里声明过，一次请求各自弹窗（系统会自动跳过不适用的）。
+            if (checkSelfPermission("android.permission.READ_MEDIA_AUDIO")
                     != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{perm}, 1002);
+                need.add("android.permission.READ_MEDIA_AUDIO");
+            }
+            if (checkSelfPermission("android.permission.READ_EXTERNAL_STORAGE")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                need.add("android.permission.READ_EXTERNAL_STORAGE");
+            }
+            if (!need.isEmpty()) {
+                requestPermissions(need.toArray(new String[0]), 1002);
             } else {
                 callJs("window.onLocalPerm({ok:true})");
             }
@@ -390,12 +398,18 @@ public class MainActivity extends Activity
 
     @Override
     public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
-        // ★ v3.9.0：存储权限（本地书源扫描）
+        // ★ v3.9.0：存储权限（本地书源扫描）★ v4.1：任一授予即算通过
         if (req == 1002) {
             boolean ok = false;
             try {
-                ok = res != null && res.length > 0
-                        && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                if (res != null) {
+                    for (int i = 0; i < res.length; i++) {
+                        if (res[i] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                }
             } catch (Throwable ignored) {}
             callJs("window.onLocalPerm({ok:" + ok + "})");
             return;
