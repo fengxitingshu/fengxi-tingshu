@@ -309,9 +309,32 @@ public final class PanResolver {
         String stoken = quarkToken(pwdId, uc);
         Map<String, String> h = quarkHeaders(uc);
         List<PanFile> out = new ArrayList<PanFile>();
+        List<PanFile> first = quarkSharePage(pwdId, stoken, "0", uc);
+        out.addAll(first);
+        // ★ v4.5.0：有声书分享常见「书名/章节.mp3」——第一层全是文件夹，
+        //   不展平的话用户只能看到一堆文件夹没法播（表现为「解析未生效」）。
+        //   现在对文件夹展平一层（最多 8 个文件夹，防超大分享超时）。
+        int folded = 0;
+        for (int i = 0; i < first.size() && folded < 8; i++) {
+            PanFile f = first.get(i);
+            if (!f.dir) continue;
+            folded++;
+            try {
+                out.addAll(quarkSharePage(pwdId, stoken, f.id, uc));
+            } catch (Throwable ignored) {}
+        }
+        if (out.isEmpty()) throw new Exception("分享里没有文件（或链接失效）");
+        return out;
+    }
+
+    private static List<PanFile> quarkSharePage(String pwdId, String stoken,
+                                                String pdirFid, boolean uc) throws Exception {
+        Map<String, String> h = quarkHeaders(uc);
+        List<PanFile> out = new ArrayList<PanFile>();
         String url = quarkBase(uc) + "/share/sharepage/detail?pr=ucpro&fr=pc"
-                + "&pwd_id=" + pwdId + "&stoken=" + stoken
-                + "&pdir_fid=0&force=0&_page=1&_size=100"
+                + "&pwd_id=" + pwdId + "&stoken=" + java.net.URLEncoder.encode(stoken, "UTF-8")
+                + "&pdir_fid=" + java.net.URLEncoder.encode(pdirFid, "UTF-8")
+                + "&force=0&_page=1&_size=150"
                 + "&_sort=file_type:asc,updated_at:desc";
         Net.Resp r = Net.request(url, null, hostOf(uc ? UC : QUARK) + "/", h, false);
         if (r == null || r.body == null) throw new Exception("夸克/UC 拉文件列表无响应");
@@ -330,7 +353,6 @@ public final class PanResolver {
                 out.add(f);
             }
         }
-        if (out.isEmpty()) throw new Exception("分享里没有文件（或链接失效）");
         return out;
     }
 
@@ -569,8 +591,7 @@ public final class PanResolver {
 
     // ==================== 工具 ====================
 
-    private static String grab(String s, String regex) {
-        if (s == null) return "";
+    private static String grab(String s, String regex) {        if (s == null) return "";
         try {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile(regex).matcher(s);
             return m.find() ? m.group(1).trim() : "";
@@ -584,5 +605,315 @@ public final class PanResolver {
         if (s == null) return "";
         String t = s.trim();
         return t.length() > 120 ? t.substring(0, 120) + "…" : t;
+    }
+
+    // ==================== 盘内目录浏览 / 扫描（v4.5.0） ====================
+
+    /** 盘内扫描出的一本「书」（一个含音频的文件夹） */
+    public static final class DiskBook {
+        public String name;
+        public List<PanFile> files = new ArrayList<PanFile>();
+    }
+
+    private static final String[] AUDIO_EXT = {
+            ".mp3", ".m4a", ".m4b", ".flac", ".wav", ".aac", ".ogg", ".wma", ".opus"
+    };
+
+    private static boolean isAudio(String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase();
+        for (String e : AUDIO_EXT) if (n.endsWith(e)) return true;
+        return false;
+    }
+
+    /** 各平台盘内根目录的 folderId */
+    private static String diskRoot(String pid) {
+        if (TIANYI.equals(pid)) return "-11";
+        if (BAIDU.equals(pid)) return "/";
+        return "0";
+    }
+
+    /**
+     * 列出自己网盘某目录的直接子项（已登录 Cookie）。
+     * folderId：夸克/UC/115 为目录 fid（根 0），百度为目录路径（根 "/"），
+     * 天翼为 folderId（根 -11）。
+     */
+    public static List<PanFile> listDir(String pid, String folderId) throws Exception {
+        if (QUARK.equals(pid)) return quarkDir(folderId, false);
+        if (UC.equals(pid)) return quarkDir(folderId, true);
+        if (P115.equals(pid)) return p115Dir(folderId);
+        if (BAIDU.equals(pid)) return baiduDir(folderId);
+        if (TIANYI.equals(pid)) return tianyiDir(folderId);
+        throw new Exception("阿里云盘暂不支持盘内扫描（网页接口有签名风控），请用分享链接");
+    }
+
+    /** 盘内文件取下载直链（token：115=pickcode，其余平台不要求） */
+    public static String diskDownloadUrl(String pid, PanFile f) throws Exception {
+        if (!configured(pid)) throw new Exception(nameOf(pid) + "需要登录，请先「网页登录」");
+        if (QUARK.equals(pid) || UC.equals(pid)) return quarkDiskDownload(pid, f, UC.equals(pid));
+        if (P115.equals(pid)) return p115Download(f); // pickcode 对盘内文件同样适用
+        if (BAIDU.equals(pid)) return baiduDiskDownload(f);
+        if (TIANYI.equals(pid)) return tianyiDiskDownload(f);
+        throw new Exception("不支持的平台");
+    }
+
+    // ---- 夸克 / UC 盘内 ----
+
+    private static List<PanFile> quarkDir(String fid, boolean uc) throws Exception {
+        Map<String, String> h = quarkHeaders(uc);
+        List<PanFile> out = new ArrayList<PanFile>();
+        for (int page = 1; page <= 3; page++) {
+            String url = quarkBase(uc) + "/file/sort?pr=ucpro&fr=pc"
+                    + "&pdir_fid=" + urlEnc(fid) + "&_page=" + page + "&_size=150"
+                    + "&_sort=file_type:asc,file_name:asc";
+            Net.Resp r = Net.request(url, null, hostOf(uc ? UC : QUARK) + "/", h, false);
+            if (r == null || r.body == null) throw new Exception(nameOf(uc ? UC : QUARK) + "拉目录无响应");
+            JSONObject data = new JSONObject(r.body).optJSONObject("data");
+            JSONArray items = data == null ? null : data.optJSONArray("list");
+            if (items == null || items.length() == 0) break;
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject it = items.optJSONObject(i);
+                if (it == null) continue;
+                PanFile f = new PanFile();
+                f.id = it.optString("fid", "");
+                f.name = it.optString("file_name", "");
+                f.size = it.optLong("size", 0);
+                f.dir = it.optBoolean("dir", false);
+                out.add(f);
+            }
+            if (items.length() < 150) break;
+        }
+        return out;
+    }
+
+    private static String quarkDiskDownload(String pid, PanFile f, boolean uc) throws Exception {
+        Map<String, String> h = quarkHeaders(uc);
+        JSONObject body = new JSONObject();
+        JSONArray fids = new JSONArray();
+        fids.put(f.id);
+        body.put("fids", fids);
+        Net.Resp r = Net.request(quarkBase(uc) + "/file/download?pr=ucpro&fr=pc",
+                body.toString(), hostOf(uc ? UC : QUARK) + "/", h, false);
+        if (r == null || r.body == null) throw new Exception(nameOf(pid) + "取直链无响应");
+        JSONObject data = new JSONObject(r.body).optJSONObject("data");
+        String url = data == null ? "" : data.optString("download_url", "");
+        if (url.length() == 0 && data != null) {
+            JSONArray arr = data.optJSONArray("list");
+            if (arr != null && arr.length() > 0 && arr.optJSONObject(0) != null) {
+                url = arr.optJSONObject(0).optString("download_url", "");
+            }
+        }
+        if (url.length() == 0) throw new Exception(nameOf(pid) + "未返回直链：" + brief(r.body) + "（Cookie 失效？）");
+        return url;
+    }
+
+    // ---- 115 盘内 ----
+
+    private static List<PanFile> p115Dir(String fid) throws Exception {
+        if (!configured(P115)) throw new Exception("115 需要登录，请先「网页登录」");
+        List<PanFile> out = new ArrayList<PanFile>();
+        for (int page = 0; page <= 2; page++) {
+            String url = "https://webapi.115.com/files?pid=" + urlEnc(fid)
+                    + "&format=json&show_dir=1&limit=200&o=user_ptime&asc=0&aid=1&cid="
+                    + urlEnc(fid) + "&o=user_ptime&offset=" + (page * 200);
+            Net.Resp r = Net.request(url, null, "https://115.com/", p115Headers(), false);
+            if (r == null || r.body == null) throw new Exception("115 拉目录无响应");
+            JSONObject o = new JSONObject(r.body);
+            if (!o.optBoolean("state", false)) {
+                throw new Exception("115 拒绝访问：" + brief(r.body) + "（Cookie 失效？）");
+            }
+            JSONObject data = o.optJSONObject("data");
+            JSONArray items = data == null ? null : data.optJSONArray("list");
+            if (items == null || items.length() == 0) break;
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject it = items.optJSONObject(i);
+                if (it == null) continue;
+                PanFile f = new PanFile();
+                f.id = it.optString("fid", it.optString("cid", ""));
+                f.name = it.optString("n", "");
+                f.size = it.optLong("s", 0);
+                f.dir = it.optString("fc", "").equals("1");
+                f.token = it.optString("pc", "");
+                out.add(f);
+            }
+            if (items.length() < 200) break;
+        }
+        return out;
+    }
+
+    // ---- 百度盘内 ----
+
+    private static List<PanFile> baiduDir(String path) throws Exception {
+        if (!configured(BAIDU)) throw new Exception("百度网盘需要登录，请先「网页登录」");
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("Cookie", cookie(BAIDU));
+        h.put("User-Agent", Net.UA_DESKTOP);
+        String url = "https://pan.baidu.com/api/list?dir=" + urlEnc(path)
+                + "&order=name&desc=0&web=1&clienttype=0&app_id=250528&num=200&page=1";
+        Net.Resp r = Net.request(url, null, "https://pan.baidu.com/", h, false);
+        if (r == null || r.body == null) throw new Exception("百度网盘拉目录无响应");
+        JSONObject o = new JSONObject(r.body);
+        if (o.optInt("errno", -1) != 0) {
+            throw new Exception("百度网盘 errno=" + o.optInt("errno", -1) + "：" + brief(r.body));
+        }
+        JSONArray items = o.optJSONArray("list");
+        List<PanFile> out = new ArrayList<PanFile>();
+        if (items != null) {
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject it = items.optJSONObject(i);
+                if (it == null) continue;
+                PanFile f = new PanFile();
+                f.id = String.valueOf(it.optLong("fs_id", 0));
+                f.name = it.optString("server_filename", "");
+                f.size = it.optLong("size", 0);
+                f.dir = it.optInt("isdir", 0) == 1;
+                f.token = it.optString("path", ""); // 百度目录用路径做 folderId
+                out.add(f);
+            }
+        }
+        return out;
+    }
+
+    private static String baiduDiskDownload(PanFile f) throws Exception {
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("Cookie", cookie(BAIDU));
+        h.put("User-Agent", Net.UA_DESKTOP);
+        String url = "https://pan.baidu.com/api/filemetas?fsids=%5B" + f.id + "%5D"
+                + "&dlink=1&web=1&clienttype=0&app_id=250528";
+        Net.Resp r = Net.request(url, null, "https://pan.baidu.com/", h, false);
+        if (r == null || r.body == null) throw new Exception("百度网盘取直链无响应");
+        JSONObject o = new JSONObject(r.body);
+        if (o.optInt("errno", -1) != 0) {
+            throw new Exception("百度网盘取直链失败 errno=" + o.optInt("errno", -1) + "：" + brief(r.body));
+        }
+        JSONArray list = o.optJSONArray("list");
+        if (list != null && list.length() > 0 && list.optJSONObject(0) != null) {
+            String d = list.optJSONObject(0).optString("dlink", "");
+            if (d.length() > 0) return d;
+        }
+        throw new Exception("百度网盘未返回直链：" + brief(r.body));
+    }
+
+    // ---- 天翼盘内 ----
+
+    private static List<PanFile> tianyiDir(String folderId) throws Exception {
+        if (!configured(TIANYI)) throw new Exception("天翼云盘需要登录，请先「网页登录」");
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("Cookie", cookie(TIANYI));
+        h.put("User-Agent", Net.UA_DESKTOP);
+        h.put("Referer", "https://cloud.189.cn/");
+        String url = "https://cloud.189.cn/api/open/file/listFiles.action?folderId="
+                + urlEnc(folderId) + "&pageNum=1&pageSize=200&orderBy=lastOpTime&descending=true";
+        Net.Resp r = Net.request(url, null, "https://cloud.189.cn/", h, false);
+        if (r == null || r.body == null) throw new Exception("天翼云盘拉目录无响应");
+        JSONObject data = new JSONObject(r.body).optJSONObject("data");
+        JSONObject ao = data == null ? null : data.optJSONObject("fileListAO");
+        List<PanFile> out = new ArrayList<PanFile>();
+        if (ao != null) {
+            JSONArray folders = ao.optJSONArray("folderList");
+            if (folders != null) {
+                for (int i = 0; i < folders.length(); i++) {
+                    JSONObject it = folders.optJSONObject(i);
+                    if (it == null) continue;
+                    PanFile f = new PanFile();
+                    f.id = String.valueOf(it.optLong("id", 0));
+                    f.name = it.optString("name", "");
+                    f.dir = true;
+                    out.add(f);
+                }
+            }
+            JSONArray files = ao.optJSONArray("fileList");
+            if (files != null) {
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject it = files.optJSONObject(i);
+                    if (it == null) continue;
+                    PanFile f = new PanFile();
+                    f.id = String.valueOf(it.optLong("id", 0));
+                    f.name = it.optString("name", "");
+                    f.size = it.optLong("size", 0);
+                    f.dir = false;
+                    out.add(f);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static String tianyiDiskDownload(PanFile f) throws Exception {
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("Cookie", cookie(TIANYI));
+        h.put("User-Agent", Net.UA_DESKTOP);
+        // 盘内 openFile.do（不带 shareId），登录态下 302 到真实直链
+        Net.Resp r = Net.request("https://cloud.189.cn/api/openFile.do?fileId=" + urlEnc(f.id),
+                null, "https://cloud.189.cn/", h, false);
+        if (r == null) throw new Exception("天翼云盘取直链无响应");
+        String loc = r.location;
+        if (loc == null || loc.length() == 0) {
+            loc = grab(r.body == null ? "" : r.body, "url\\s*[:=]\\s*[\"']([^\"']+)[\"']");
+        }
+        if (loc == null || loc.length() == 0 || !loc.startsWith("http")) {
+            throw new Exception("天翼云盘未返回直链：" + brief(r.body) + "（Cookie 失效？）");
+        }
+        return loc;
+    }
+
+    // ---- 扫描：DFS 找有声书（深度 ≤3，文件 ≤400） ----
+
+    public static List<DiskBook> scanDisk(String pid) throws Exception {
+        List<DiskBook> out = new ArrayList<DiskBook>();
+        java.util.LinkedHashMap<String, DiskBook> byName =
+                new java.util.LinkedHashMap<String, DiskBook>();
+        int[] counters = {0, 0}; // [0]=文件数 [1]=文件夹数
+        synchronized (DIR_NAME_CACHE) { DIR_NAME_CACHE.clear(); }
+        scanRec(pid, diskRoot(pid), 0, byName, out, counters);
+        return out;
+    }
+
+    private static void scanRec(String pid, String folderId, int depth,
+                                java.util.LinkedHashMap<String, DiskBook> byName,
+                                List<DiskBook> order, int[] counters) throws Exception {
+        if (depth > 3 || counters[0] >= 400 || counters[1] >= 200) return;
+        List<PanFile> items = listDir(pid, folderId);
+        for (PanFile f : items) {
+            if (counters[0] >= 400) return;
+            if (f.dir) {
+                counters[1]++;
+                synchronized (DIR_NAME_CACHE) { DIR_NAME_CACHE.put(f.id, f.name); }
+                scanRec(pid, f.id, depth + 1, byName, order, counters);
+            } else if (isAudio(f.name)) {
+                counters[0]++;
+                // 父文件夹名 = 书名；folderId 就是当前目录
+                String parentName = folderNameOf(pid, folderId);
+                DiskBook bk = byName.get(parentName);
+                if (bk == null) {
+                    bk = new DiskBook();
+                    bk.name = parentName;
+                    byName.put(parentName, bk);
+                    order.add(bk);
+                }
+                bk.files.add(f);
+            }
+        }
+    }
+
+    /** 简化：书名用「目录名」——由调用方在 DFS 前缓存当前路径名，这里按 id 查不到时兜底 */
+    private static String folderNameOf(String pid, String folderId) {
+        String n = DIR_NAME_CACHE.get(folderId);
+        return n != null ? n : (nameOf(pid) + " 根目录");
+    }
+
+    /** folderId → 目录名 缓存（DFS 时顺带填充） */
+    private static final java.util.Map<String, String> DIR_NAME_CACHE =
+            new java.util.HashMap<String, String>();
+
+    // ==================== URL 编码（无依赖） ====================
+
+    private static String urlEnc(String s) {
+        if (s == null) return "";
+        try {
+            return java.net.URLEncoder.encode(s, "UTF-8");
+        } catch (Throwable t) {
+            return s;
+        }
     }
 }
