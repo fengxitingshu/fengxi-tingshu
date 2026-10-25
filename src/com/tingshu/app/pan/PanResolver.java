@@ -662,7 +662,7 @@ public final class PanResolver {
     private static List<PanFile> quarkDir(String fid, boolean uc) throws Exception {
         Map<String, String> h = quarkHeaders(uc);
         List<PanFile> out = new ArrayList<PanFile>();
-        for (int page = 1; page <= 3; page++) {
+        for (int page = 1; page <= 15; page++) {
             String url = quarkBase(uc) + "/file/sort?pr=ucpro&fr=pc"
                     + "&pdir_fid=" + urlEnc(fid) + "&_page=" + page + "&_size=150"
                     + "&_sort=file_type:asc,file_name:asc";
@@ -712,7 +712,7 @@ public final class PanResolver {
     private static List<PanFile> p115Dir(String fid) throws Exception {
         if (!configured(P115)) throw new Exception("115 需要登录，请先「网页登录」");
         List<PanFile> out = new ArrayList<PanFile>();
-        for (int page = 0; page <= 2; page++) {
+        for (int page = 0; page <= 15; page++) {
             String url = "https://webapi.115.com/files?pid=" + urlEnc(fid)
                     + "&format=json&show_dir=1&limit=200&o=user_ptime&asc=0&aid=1&cid="
                     + urlEnc(fid) + "&o=user_ptime&offset=" + (page * 200);
@@ -872,10 +872,10 @@ public final class PanResolver {
     private static void scanRec(String pid, String folderId, int depth,
                                 java.util.LinkedHashMap<String, DiskBook> byName,
                                 List<DiskBook> order, int[] counters) throws Exception {
-        if (depth > 3 || counters[0] >= 400 || counters[1] >= 200) return;
+        if (depth > 5 || counters[0] >= 4000 || counters[1] >= 2000) return;
         List<PanFile> items = listDir(pid, folderId);
         for (PanFile f : items) {
-            if (counters[0] >= 400) return;
+            if (counters[0] >= 4000) return;
             if (f.dir) {
                 counters[1]++;
                 synchronized (DIR_NAME_CACHE) { DIR_NAME_CACHE.put(f.id, f.name); }
