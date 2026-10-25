@@ -69,7 +69,8 @@ public class PlayerCore {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Callback cb;
 
-    private MediaPlayer player;
+    /** ★ v4.9.0 双内核：系统 MediaPlayer 或 ijkplayer（FFmpeg 软解 WMA 等） */
+    private Engines.Engine player;
     private float speed = 1.0f;
     /** 播放完一集后是否自动下一集（由 playMode 决定，见 onCompletion） */
     private boolean autoNext = true;
@@ -194,7 +195,7 @@ public class PlayerCore {
 
     public int curSec() {
         try {
-            return player == null ? 0 : player.getCurrentPosition() / 1000;
+            return player == null ? 0 : player.curMs() / 1000;
         } catch (Throwable t) {
             return 0;
         }
@@ -202,7 +203,7 @@ public class PlayerCore {
 
     public int durSec() {
         try {
-            return player == null ? 0 : player.getDuration() / 1000;
+            return player == null ? 0 : player.durMs() / 1000;
         } catch (Throwable t) {
             return 0;
         }
@@ -279,8 +280,14 @@ public class PlayerCore {
 
         try {
             release();
-            player = new MediaPlayer();
-            player.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            final Engines.Engine eng;
+            // ★ v4.9.0：按直链扩展名选内核——系统播放器解不了的格式
+            //（wma/ape/ac3/dts 等）直接走 FFmpeg 软解，其余走系统播放器
+            if (Engines.needsFfmpeg(audio)) {
+                eng = new Engines.IjkEngine(ctx);
+            } else {
+                eng = new Engines.SysEngine(ctx);
+            }
 
             Map<String, String> headers = new HashMap<String, String>();
             headers.put("User-Agent", Net.UA);
@@ -291,32 +298,19 @@ public class PlayerCore {
                     headers.put(e.getKey(), e.getValue());
                 }
             }
-
-            if (audio != null && audio.startsWith("http")) {
-                player.setDataSource(ctx, Uri.parse(audio), headers);
-            } else if (audio != null && (audio.startsWith("content://")
-                    || audio.startsWith("file://"))) {
-                // ★ v2.9：本地文件也必须走带 Context 的重载。
-                //   下载到外部文件夹（SAF）后地址是 content://，用
-                //   setDataSource(String) 会解析失败直接抛异常 —— 表现为
-                //   「下载了却播不了」。file:// 走同一分支也无副作用。
-                player.setDataSource(ctx, Uri.parse(audio), headers);
-            } else {
-                player.setDataSource(audio);
-            }
-
+            final Map<String, String> fHeaders = headers;
             final long start = Math.max(0, startMs);
 
-            player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
-                public void onPrepared(MediaPlayer mp) {
+            eng.setListener(new Engines.Listener() {
+                public void onPrepared(Engines.Engine e) {
                     // ★ P0-2：成功起播即清零网络重试计数，
                     //   后续若再出错会重新获得完整的重试额度。
                     netRetries = 0;
                     if (start > 0) lastCurSec = (int) (start / 1000);
-                    applySpeedInternal(mp, speed);
-                    // ★ v3.1：这里必须重新套用增益。mp 是刚 new 出来的，
-                    //   audioSessionId 跟上一集不同，旧的 LoudnessEnhancer 已经无效了。
-                    applyGainInternal(mp);
+                    applySpeedInternal(e, speed);
+                    // ★ v3.1：这里必须重新套用增益。新引擎新会话号，
+                    //   旧的 LoudnessEnhancer 已经无效了。
+                    applyGainInternal(e);
                     // ★ v3.1：起播前拿音频焦点，这样微信来语音时我们才能收到通知
                     acquireFocus();
                     // ★ v3.8.2：新的一集，片尾跳过标记复位
@@ -331,18 +325,18 @@ public class PlayerCore {
                     //   seek，部分 ROM 会直接进 error，自愈又带着同一坏位置反复
                     //   失败 → 所有源"全部失败"。这里兜底：位置贴着或超出时长
                     //   就视为「听完了」，从头播。
-                    if (seekTo > 0 && mp.getDuration() > 0
-                            && seekTo >= mp.getDuration() - 800) {
+                    if (seekTo > 0 && e.durMs() > 0
+                            && seekTo >= e.durMs() - 800) {
                         seekTo = 0;
                     }
                     if (seekTo <= 0) {
                         int skip = com.tingshu.app.data.Settings.skipIntroFor(bookKey());
                         if (skip > 0) seekTo = skip * 1000L;
                     }
-                    if (seekTo > 0 && seekTo < mp.getDuration()) {
-                        mp.seekTo((int) seekTo);
+                    if (seekTo > 0 && seekTo < e.durMs()) {
+                        e.seekTo((int) seekTo);
                     }
-                    mp.start();
+                    e.play();
                     startProgress();
                     // ★ 一开播就落一条历史：这样"刚点开听"就能在历史页看到，
                     //   不等 5 秒定时或暂停。之前因为没有 setQueue，这里存不进去。
@@ -352,9 +346,8 @@ public class PlayerCore {
                         cb.onStateChanged(true);
                     }
                 }
-            });
-            player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-                public void onCompletion(MediaPlayer mp) {
+
+                public void onEnded(Engines.Engine e) {
                     stopProgress();
                     // 先把这一集听到末尾的进度存下（换集前必须落盘）
                     saveProgressNow();
@@ -364,16 +357,16 @@ public class PlayerCore {
                         cb.onEnded();
                     }
                 }
-            });
-            player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
-                public boolean onError(MediaPlayer mp, int what, int extra) {
+
+                public boolean onError(Engines.Engine e, int what, int extra) {
                     // ★ P0-1 / P0-2：交给自愈状态机，救不活才会上报 cb.onError
                     //   （那时前端才会按既有逻辑自动停止）。
                     handleError(what, extra);
                     return true;
                 }
             });
-            player.prepareAsync();
+            player = eng;
+            eng.prepare(audio, fHeaders);
         } catch (Throwable t) {
             // ★ 取链/建连阶段的异常（如 setDataSource 抛错）：交给自愈状态机，
             //   自救失败才会最终上报 cb.onError。
@@ -536,7 +529,7 @@ public class PlayerCore {
                         Map<String, String> extraHeaders) {
         long pos = 0;
         try {
-            pos = player == null ? 0 : player.getCurrentPosition();
+            pos = player == null ? 0 : player.curMs();
         } catch (Throwable ignored) {}
         // resetState=false：换源属于同一集的自愈上下文，保留 triedSources
         playUrlInternal(source, chapterUrl, audio, pos, extraHeaders, false);
@@ -561,7 +554,7 @@ public class PlayerCore {
         pausedByFocus = false;
         try {
             if (player != null) {
-                player.start();
+                player.play();
                 startProgress();
                 if (cb != null) cb.onStateChanged(true);
             }
@@ -696,21 +689,21 @@ public class PlayerCore {
      *
      * @param mp 目标播放器；传 null 表示用当前 player
      */
-    private void applyGainInternal(MediaPlayer mp) {
-        if (mp == null) mp = this.player;
-        if (mp == null) return;
+    private void applyGainInternal(Engines.Engine e) {
+        if (e == null) e = player;
+        if (e == null) return;
 
         try {
             if (gainPct <= 100) {
                 // 降幅：纯音量衰减，并把响度增强关掉（避免上面残留的增益叠加）
                 float v = gainPct / 100f;
-                mp.setVolume(v, v);
+                e.setVolume(v, v);
                 releaseEnhancer();
                 return;
             }
 
             // 增幅：音量拉满 + 响度增强
-            mp.setVolume(1f, 1f);
+            e.setVolume(1f, 1f);
             // ★ v3.9.53：换算改为对数式 —— 修复"增益几乎没效果"。
             //   LoudnessEnhancer 的单位是毫贝（100mB = 1dB，音量翻倍 = +6dB）。
             //   百分比增幅对应的正确 dB 是 20·log10(pct/100)，即
@@ -723,17 +716,16 @@ public class PlayerCore {
             int mb = (int) Math.round(2000.0 * Math.log10(gainPct / 100.0));
             if (mb < 0) mb = 0;
             if (mb > 2000) mb = 2000;
-            ensureEnhancer(mp, mb);
+            ensureEnhancer(e.sessionId(), mb);
         } catch (Throwable ignored) {
             // 个别 ROM 不支持 audiofx，静默降级为「增益无效但播放正常」
         }
     }
 
     /** 建/复用 LoudnessEnhancer 并套上 targetGain（mB） */
-    private void ensureEnhancer(MediaPlayer mp, int millibels) {
-        int session = 0;
+    private void ensureEnhancer(int session, int millibels) {
         try {
-            session = mp.getAudioSessionId();
+            if (session <= 0) return;
         } catch (Throwable ignored) {}
 
         // 会话号变了 / 还没有 enhancer → 重建。旧的一定要 release，
@@ -798,10 +790,7 @@ public class PlayerCore {
         releaseEnhancer();
         if (player != null) {
             try {
-                player.reset();
-            } catch (Throwable ignored) {}
-            try {
-                player.release();
+                player.stopAndRelease();
             } catch (Throwable ignored) {}
             player = null;
         }
@@ -1130,7 +1119,7 @@ public class PlayerCore {
         if (player == null) return;
         pausedByFocus = false;
         try {
-            player.start();
+            player.play();
             startProgress();
             if (cb != null) cb.onStateChanged(true);
         } catch (Throwable ignored) {}
@@ -1138,28 +1127,10 @@ public class PlayerCore {
 
     // ==================== 倍速 ====================
 
-    /** setPlaybackParams 是 API 23+；低版本反射兜底，再不行静默忽略 */
-    private void applySpeedInternal(MediaPlayer mp, float s) {
-        if (s <= 0 || mp == null) return;
-        if (Build.VERSION.SDK_INT >= 23) {
-            try {
-                mp.setPlaybackParams(mp.getPlaybackParams().setSpeed(s));
-                return;
-            } catch (Throwable ignored) {}
-        }
-        try {
-            java.lang.reflect.Method m = MediaPlayer.class.getMethod(
-                    "setPlaybackParams", Class.forName("android.media.PlaybackParams"));
-            Object params = Class.forName("android.media.PlaybackParams")
-                    .getConstructor().newInstance();
-            params.getClass().getMethod("setSpeed", float.class).invoke(params, s);
-            m.invoke(mp, params);
-        } catch (Throwable ignored) {}
-    }
-
-    /** 供外部（切音效等）拿到 MediaPlayer */
-    public MediaPlayer raw() {
-        return player;
+    /** ★ v4.9.0：倍速由引擎自己实现（系统=PlaybackParams，ijk=setSpeed/soundtouch） */
+    private void applySpeedInternal(Engines.Engine e, float s) {
+        if (e == null) return;
+        try { e.setSpeed(s); } catch (Throwable ignored) {}
     }
 
     // ==================== 进度 ====================
@@ -1205,8 +1176,7 @@ public class PlayerCore {
         stopProgress();
         try {
             if (player != null && player.isPlaying()) player.pause();
-        } catch (Throwable ignored) {}
-        int d = durSec();
+        } catch (Throwable ignored) {}        int d = durSec();
         saveRecord(Math.max(curSec(), d));
         if (cb != null) cb.onEnded();
     }
