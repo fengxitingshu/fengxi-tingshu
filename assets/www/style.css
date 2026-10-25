@@ -1120,6 +1120,11 @@ html.dark .page.full .fsrc-tag {
     display: flex; align-items: center; justify-content: center;
 }
 
+/* ★ v4.3.0：点圆盘 = 播放/暂停。按下时整体轻微缩放给个反馈
+   （缩放放在 wrap 上，避开 .fdisc 自身被 spin 动画占用的 transform） */
+.fcover-wrap { cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .12s ease; }
+.fcover-wrap:active { transform: scale(.97); }
+
 /* 圆形唱片封面。
    ★ v1.9：容器**不能有底色**——原来 var(--card) 在浅色模式下
    就是在封面上盖了一层白，看起来像"被蒙板糊住了"。现在容器完全透明，
