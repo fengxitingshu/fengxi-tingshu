@@ -4022,7 +4022,31 @@ public class Bridge {
                     d.total = chs.size();
 
                     ui.post(new Runnable() {
-                        public void run() { player.setQueue(b, chs, 0); }
+                        public void run() {
+                            player.setQueue(b, chs, 0);
+                            // ★ v4.8.0：把章节表同步给前端（数据形状同详情页
+                            //   onDetail）——之前 App.chapters 只有从播放记录
+                            //   进详情页才会填，直接点播放进播放页时选集页
+                            //   永远「还没有章节数据」。现在播放即同步。
+                            JSONObject dd = new JSONObject();
+                            try {
+                                JSONObject bo = new JSONObject();
+                                bo.put("title", bookName);
+                                bo.put("source", platform);
+                                bo.put("url", b.url);
+                                dd.put("book", bo);
+                                JSONArray ca = new JSONArray();
+                                for (com.tingshu.app.data.Models.Chapter c : chs) {
+                                    JSONObject co = new JSONObject();
+                                    co.put("title", c.title);
+                                    co.put("url", c.url);
+                                    co.put("index", c.index);
+                                    ca.put(co);
+                                }
+                                dd.put("chapters", ca);
+                            } catch (Throwable ignored) {}
+                            callback("onDetail", dd);
+                        }
                     });
 
                     // ★ v4.6.0 修复「播的不是网盘资源」：网盘书不再走聚合
