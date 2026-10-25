@@ -13,11 +13,11 @@
 #   - java-lib/chaquopy_java.jar -> 参与 javac 与 d8
 set -e
 
-PROJ=/root/tingshu-app
+PROJ=/workspace/fengxi-tingshu
 BT=/root/android/android-14
 ANDROID_JAR=/root/android/android-35/android.jar
-TOOL=/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d3f-06c26dccc000/toolchain
-JDK=$TOOL/jdk-18.0.2.1+1/bin
+TOOL=/root/toolchain
+JDK=/usr/lib/jvm/java-17-openjdk-amd64/bin
 KS=/root/android/test.keystore   # ★ 别名已改为 fengxi（原 test 是无身份信息的占位证书，vivo 安装器会拒绝）
 OUT=$PROJ/out
 LIB=$PROJ/java-lib
