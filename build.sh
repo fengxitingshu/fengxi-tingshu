@@ -40,6 +40,8 @@ DEPS=(
   "$TOOL/rhino-slim.jar"
   # ★ v3.4：Chaquopy Java API（Python / PyObject / AndroidPlatform）
   "$PROJ/java-lib/chaquopy_java.jar"
+  # ★ v4.9.0：ijkplayer Java API —— FFmpeg 软解内核（WMA/ape/ac3/dts 等系统解不了的格式）
+  "$PROJ/java-lib/ijkplayer-java.jar"
 )
 # javac 编译期 classpath：
 #   - kotlin-stdlib：host 引用了 kotlin.jvm.functions.Function1
@@ -47,7 +49,8 @@ DEPS=(
 #   - jsoup        ：v3.0 起 core/js/JsElement、JsHostApi 直接引用了 org.jsoup.*
 #   - chaquopy_java：v3.4 起 app/python/* 引用了 com.chaquo.python.*
 #   - okhttp/okio  ：v3.9.9 起 Fuel 兼容层（FuelJsonKt.responseJson）引用 okhttp3
-JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-slim.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar"
+#   - ijkplayer    ：v4.9.0 起 PlayerCore/Engines 引用 tv.danmaku.ijk.media.player.*
+JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-slim.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar:$PROJ/java-lib/ijkplayer-java.jar"
 
 # Kotlin 编译器自身运行时（跑 K2JVMCompiler 用）
 KCP="$TOOL/kotlin-compiler-embeddable-1.8.22.jar:$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/kotlin-reflect-1.8.22.jar:$TOOL/trove4j-1.0.20200330.jar:$TOOL/annotations-13.0.jar"
