@@ -1377,11 +1377,14 @@
         // ★ v3.9.3：自定义源（本地书源）开启后也进下拉，方便直接选。
         // ★ v4.6.0：已启用的网盘源也进下拉——盘内扫描让网盘源有了「书架」，
         //   可以像书源一样当首页源用（点进去就是该网盘的有声书列表）。
+        // ★ v4.8.0：网盘源**无条件进下拉**——之前要求 enabled，而 pan 源的
+        //   enabled = 开关 && Cookie 已配置，任何一边没跟上下拉就消失，
+        //   用户眼里就是「首页看不到网盘源」。未登录的显示角标引导。
         var custom = [], pans = [];
         for (var s = 0; s < (App.sources || []).length; s++) {
             var cs = App.sources[s];
-            if (!cs || cs.enabled === false) continue;
-            if (cs.id === 'local') custom.push(cs);
+            if (!cs) continue;
+            if (cs.id === 'local') { if (cs.enabled !== false) custom.push(cs); }
             else if (cs.origin === 'pan' || (cs.id && cs.id.indexOf('pan_') === 0)) pans.push(cs);
         }
         if (custom.length) {
@@ -1399,10 +1402,12 @@
             h += '<div class="srcdd-sep">网盘源</div>';
             for (var p2 = 0; p2 < pans.length; p2++) {
                 var pOn = App.home.src === pans[p2].id;
+                var pReady = pans[p2].panReady !== false;
                 h += '<div class="srcdd-item' + (pOn ? ' on' : '') +
                      '" data-id="' + escAttr(pans[p2].id) + '"' +
                      ' onclick="App.ui.homePickSrc(\'' + escAttr(pans[p2].id) + '\')">' +
-                     '<span>' + TS.esc(pans[p2].alias || pans[p2].name || pans[p2].id) + '</span>' +
+                     '<span>' + TS.esc(pans[p2].alias || pans[p2].name || pans[p2].id) +
+                     (pReady ? '' : '（未登录）') + '</span>' +
                      '<span class="tick">✓</span></div>';
             }
         }
@@ -3826,6 +3831,20 @@
         var name = (o && o.title) || (ch && ch.title)
             || ('第' + ((ch && ch.index) || (chIdx + 1)) + '集');
 
+        // ★ v4.8.0：把 native 给出的具体失败原因带出来（Cookie 失效 /
+        //   直链未返回等），不再只说「播放失败」让用户猜
+        if (o && o.error) {
+            setTimeout(function () { TS.toast('原因：' + o.error); }, 1300);
+        }
+        // ★ v4.8.0：WMA 是 Windows 音频格式，很多手机的系统播放器解不了
+        //   （这是网盘书最常见的「播不起来」原因）——明确告诉用户怎么办
+        var chName = ((ch && ch.title) || (o && o.title) || '') + '';
+        if (/\.wma(\?|$)/i.test(chName)) {
+            setTimeout(function () {
+                TS.toast('这个文件是 WMA 格式，多数手机系统播放器不支持，建议转成 MP3 后再放网盘');
+            }, 2800);
+        }
+
         // ★ v3.9.32：失败不再立即停止 —— 15 秒兜底窗口：
         //   期间若恢复播放（迟到的自救成功 / 用户手动点播成功）则取消停止；
         //   15 秒仍无法播放才真正 stop（释放播放器/撤通知/清队列）。
@@ -6013,10 +6032,19 @@
                 h += '<div class="panbook-list">';
                 for (var bi = 0; bi < st2.scanBooks.length; bi++) {
                     var bk = st2.scanBooks[bi];
+                    // ★ v4.8.0：整本都是 WMA 的书提前标注——多数手机系统播放器
+                    //   解不了 WMA，先说明白，省得点了播放再莫名失败
+                    var wmaAll = bk.files && bk.files.length > 0;
+                    if (wmaAll) {
+                        for (var fi2 = 0; fi2 < bk.files.length; fi2++) {
+                            if (!/\.wma$/i.test((bk.files[fi2].name || ''))) { wmaAll = false; break; }
+                        }
+                    }
                     h += '<div class="panbook-row">' +
                          '<div class="panbook-main">' +
                          '<div class="panbook-name">' + TS.esc(bk.name) + '</div>' +
-                         '<div class="panbook-sub">' + (bk.files ? bk.files.length : 0) + ' 集</div>' +
+                         '<div class="panbook-sub">' + (bk.files ? bk.files.length : 0) + ' 集' +
+                         (wmaAll ? ' · WMA 格式（可能无法播放）' : '') + '</div>' +
                          '</div>' +
                          '<button class="mini" onclick="App.ui.customPanDiskPlay(\'' + pid + '\',' + bi + ')">▶ 播放</button>' +
                          '</div>';
@@ -9620,6 +9648,16 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.8.0',
+            date: '2026-10-25',
+            items: [
+                '修复：直接点播放进播放页后「选集」没有数据（只有从播放记录进详情才有）——现在播放即同步章节表，播放页选集立即可用',
+                '修复：首页下拉看不到「网盘源」——不再依赖启用状态，全部网盘源无条件显示，未登录的带（未登录）角标',
+                '改进：播放失败时附带具体原因（Cookie 失效/直链未返回等，不再只说播放失败）',
+                '重要发现：你的网盘书全是 WMA 格式——多数手机系统播放器不支持 WMA 解码，这很可能就是「播放失败」的真正原因。书架里整本 WMA 的书会标注「WMA 格式（可能无法播放）」；建议把网盘音频转成 MP3',
+            ],
+        },
         {
             ver: '4.7.1',
             date: '2026-10-25',
