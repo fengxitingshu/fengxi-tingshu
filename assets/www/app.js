@@ -5798,7 +5798,9 @@
 
     function panState(pid) {
         var p = App.custom.pan[pid];
-        if (!p) { p = { shareUrl: '', files: [], picked: {} }; App.custom.pan[pid] = p; }
+        if (!p) { p = { shareUrl: '', files: [], picked: {}, scanBooks: null, scanScanning: false }; App.custom.pan[pid] = p; }
+        if (p.scanBooks === undefined) p.scanBooks = null;
+        if (p.scanScanning === undefined) p.scanScanning = false;
         return p;
     }
 
@@ -5919,9 +5921,29 @@
             if (pid === 'pan_tianyi') {
                 h += '<button class="mini" onclick="App.ui.customPanPwd(\'' + pid + '\')">密码登录</button>';
             }
+            // ★ v4.5.0：已登录的网盘可扫描盘内有声书（阿里网页接口有签名风控除外）
+            if (pid !== 'pan_ali') {
+                h += '<button class="mini" onclick="App.ui.customPanScan(\'' + pid + '\')">' +
+                     (st2.scanScanning ? '扫描中…' : '扫描盘内书') + '</button>';
+            }
             h += '<button class="mini ghost" onclick="App.ui.customPanCookie(\'' + pid + '\')">配置 Cookie</button>';
             h += '<button class="mini ghost" onclick="App.ui.customPanClear(\'' + pid + '\')">清除</button>';
             h += '</div>';
+
+            // ---- 盘内有声书扫描结果（v4.5.0） ----
+            if (st2.scanBooks && st2.scanBooks.length) {
+                h += '<div class="cu-parse"><div style="font-size:12px;opacity:.75;margin-bottom:6px">盘内扫描到 ' +
+                     st2.scanBooks.length + ' 本有声书（文件夹里全是音频才收录）：</div>';
+                for (var bi = 0; bi < st2.scanBooks.length; bi++) {
+                    var bk = st2.scanBooks[bi];
+                    h += '<div class="cu-hd" style="font-size:13px">' + TS.esc(bk.name) +
+                         '<span class="cu-badge">' + (bk.files ? bk.files.length : 0) + ' 集</span>' +
+                         '<button class="mini" onclick="App.ui.customPanDiskPlay(\'' + pid + '\',' + bi + ')">播放</button></div>';
+                }
+                h += '</div>';
+            } else if (st2.scanScanning) {
+                h += '<div class="cu-desc dim">正在扫描网盘目录…</div>';
+            }
 
             // ---- 解析分享链接 ----
             h += '<div class="cu-parse">';
@@ -6187,6 +6209,26 @@
         TS.call('panWebLogin', pid);
     };
 
+    /**
+     * ★ v4.5.0：扫描已登录网盘内的有声书（DFS 找含音频的文件夹）。
+     */
+    ui.customPanScan = function (pid) {
+        var st = panState(pid);
+        st.scanScanning = true;
+        st.scanBooks = null;
+        paintCustom();
+        TS.toast('正在扫描' + (PAN_NAMES[pid] || '') + '目录…');
+        TS.call('panScan', pid);
+    };
+
+    /** 播放盘内扫描出的某本书（整本入队） */
+    ui.customPanDiskPlay = function (pid, bi) {
+        var st = panState(pid);
+        var bk = st.scanBooks && st.scanBooks[bi];
+        if (!bk || !bk.files || !bk.files.length) { TS.toast('这本书没有音频文件'); return; }
+        TS.call('panPlay', pid, '__disk__|' + bk.name, JSON.stringify(bk.files));
+    };
+
     ui.customPanQr = function (pid) {
         App.qrLogin = { pid: pid };
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
@@ -6332,6 +6374,24 @@
         }
         // panReady 变了 → 让 native 重推源列表，开关状态才准
         TS.call('listSources');
+        paintCustom();
+    };
+
+    window.onPanScan = function (o) {
+        var pid = o && o.platform;
+        if (!pid) return;
+        var st = panState(pid);
+        st.scanScanning = false;
+        if (o.ok) {
+            st.scanBooks = o.books || [];
+            st.error = '';
+            TS.toast(st.scanBooks.length
+                ? '扫描到 ' + st.scanBooks.length + ' 本有声书'
+                : '没扫到有声书（网盘里没有音频文件夹）');
+        } else {
+            st.scanBooks = null;
+            TS.toast('扫描失败：' + (o.error || '未知错误'));
+        }
         paintCustom();
     };
 
@@ -9433,6 +9493,15 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.5.0',
+            date: '2026-10-25',
+            items: [
+                '新增：扫描已登录网盘内的有声书——点「扫描盘内书」，自动找网盘里的音频文件夹成书，一键整本播放，不用再找分享链接',
+                '修复：夸克/UC 分享解析遇到「书名/章节」文件夹结构时只显示文件夹没法播，现在自动展平子文件夹',
+                '说明：阿里云盘因网页接口签名风控暂不支持盘内扫描，分享解析不受影响',
+            ],
+        },
         {
             ver: '4.4.0',
             date: '2026-10-25',
