@@ -4006,6 +4006,11 @@ public class Bridge {
                         ch.index = i++;
                         chs.add(ch);
                     }
+                    // ★ v4.7.0：盘内书把整份章节表写进缓存（内存+落盘），
+                    //   选集/历史续播/详情页才有章节数据（否则 detail 拿不到 → 不能选集）
+                    if (disk) {
+                        com.tingshu.app.pan.PanSource.putDiskChapters(bookId, chs);
+                    }
                     final BookDetail d = new BookDetail(b);
                     d.chapters = chs;
                     d.total = chs.size();
