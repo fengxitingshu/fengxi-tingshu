@@ -3987,9 +3987,15 @@ public class Bridge {
                     String bookName = disk
                             ? shareUrl.substring("__disk__|".length())
                             : com.tingshu.app.pan.PanResolver.nameOf(platform) + " · 分享";
-                    String rawId = shareUrl == null ? "" : shareUrl.replaceAll(".*/", "");
-                    String bookId = rawId.replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_");
-                    final Book b = new Book(platform, (disk ? "disk_" : "share_") + bookId,
+                    // ★ v4.7.1：盘内书 id 统一走 PanSource.diskBookId（含 "disk_" 前缀），
+                    //   与 PanSource.detail 读章节缓存的 key 完全一致——
+                    //   v4.7.0 写入/读取两边各算各的，key 对不上 → 不能选集。
+                    //   非盘内（分享链接）书仍用 "share_" 前缀。
+                    final Book b = new Book(platform,
+                            disk ? com.tingshu.app.pan.PanSource.diskBookId(shareUrl)
+                                 : "share_" + (shareUrl == null ? ""
+                                       : shareUrl.replaceAll(".*/", "")
+                                                .replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_")),
                             bookName);
                     b.url = com.tingshu.app.pan.PanSource.PREFIX + shareUrl;
                     b.intro = disk ? "来自网盘扫描" : (shareUrl == null ? "" : shareUrl);
@@ -4009,7 +4015,7 @@ public class Bridge {
                     // ★ v4.7.0：盘内书把整份章节表写进缓存（内存+落盘），
                     //   选集/历史续播/详情页才有章节数据（否则 detail 拿不到 → 不能选集）
                     if (disk) {
-                        com.tingshu.app.pan.PanSource.putDiskChapters(bookId, chs);
+                        com.tingshu.app.pan.PanSource.putDiskChapters(b.bookId, chs);
                     }
                     final BookDetail d = new BookDetail(b);
                     d.chapters = chs;
