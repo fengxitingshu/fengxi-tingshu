@@ -291,6 +291,9 @@ public final class Aggregator {
         final CountDownLatch latch = new CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicInteger pending =
                 new java.util.concurrent.atomic.AtomicInteger(tryList.size());
+        // ★ v4.1：记录各候选源的失败原因，全军覆没时带回给前端 ——
+        //   之前这里把异常全吞了，前端只会看到"没读到章节"，没法排查
+        final StringBuilder errs = new StringBuilder();
 
         for (final Book cand : tryList) {
             DETAIL_POOL.execute(new Runnable() {
@@ -317,7 +320,21 @@ public final class Aggregator {
                                 }
                             }
                         }
-                    } catch (Throwable ignored) {
+                        synchronized (errs) {
+                            if (errs.length() < 300) {
+                                if (errs.length() > 0) errs.append("；");
+                                errs.append(cand.source).append(":源返回了空章节");
+                            }
+                        }
+                    } catch (Throwable t) {
+                        synchronized (errs) {
+                            if (errs.length() < 300) {
+                                if (errs.length() > 0) errs.append("；");
+                                String msg = String.valueOf(t.getMessage());
+                                if (msg == null || msg.length() == 0) msg = t.getClass().getSimpleName();
+                                errs.append(cand.source).append(":").append(msg);
+                            }
+                        }
                     } finally {
                         // 所有候选都试完（或已有人胜出）也要解锁，避免死等
                         if (pending.decrementAndGet() <= 0) latch.countDown();
@@ -332,7 +349,12 @@ public final class Aggregator {
         } catch (Throwable ignored) {}
 
         BookDetail got = slot[0];
-        if (got == null) got = new BookDetail(book);
+        if (got == null) {
+            got = new BookDetail(book);
+            synchronized (errs) {
+                if (errs.length() > 0) got.error = errs.toString();
+            }
+        }
         else {
             // 成功结果缓存起来（含 book 的聚合信息），供下次秒开
             detailCachePut(book, got);
