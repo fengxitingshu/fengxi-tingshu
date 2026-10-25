@@ -3,9 +3,13 @@ package com.tingshu.app.pan;
 import com.tingshu.app.data.Models.Book;
 import com.tingshu.app.data.Models.BookDetail;
 import com.tingshu.app.data.Models.Chapter;
+import com.tingshu.app.data.Settings;
 import com.tingshu.app.source.AbsSource;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,13 +65,83 @@ public final class PanSource extends AbsSource {
         return pid + "|" + shareUrl + "|" + fileId + "|" + (token == null ? "" : token);
     }
 
+    // ==================== 盘内书章节缓存（v4.7.0） ====================
+
+    /**
+     * 盘内书的章节无法从网盘「详情接口」重建（那是分享链接的解析逻辑），
+     * 所以 panPlay 播放时把整份章节表写进缓存，detail 再读回。
+     * 内存一层（快）+ SharedPreferences 落盘（重启后选集/续播仍可用）。
+     */
+    private static final java.util.Map<String, List<Chapter>> DISK_CH =
+            new java.util.HashMap<String, List<Chapter>>();
+
+    /** 从 "__disk__|<id>" 里取出消毒后的书 id（与 Bridge.panPlay 的 bookId 一致） */
+    public static String diskIdOf(String share) {
+        // Bridge 存的是 "__disk__|" + 书名；bookId 消毒发生在 Bridge 侧，
+        // 这里读缓存时用 share 的「书名消毒版」当 key（与写入端约定一致）
+        String name = share.startsWith("__disk__|") ? share.substring("__disk__|".length()) : share;
+        return name.replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_");
+    }
+
+    /** 播放时注册整份章节表（Bridge.panPlay 调用） */
+    public static void putDiskChapters(String bookId, List<Chapter> chs) {
+        if (bookId == null || bookId.length() == 0 || chs == null || chs.isEmpty()) return;
+        synchronized (DISK_CH) { DISK_CH.put(bookId, chs); }
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (Chapter c : chs) {
+                JSONObject o = new JSONObject();
+                o.put("t", c.title == null ? "" : c.title);
+                o.put("u", c.url == null ? "" : c.url);
+                o.put("i", c.index);
+                arr.put(o);
+            }
+            com.tingshu.app.data.Settings.sp().edit()
+                    .putString("pan_disk_ch_" + bookId, arr.toString()).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    /** detail 读回章节表：先内存，miss 后落盘 */
+    public static List<Chapter> getDiskChapters(String bookId) {
+        List<Chapter> mem;
+        synchronized (DISK_CH) { mem = DISK_CH.get(bookId); }
+        if (mem != null) return mem;
+        List<Chapter> out = new ArrayList<Chapter>();
+        try {
+            String raw = com.tingshu.app.data.Settings.sp().getString("pan_disk_ch_" + bookId, "");
+            if (raw.length() > 0) {
+                org.json.JSONArray arr = new org.json.JSONArray(raw);
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.optJSONObject(i);
+                    if (o == null) continue;
+                    Chapter c = new Chapter();
+                    c.title = o.optString("t", "");
+                    c.url = o.optString("u", "");
+                    c.index = o.optInt("i", i + 1);
+                    out.add(c);
+                }
+            }
+        } catch (Throwable ignored) {}
+        if (!out.isEmpty()) {
+            synchronized (DISK_CH) { DISK_CH.put(bookId, out); }
+        }
+        return out;
+    }
+
     @Override
     public BookDetail detail(String bookUrl) throws Exception {
         BookDetail d = new BookDetail();
         d.total = 0;
         String share = shareUrlOf(bookUrl);
-        // ★ v4.5.0：盘内扫描的书章节由 panScanPlay 直接给定，detail 不可重建
-        if (share.startsWith("__disk__")) return d;
+        // ★ v4.7.0：盘内书的章节由 panScanPlay 播放时写入缓存，这里读回——
+        //   选集/历史续播/详情页才有章节数据（v4.6.0 之前返回空 → 不能选集）
+        if (share.startsWith("__disk__")) {
+            List<Chapter> chs = getDiskChapters(diskIdOf(share));
+            d.chapters = chs;
+            d.total = chs.size();
+            if (chs.isEmpty()) d.error = "盘内书章节缓存已失效，请回首页网盘书架重新播放一次";
+            return d;
+        }
         List<PanResolver.PanFile> files = PanResolver.parseShare(pid, share);
         List<Chapter> chs = new ArrayList<Chapter>();
         int i = 1;
