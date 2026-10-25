@@ -513,9 +513,26 @@ public class PlayerCore {
     /** 真的救不活了：通知 UI 失败（前端据此自动停止） */
     private void giveUp(String msg) {
         lastGiveUpAt = android.os.SystemClock.elapsedRealtime();
+        // ★ v4.9.1：失败原因带上内核与音频扩展名——「系统内核解不了 WMA」
+        //   和「FFmpeg 内核也失败」是两个完全不同的排查方向
+        StringBuilder sb = new StringBuilder(msg == null ? "播放失败" : msg);
+        try {
+            sb.append("（内核：").append(player instanceof Engines.IjkEngine ? "FFmpeg" : "系统");
+            if (audioUrl != null) {
+                String a = audioUrl.toLowerCase();
+                int q = a.indexOf('?');
+                String ext = q > 0 ? a : a;
+                int dot = a.lastIndexOf('.', q > 0 ? q : a.length() - 1);
+                if (dot > 0) {
+                    String e = a.substring(dot, (q > 0 ? q : a.length()));
+                    if (e.length() <= 6) sb.append("，格式").append(e);
+                }
+            }
+            sb.append("）");
+        } catch (Throwable ignored) {}
         if (cb != null) {
             cb.onStateChanged(false);
-            cb.onError(msg);
+            cb.onError(sb.toString());
         }
     }
 
