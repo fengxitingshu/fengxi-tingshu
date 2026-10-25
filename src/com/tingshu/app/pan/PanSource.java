@@ -66,6 +66,8 @@ public final class PanSource extends AbsSource {
         BookDetail d = new BookDetail();
         d.total = 0;
         String share = shareUrlOf(bookUrl);
+        // ★ v4.5.0：盘内扫描的书章节由 panScanPlay 直接给定，detail 不可重建
+        if (share.startsWith("__disk__")) return d;
         List<PanResolver.PanFile> files = PanResolver.parseShare(pid, share);
         List<Chapter> chs = new ArrayList<Chapter>();
         int i = 1;
@@ -95,6 +97,8 @@ public final class PanSource extends AbsSource {
         f.id = fileId;
         f.token = token;
         f.dir = false;
+        // ★ v4.5.0：盘内文件（扫描网盘出来的）不走分享直链，走盘内直链
+        if ("__disk__".equals(share)) return PanResolver.diskDownloadUrl(p, f);
         return PanResolver.downloadUrl(p, f, share);
     }
 
