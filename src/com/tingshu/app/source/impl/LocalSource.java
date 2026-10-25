@@ -152,17 +152,15 @@ public final class LocalSource extends AbsSource {
         try {
             String[] cols = {
                     MediaStore.Audio.Media.DATA,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.IS_MUSIC,
-                    MediaStore.Audio.Media.DURATION
+                    MediaStore.Audio.Media.TITLE
             };
-            // IS_MUSIC != 0（音乐）或时长 ≥ 20s（★ v3.9.3 从 60s 放宽到 20s：
-            // 有声书偶尔有几十秒的"序/预告"，之前直接漏掉）
+            // ★ v4.1：不再按 IS_MUSIC / DURATION 过滤 —— 听书文件常被媒体库标成
+            //   IS_MUSIC=0，且刚下载/冷门格式的时长可能还没提取（=0），之前的
+            //   "IS_MUSIC!=0 OR DURATION>=20000" 会把它们整批漏掉。扩展名合法性
+            //   由 isAudio() 把关（铃声/音效碎片由 WALK_MIN_SIZE 与分组规则兜住）。
             c = ctx.getContentResolver().query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cols,
-                    MediaStore.Audio.Media.IS_MUSIC + " != 0 OR "
-                            + MediaStore.Audio.Media.DURATION + " >= 20000",
-                    null,
+                    null, null,
                     MediaStore.Audio.Media.DATA + " ASC");
             // ★ v3.9.1：自定义目录过滤在 Java 侧做，不在 SQL 里 LIKE ——
             //   路径里可能带 _ / %（LIKE 的通配符），拼 SQL 容易漏/错；
@@ -182,14 +180,12 @@ public final class LocalSource extends AbsSource {
             if (c != null) try { c.close(); } catch (Throwable ignored) {}
         }
 
-        // ★ v3.9.3：文件系统兜底扫描 —— MediaStore 漏掉的四种情况：
-        //   ① 目录里有 .nomedia（系统媒体库不索引，听书党很常用）；
-        //   ② 短于门槛的合法章节；③ 未被索引的 m4a/wma 等冷门格式；
-        //   ④ 媒体库还没刷新的新下载文件。
-        //   触发条件：设了自定义目录（范围可控）或媒体库一无所获。
-        int found = 0;
-        for (List<String> fl : byFolder.values()) found += fl.size();
-        if (rootDir().length() > 0 || found == 0) {
+        // ★ v4.1：文件系统兜底扫描改为**始终执行** —— 之前的触发条件是
+        //   "设了自定义目录 或 媒体库一无所获"，结果只要媒体库扫到几首歌
+        //   （found>0），兜底就不再跑，而听书文件夹（.nomedia / 未索引 /
+        //   IS_MUSIC=0 且时长未提取）恰恰是媒体库最容易漏的部分。
+        //   addFile 自带去重，MediaStore 与文件遍历的结果可以放心合并。
+        {
             try {
                 List<String> walked = new ArrayList<String>();
                 File base = rootDir().length() > 0
