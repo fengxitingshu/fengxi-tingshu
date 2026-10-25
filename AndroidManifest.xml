@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.tingshu.app"
-        android:versionCode="107"
-        android:versionName="4.0.0">
+        android:versionCode="108"
+        android:versionName="4.1.0">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
 
@@ -14,8 +14,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- ★ v3.9.0：本地书源扫描本机音频（API 33+ 用细分权限，以下用旧权限） -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <!-- ★ v4.1：Android 11+ 上兜底的全盘文件遍历需要「所有文件访问」；
+         targetSdk=28 的旧式存储在多数 ROM 上仍可用，声明此权限是为了
+         在部分厂商 ROM 收紧兼容行为时仍能扫到媒体库之外的音频 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <!-- ★ v2.8：自绘悬浮球需要「显示在其他应用上层」权限（用户需在系统设置里手动授予） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
