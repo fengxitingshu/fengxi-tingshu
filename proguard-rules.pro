@@ -70,3 +70,9 @@
 -dontshrink
 -dontoptimize
 -dontwarn
+
+# ---------- 8. ★ v4.9.0 ijkplayer（FFmpeg 软解内核） ----------
+# IjkMediaPlayer 的 native 方法按 JNI 静态注册（Java_tv_danmaku_ijk_...），
+# 类名/方法名被 R8 改掉会直接 UnsatisfiedLinkError；外部 jar 按名字链接。
+-keep class tv.danmaku.ijk.** { *; }
+-dontwarn tv.danmaku.ijk.**
