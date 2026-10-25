@@ -6497,8 +6497,17 @@
             st.picked = {};
             st.error = '';
             // 默认全选文件（文件夹项 PanResolver 已展平，通常剩下的都是音频）
+            var nAudio = 0;
             for (var i = 0; i < st.files.length; i++) {
-                if (!st.files[i].dir) st.picked[st.files[i].id] = true;
+                if (!st.files[i].dir) { st.picked[st.files[i].id] = true; nAudio++; }
+            }
+            // ★ v4.7.0：解析成功也要有反馈（成功但空 = 用户眼里「没反应」）
+            if (!st.files.length) {
+                TS.toast('分享里没有文件（链接可能已失效）');
+            } else if (nAudio === 0) {
+                TS.toast('解析到 ' + st.files.length + ' 个文件夹，但没有音频文件');
+            } else {
+                TS.toast('解析到 ' + nAudio + ' 个音频文件，已全选，可直接播放');
             }
         } else {
             st.files = [];
@@ -9611,6 +9620,15 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.7.0',
+            date: '2026-10-25',
+            items: [
+                '修复：网盘盘内书「不能选集」——播放时把整份章节表缓存下来（重启也在），详情页/选集/历史续播都有完整集数',
+                '修复：分享解析成功但结果是空/全是文件夹时没有任何提示，现在三种结果都有明确弹窗',
+                '提醒：如果之前播串过书，旧的播放记录建议到 设置 → 一键清理缓存 后重新扫描播放',
+            ],
+        },
         {
             ver: '4.6.0',
             date: '2026-10-25',
