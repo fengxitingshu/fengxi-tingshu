@@ -741,9 +741,11 @@
   <div class="fbody">
     <div class="ftop">
       <!-- 圆形唱片封面：播放时旋转，暂停时停住（见 style.css .fdisc.playing）。
-           注意：这里不能有任何门板/底色/内阴影，否则封面会被"蒙一层白"。 -->
+           注意：这里不能有任何门板/底色/内阴影，否则封面会被"蒙一层白"。
+           ★ v4.3.0：点击圆盘 = 播放/暂停（大目标好按，按下有轻微缩放反馈）。 -->
       <div class="fcover-wrap">
-        <div class="fdisc" id="fDisc">
+        <div class="fdisc" id="fDisc" role="button" tabindex="0"
+             aria-label="点击播放或暂停" onclick="App.ui.toggle()">
           <img id="fullCover" class="fcover" src="" alt=""
                onerror="this.classList.add('fail')">
         </div>
