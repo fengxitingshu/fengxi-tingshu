@@ -837,6 +837,12 @@ button.mini:active { opacity: .7; }
 /* ============================================================
    播放悬浮球（右下角）
    ============================================================ */
+/* ★ v4.1：球体尺寸用变量，小分辨率（<360px，常见于 720p 低 DPI）整体缩到 48px，
+   避免 58px 的球在小屏上挤到内容/被裁切；图标与圆环随变量同步缩放。 */
+:root { --ball: 58px; }
+@media (max-width: 359px) {
+    :root { --ball: 48px; }
+}
 .player {
     position: fixed;
     right: 16px;
@@ -844,8 +850,9 @@ button.mini:active { opacity: .7; }
     /* ★ 尺寸必须绝对锁定：球体是纯几何图形，任何 padding / 内容都不得影响它。
        注意同页还有通用空态类 `.empty`（padding 66px 20px），
        球体未播放时会同时带上 `.player.empty`，必须在此显式清零 padding。 */
-    width: 58px; height: 58px; min-width: 58px; min-height: 58px;
-    max-width: 58px; max-height: 58px;
+    width: var(--ball); height: var(--ball);
+    min-width: var(--ball); min-height: var(--ball);
+    max-width: var(--ball); max-height: var(--ball);
     padding: 0;
     text-align: initial; line-height: normal;
     border-radius: 50%;
@@ -876,8 +883,9 @@ body.full-show .player { opacity: 0 !important; pointer-events: none !important;
    做法：隐藏空封面与深色遮罩，整球用一层浅底 + 主题色描边图标。 */
 .player.empty {
     padding: 0;
-    width: 58px; height: 58px; min-width: 58px; min-height: 58px;
-    max-width: 58px; max-height: 58px;
+    width: var(--ball); height: var(--ball);
+    min-width: var(--ball); min-height: var(--ball);
+    max-width: var(--ball); max-height: var(--ball);
     background: var(--card);
     box-shadow: 0 4px 14px rgba(0, 0, 0, .14), 0 1px 4px rgba(0, 0, 0, .10);
     border: 1px solid var(--line2);
@@ -923,13 +931,19 @@ body.full-show .player { opacity: 0 !important; pointer-events: none !important;
     .player .pcover { animation: none; }
 }
 
-/* 播放/暂停图标叠在封面之上，半透明底保证任何封面上都看得清 */
+/* 播放/暂停图标叠在封面之上，半透明底保证任何封面上都看得清。
+   ★ v4.1：居中从 flex 换成 grid（老 WebView 上 flex + svg 兄弟节点偶发偏移，
+   正是小分辨率机器上"播放键歪了"的来源）；svg 加 flex-shrink 防压缩。 */
 .player .pfab-icon {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
     background: rgba(0, 0, 0, .34); border-radius: 50%;
     transition: background .2s;
 }
-.player .pfab-icon svg { width: 26px; height: 26px; fill: #fff; }
+.player .pfab-icon svg {
+    width: calc(var(--ball) * .45); height: calc(var(--ball) * .45);
+    fill: #fff; flex-shrink: 0;
+}
 .player .pfab-icon.buffering svg { animation: pulse 1s ease-in-out infinite; }
 
 /* 屏幕阅读器 / 无 JS 时保留信息 */
