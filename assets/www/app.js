@@ -9649,6 +9649,15 @@
 
     var CHANGELOG = [
         {
+            ver: '4.9.0',
+            date: '2026-10-26',
+            items: [
+                '新增：内置 FFmpeg 软解播放内核（ijkplayer）——WMA/APE/AC3/DTS 等系统播放器解不了的格式现在可以直接播放，你的 WMA 有声书不用转换格式了',
+                '说明：按文件扩展名自动选内核（wma/ape/ac3/dts/tta/tak/vqf 走 FFmpeg，mp3/m4a/flac 等仍走系统播放器），倍速/增益/通知栏/自动下一集/续播对两种内核同样生效',
+                '安装包体积增加约 4.5MB（FFmpeg 解码库）',
+            ],
+        },
+        {
             ver: '4.8.0',
             date: '2026-10-25',
             items: [
