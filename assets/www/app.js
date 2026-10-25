@@ -257,21 +257,17 @@
         if (App.tab !== 'home') { goTab('home'); return true; }
 
         // ★ v3.9.1：已经回到首页、也没有任何可收起的东西了 —— 按返回就是想退出。
-        //   原来的实现在这里 return false，而原生 onKeyDown 用 evaluateJavascript
-        //   （异步、拿不到返回值）后又无条件 return true，于是"在首页按返回毫无反应"，
-        //   用户既退不出去也得不到任何反馈。现在：
-        //     第一次按 → 弹「确定要退出吗？」；
-        //     确认框还开着时再按一次 → 直接退出（不用去点按钮）；
-        //     点「确定」→ 退出；取消或点遮罩 → 关掉继续用。
-        if (App.exitSheet) {
-            App.exitSheet = false;
+        //   ★ v4.2.0：确认弹框整个去掉 —— 用户反馈"多此一举"。改成标准双击退出：
+        //     单击 → toast「再按一次返回桌面」（不再打断操作流）；
+        //     2.2 秒内再按 → 直接返回桌面（exitApp 只关界面，后台播放不受影响）。
+        var nowTs = Date.now();
+        if (nowTs - (App.lastHomeBack || 0) < 2200) {
+            App.lastHomeBack = 0;
             TS.call('exitApp');
             return true;
         }
-        App.exitSheet = true;
-        ui.confirmSheet('确定要退出枫兮听书吗？', function () {
-            TS.call('exitApp');
-        });
+        App.lastHomeBack = nowTs;
+        TS.toast('再按一次返回桌面');
         return true;
     };
 
@@ -5284,6 +5280,8 @@
         //   必须把「确认框正在显示」的标记清掉，否则下一次在首页按返回
         //   会被误判成"连按第二次"而直接退出。
         App.exitSheet = false;
+        // ★ v4.2.0：扫码登录弹窗关闭 → 停掉 native 轮询（不浪费流量与电量）
+        if (App.qrLogin) { App.qrLogin = null; TS.call('panQrStop'); }
         var w = $('sheetWrap');
         if (w && w.parentNode) w.parentNode.removeChild(w);
     };
@@ -5791,11 +5789,11 @@
     };
     var PAN_TIPS = {
         pan_ali: '公开分享可直接解析，一般无需配置',
-        pan_baidu: '需登录 Cookie，接口变动较频繁',
-        pan_quark: '需登录 Cookie，支持加密分享',
-        pan_tianyi: '需登录 Cookie，个人盘/家庭云均可',
-        pan_115: '需登录 Cookie，老接口可能失效',
-        pan_uc: '需登录 Cookie，与夸克同源'
+        pan_baidu: '需登录 Cookie（无公开登录接口），浏览器 F12 复制',
+        pan_quark: '需登录 Cookie（无公开登录接口），浏览器 F12 复制',
+        pan_tianyi: '支持账号密码登录（推荐），也可粘贴 Cookie',
+        pan_115: '支持扫码登录（推荐），也可粘贴 Cookie',
+        pan_uc: '需登录 Cookie（无公开登录接口），浏览器 F12 复制'
     };
 
     function panState(pid) {
@@ -5912,7 +5910,16 @@
             h += '<div class="cu-bd">';
             h += '<div class="cu-desc">' + TS.esc(PAN_TIPS[pid]) + '</div>';
             h += '<div class="cu-ops">';
-            h += '<button class="mini" onclick="App.ui.customPanCookie(\'' + pid + '\')">配置 Cookie</button>';
+            // ★ v4.2.0：115 支持官方扫码登录、天翼支持账号密码登录 ——
+            //   免去打开电脑 F12 抄 Cookie 的麻烦；其余平台无公开登录
+            //   接口，「配置 Cookie」仍是唯一兜底。
+            if (pid === 'pan_115') {
+                h += '<button class="mini" onclick="App.ui.customPanQr(\'' + pid + '\')">扫码登录</button>';
+            }
+            if (pid === 'pan_tianyi') {
+                h += '<button class="mini" onclick="App.ui.customPanPwd(\'' + pid + '\')">密码登录</button>';
+            }
+            h += '<button class="mini ghost" onclick="App.ui.customPanCookie(\'' + pid + '\')">配置 Cookie</button>';
             h += '<button class="mini ghost" onclick="App.ui.customPanClear(\'' + pid + '\')">清除</button>';
             h += '</div>';
 
@@ -6164,6 +6171,105 @@
 
     ui.customPanClear = function (pid) {
         TS.call('panClear', pid);
+    };
+
+    // ---------- ★ v4.2.0 网盘登录（扫码 / 密码） ----------
+
+    /**
+     * 115 扫码登录：弹窗显示二维码，native 后台轮询，确认后自动存 Cookie。
+     * 关闭弹窗时通过 closeSheet 统一停掉轮询（App.qrLogin 标记）。
+     */
+    ui.customPanQr = function (pid) {
+        App.qrLogin = { pid: pid };
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">' + TS.esc(PAN_NAMES[pid] || pid) + ' · 扫码登录</div>';
+        h += '<div class="cu-tip">用 115 官方 App「扫一扫」扫描二维码登录。' +
+             '此方式会把网页端已登录设备踢下线，属正常现象。</div>';
+        h += '<div id="panQrBox" class="pan-qr-box" style="display:flex;justify-content:center;' +
+             'padding:12px 0;">二维码生成中…</div>';
+        h += '<div id="panQrTip" class="cu-desc dim" style="text-align:center">请稍候…</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+        TS.call('panQrStart', pid);
+    };
+
+    /** 更新扫码弹窗里的状态行 */
+    function setQrTip(t) {
+        var el = $('panQrTip');
+        if (el) el.textContent = t || '';
+    }
+
+    window.onPanQr = function (o) {
+        if (!o) return;
+        if (o.ok && o.qr) {
+            var box = $('panQrBox');
+            if (box) {
+                box.innerHTML = '';
+                try {
+                    new QRCode(box, { text: o.qr, width: 210, height: 210,
+                        correctLevel: QRCode.CorrectLevel.M });
+                    setQrTip('请用 115 App 扫一扫');
+                } catch (e) {
+                    box.textContent = '二维码渲染失败，请改用配置 Cookie';
+                }
+            }
+            return;
+        }
+        if (o.done) {
+            App.qrLogin = null;
+            ui.closeSheet();
+            TS.toast((PAN_NAMES[o.platform] || o.platform) + ' 扫码登录成功');
+            paintCustom();
+            return;
+        }
+        if (o.expired) {
+            App.qrLogin = null;          // 让 closeSheet 不再重复 panQrStop
+            TS.call('panQrStop');
+            setQrTip(o.msg || '二维码已过期，请重新打开扫码登录');
+            return;
+        }
+        if (o.state === 1) { setQrTip(o.msg || '已扫码，请在手机上确认'); return; }
+        if (!o.ok) {
+            setQrTip(o.error || '扫码登录失败，请改用配置 Cookie');
+        }
+    };
+
+    /** 天翼云盘账号密码登录 */
+    ui.customPanPwd = function (pid) {
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">' + TS.esc(PAN_NAMES[pid] || pid) + ' · 密码登录</div>';
+        h += '<div class="cu-tip">输入天翼云盘账号（手机号）与密码，登录成功后' +
+             '自动保存 Cookie。若触发登录验证码，请改用「配置 Cookie」。</div>';
+        h += '<input id="panPwdU" class="cu-input" type="text" ' +
+             'placeholder="手机号 / 189.cn 账号" style="width:100%;margin-bottom:8px">';
+        h += '<input id="panPwdP" class="cu-input" type="password" ' +
+             'placeholder="密码" style="width:100%">';
+        h += '<div class="sheet-item" onclick="App.ui.customPanPwdGo(\'' + pid + '\')">登录</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+    };
+
+    ui.customPanPwdGo = function (pid) {
+        var ue = $('panPwdU'), pe = $('panPwdP');
+        var u = ue ? (ue.value || '').trim() : '';
+        var p = pe ? (pe.value || '') : '';
+        if (!u || !p) { TS.toast('账号和密码都要填'); return; }
+        ui.closeSheet();
+        TS.toast('正在登录' + (PAN_NAMES[pid] || pid) + '…');
+        TS.call('panPwdLogin', pid, u, p);
+    };
+
+    window.onPanPwdLogin = function (o) {
+        if (o && o.ok) {
+            TS.toast((PAN_NAMES[o.platform] || o.platform) + ' 登录成功，Cookie 已保存');
+            paintCustom();
+        } else {
+            TS.toast('登录失败：' + ((o && o.error) || '未知错误'));
+        }
     };
 
     ui.customPanParse = function (pid) {
@@ -9319,6 +9425,26 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.2.0',
+            date: '2026-10-25',
+            fixes: [
+                '★★ 首页返回键改双击退出：去掉「确定要退出吗」确认弹框，单击返回',
+                '   只提示「再按一次返回桌面」，2.2 秒内再按直接回桌面（后台播放',
+                '   不受影响，通知栏照常可控）',
+                '★★ 本地书源权限不足时自动弹出系统授权框：点「扫描本机音频」不再',
+                '   需要先按「去授权」再手动重扫，授权完自动重扫',
+                '★★ 本地扫描结果持久化：重开 App 不用重新扫描，上次扫到的书直接',
+                '   可用（改过扫描范围才会触发重新扫描）'
+            ],
+            adds: [
+                '★ 115 网盘支持扫码登录：弹窗显示二维码，手机扫一下自动拿 Cookie，',
+                '   免去打开电脑 F12 抄 Cookie',
+                '★ 天翼云盘支持账号密码登录：输手机号+密码即可，密码走官方加密通道；',
+                '   触发验证码时明确提示改用 Cookie 方式',
+                '★ 其余网盘（百度/阿里/夸克/UC）无公开登录接口，「配置 Cookie」保留'
+            ]
+        },
         {
             ver: '4.1.0',
             date: '2026-10-25',
