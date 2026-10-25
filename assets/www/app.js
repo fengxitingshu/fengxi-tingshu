@@ -768,22 +768,41 @@
         //   调度一次 discoverSources，这里再加一次就是双倍重绘（卡）。
     };
 
-    /** 管理态：批量删除（内置源删不掉会如实报 0，可改用「停用」） */
+    /** 管理态：批量删除。★ v4.1：内置/插件源删不掉（native 会拒绝），
+     *  之前直接对它们调 removeSourceById → ok=false，源"删除后还在"，
+     *  用户以为坏了。现在先分流：内置/插件源自动改为**停用**并明确告知，
+     *  其余（JSON 自定义源 / Python 源）真正删除。 */
     ui.homeSrcSelDelete = function () {
-        var todo = [];
-        for (var k in App.homeSrcSel) if (App.homeSrcSel[k]) todo.push(k);
-        if (!todo.length) { TS.toast('还没有勾选任何源'); return; }
-        ui.confirmSheet('确定删除选中的 ' + todo.length + ' 个源？删除后需要重新导入；' +
-                        '内置源不可删除（可改用「停用」）。', function () {
-            for (var i = 0; i < todo.length; i++) TS.call('removeSourceById', todo[i]);
+        var todo = [], dis = [];
+        for (var k in App.homeSrcSel) {
+            if (!App.homeSrcSel[k]) continue;
+            var s = findSource(k);
+            if (s && (s.builtin || pluginPathOf(k))) dis.push(k);
+            else todo.push(k);
+        }
+        if (!todo.length && !dis.length) { TS.toast('还没有勾选任何源'); return; }
+        var msg = '确定删除选中的源？';
+        if (dis.length) msg += '其中 ' + dis.length + ' 个内置/插件源不可删除，将自动改为停用。';
+        ui.confirmSheet(msg, function () {
+            var all = todo.length + dis.length;
+            if (dis.length) App._bulkSw = { left: dis.length, total: dis.length, on: false };
+            if (todo.length) App._bulkDel = { left: todo.length, total: todo.length, done: 0 };
+            var i;
+            for (i = 0; i < dis.length; i++) TS.call('setSourceEnabled', dis[i], false);
+            for (i = 0; i < todo.length; i++) TS.call('removeSourceById', todo[i]);
             App.homeSrcSel = {};
-            TS.toast('正在删除 ' + todo.length + ' 个源…');
-            // 删除回调只刷管理页；这里主动重拉源清单并重画首页源列表
+            TS.toast(todo.length ? ('正在删除 ' + todo.length + ' 个源…')
+                                 : ('正在停用 ' + dis.length + ' 个源…'));
+            // 回调（onCustomChanged / onSourceChanged）会统一计数、提示并刷新；
+            // 这里只留一次兜底整表重拉（万一某条回调丢了）
             setTimeout(function () {
                 App.homeSrcBatch = false;
                 App.homeSrcSel = {};
+                App._bulkDel = null;
+                App._bulkSw = null;
+                TS.call('listSources');
                 TS.call('discoverSources');
-            }, 600);
+            }, 1500);
         });
     };
 
@@ -1351,7 +1370,8 @@
         for (var i = 0; i < list.length; i++) {
             var on = App.home.src === list[i].id;
             h += '<div class="srcdd-item' + (on ? ' on' : '') +
-                 '" onclick="App.ui.homePickSrc(\'' + escAttr(list[i].id) + '\')">' +
+                 '" data-id="' + escAttr(list[i].id) + '"' +
+                 ' onclick="App.ui.homePickSrc(\'' + escAttr(list[i].id) + '\')">' +
                  '<span>' + TS.esc(list[i].name) + '</span>' +
                  '<span class="tick">✓</span></div>';
         }
@@ -1367,18 +1387,79 @@
             for (var c2 = 0; c2 < custom.length; c2++) {
                 var cOn = App.home.src === custom[c2].id;
                 h += '<div class="srcdd-item' + (cOn ? ' on' : '') +
-                     '" onclick="App.ui.homePickSrc(\'' + escAttr(custom[c2].id) + '\')">' +
+                     '" data-id="' + escAttr(custom[c2].id) + '"' +
+                     ' onclick="App.ui.homePickSrc(\'' + escAttr(custom[c2].id) + '\')">' +
                      '<span>' + TS.esc(custom[c2].alias || custom[c2].name || '本地书源') + '</span>' +
                      '<span class="tick">✓</span></div>';
             }
         }
         $('homeSrcList').innerHTML = h;
+        bindSrcPopLongPress();                   // ★ v4.1：长按项 → 编辑/停用/删除
         pop.classList.remove('hide');
         $('homeSrcBtn').classList.add('open');
         // 点页面任意其它地方收起（用捕获阶段，避免被 stopPropagation 挡掉）
         setTimeout(function () {
             document.addEventListener('click', _ddOutside, true);
         }, 0);
+    };
+
+    /**
+     * ★ v4.1：源下拉项的长按手势。
+     * 长按 480ms 弹出统一长按菜单（重命名 / 停用启用 / 测试 / 删除），
+     * 滑动取消；长按触发后吞掉随后的 click（不会误选源）。
+     */
+    function bindSrcPopLongPress() {
+        var list = $('homeSrcList');
+        if (!list) return;
+        // 每次 innerHTML 重画后重绑：克隆替换法自动丢弃旧监听
+        var fresh = list.cloneNode(false);       // 只克隆节点本身，不带走子节点
+        fresh.innerHTML = list.innerHTML;
+        list.parentNode.replaceChild(fresh, list);
+        var timer = null, fired = false, sx = 0, sy = 0;
+        fresh.addEventListener('touchstart', function (e) {
+            var t = e.target;
+            while (t && t !== fresh && !(t.classList && t.classList.contains('srcdd-item'))) {
+                t = t.parentNode;
+            }
+            if (!t || t === fresh || !t.getAttribute('data-id')) return;
+            var id = t.getAttribute('data-id');
+            var p = e.touches[0];
+            sx = p.clientX; sy = p.clientY; fired = false;
+            timer = setTimeout(function () {
+                timer = null; fired = true;
+                ui.homeSrcCtx(id, sx, sy);
+            }, 480);
+        }, { passive: true });
+        fresh.addEventListener('touchmove', function (e) {
+            if (!timer) return;
+            var p = e.touches[0];
+            if (Math.abs(p.clientX - sx) + Math.abs(p.clientY - sy) < 10) return;
+            clearTimeout(timer); timer = null;
+        }, { passive: true });
+        fresh.addEventListener('touchend', function (e) {
+            if (timer) { clearTimeout(timer); timer = null; }
+            if (fired) e.preventDefault();       // 长按后的 click 吞掉
+        }, { passive: false });
+    }
+
+    /** ★ v4.1：长按下拉里的源 → 编辑/停用启用/测试/删除（不可删的源不给删除项） */
+    ui.homeSrcCtx = function (sid, x, y) {
+        var s = findSource(sid);
+        var nm = s ? (s.alias || s.name || sid) : sid;
+        ui.closeSrcPop();                        // 先收下拉，再弹菜单
+        var en = s ? s.enabled !== false : true;
+        var isBuiltin = s && (s.builtin || pluginPathOf(sid));
+        var items = [
+            { label: '重命名', icon: '✏️', pick: function () { ui.renameSource(sid); } },
+            { label: en ? '停用' : '启用', icon: en ? '⏸' : '▶',
+              pick: function () { TS.call('setSourceEnabled', sid, !en); } },
+            { label: '测试连通', icon: '📡', pick: function () { ui.testSource(sid); } }
+        ];
+        if (!isBuiltin) {
+            items.push({ label: '删除', icon: '🗑', danger: true,
+                         pick: function () { ui.menuDelete(sid); } });
+        }
+        ctxMenu(Math.max(8, x - 20), Math.max(60, y + 12), items);
     };
 
     function _ddOutside(e) {
@@ -2135,6 +2216,17 @@
         c.scrollTop = 0;
     }
 
+    /** ★ v4.1：详情失败态的「重试一次」—— 清缓存重新拉章节 */
+    ui.detailRetry = function () {
+        App._detailRetried = false;
+        App.detailError = '';
+        if (App.page === SUBS.detail) renderDetailSkeleton(App.book);
+        TS.call('clearDetailCache');
+        setTimeout(function () {
+            TS.call('detailFromJson', JSON.stringify(App.book));
+        }, 300);
+    };
+
     window.onHistoryGet = function (h) {
         App._lastHistory = (h && h.book && h.book.title) ? h : null;
         // ★ 只在章节已经到位时才重绘。
@@ -2156,6 +2248,25 @@
         if (b) App.book = b;
         App.chapters = d.chapters || [];
         App.detailIntro = d.intro || '';
+        // ★ v4.1：章节表为空 → 记录失败原因并**自动清缓存重试一次**。
+        //   不少失败是暂时的（网络抖动 / 上次失败结果被详情缓存钉住），
+        //   重试一次能救回大半；重试还空才亮失败态。
+        App.detailError = (!App.chapters.length) ? (d.error || '') : '';
+        if (!App.chapters.length) {
+            if (!App._detailRetried) {
+                App._detailRetried = true;
+                if (App.page === SUBS.detail) renderDetailSkeleton(App.book);
+                TS.toast('章节加载失败，正在重试…');
+                TS.call('clearDetailCache');
+                setTimeout(function () {
+                    TS.call('detailFromJson', JSON.stringify(App.book));
+                }, 900);
+            } else {
+                App._detailRetried = false;      // 重试也失败：亮失败态，不再死循环
+            }
+        } else {
+            App._detailRetried = false;
+        }
         // ★ v3.7.9：一批新章节到手，区间段号要按新总数收敛（上一本可能只有 1 段，
         //   这本有 8 段，用户上次停在第 3 段 → 保持不变；反之超出就夹回最后一段）。
         loadChapView();
@@ -2358,8 +2469,25 @@
         var chs = App.chapters;
 
         if (!chs.length) {
-            c.innerHTML = '<div class="empty"><div class="big">😢</div>没读到章节<br>' +
-                '<span style="font-size:12.5px">这本书在当前源可能已失效，返回换同名书试试</span></div>';
+            // ★ v4.1：失败态给出具体原因（native 回传的各源报错）+ 明确的下一步
+            var err = App.detailError || '';
+            var srcNm = b.source ? sourceName(b.source) : '';
+            var h2 = '<div class="empty"><div class="big">😢</div>没读到章节<br>' +
+                '<span style="font-size:12.5px">这本书在当前源可能已失效，返回换同名书试试</span>';
+            if (err) {
+                h2 += '<div style="font-size:11.5px;color:var(--text2);margin-top:10px;' +
+                      'max-width:300px;word-break:break-all">失败详情：' +
+                      TS.esc(err) + '</div>';
+            }
+            if (srcNm) {
+                h2 += '<div style="font-size:11.5px;color:var(--text2);margin-top:4px">来源：' +
+                      TS.esc(srcNm) + '</div>';
+            }
+            h2 += '<div style="margin-top:14px">' +
+                  '<button class="mini" onclick="App.ui.detailRetry()">重试一次</button> ' +
+                  '<button class="mini ghost" onclick="App.ui.back()">返回</button></div>';
+            h2 += '</div>';
+            c.innerHTML = h2;
             return;
         }
 
@@ -3250,7 +3378,12 @@
             if (e.touches.length !== 1) return;
             var t = e.touches[0], r = el.getBoundingClientRect();
             sx = t.clientX; sy = t.clientY;
-            ox = r.left; oy = r.top;
+            // ★ v4.1：按下瞬间 :active 的 scale(.92) 会把 rect 缩小一点，
+            //   直接用 r.left/r.top 起算会让球在指尖下"歪"几个像素。
+            //   按 (锁定尺寸 - 实际rect)/2 补回缩放差。
+            var w = el.offsetWidth || 58, h = el.offsetHeight || 58;
+            ox = r.left - (w - r.width) / 2;
+            oy = r.top - (h - r.height) / 2;
             moved = false; dragging = true;
         }, { passive: true });
         el.addEventListener('touchmove', function (e) {
@@ -3277,19 +3410,44 @@
             el.style.transition = '';
             if (moved) {
                 e.preventDefault();   // 拖完松手不再触发 click（避免误进播放页）
+                // ★ v4.1：位置改存「靠边 + 距离 + 纵向比例」，不再存绝对像素 ——
+                //   换分辨率/旋转屏幕/折叠屏展开后原位语义仍成立，不会跑偏。
                 try {
-                    localStorage.setItem('ballPos',
-                        Math.round(parseFloat(el.style.left) || 0) + ',' +
-                        Math.round(parseFloat(el.style.top) || 0));
+                    var w = el.offsetWidth || 58;
+                    var x = parseFloat(el.style.left) || 0;
+                    var y = parseFloat(el.style.top) || 0;
+                    var left = (x + w / 2) < window.innerWidth / 2;
+                    var dist = left ? x : (window.innerWidth - x - w);
+                    var yr = Math.max(0, Math.min(1, y / Math.max(1, window.innerHeight)));
+                    localStorage.setItem('ballPos', JSON.stringify({
+                        v: 2, left: left ? 1 : 0, dist: Math.round(dist), yr: +yr.toFixed(4)
+                    }));
                 } catch (err) {}
             }
         }, { passive: false });
-        // 恢复上次位置（夹回屏幕内：分辨率/方向变了也不丢）
+        // ★ v4.1：恢复上次位置 —— 新格式（靠边+比例）与旧格式（绝对像素）都认；
+        //   无论哪种，最终都按当前视口尺寸夹回屏幕内。
         try {
-            var p = (localStorage.getItem('ballPos') || '').split(',');
-            if (p.length === 2 && isFinite(+p[0]) && isFinite(+p[1])) {
-                var x = Math.max(4, Math.min(window.innerWidth - 62, +p[0]));
-                var y = Math.max(4, Math.min(window.innerHeight - 62, +p[1]));
+            var raw = localStorage.getItem('ballPos') || '';
+            var w = el.offsetWidth || 58, h = el.offsetHeight || 58;
+            var x = null, y = null;
+            if (raw.charAt(0) === '{') {
+                var o = JSON.parse(raw);
+                if (o && o.v === 2) {
+                    var dist = Math.max(0, Math.min(window.innerWidth - w - 4, +o.dist || 0));
+                    x = o.left ? dist : (window.innerWidth - w - dist);
+                    y = Math.max(4, Math.min(window.innerHeight - h - 4, (+o.yr || 0) * window.innerHeight));
+                }
+            } else {
+                var p = raw.split(',');
+                if (p.length === 2 && isFinite(+p[0]) && isFinite(+p[1])) {
+                    x = +p[0];
+                    y = +p[1];
+                }
+            }
+            if (x != null && y != null) {
+                x = Math.max(4, Math.min(window.innerWidth - w - 4, x));
+                y = Math.max(4, Math.min(window.innerHeight - h - 4, y));
                 el.style.left = x + 'px';
                 el.style.top = y + 'px';
                 el.style.right = 'auto';
@@ -5356,6 +5514,7 @@
             map[App.sources[i].id] = App.sources[i].alias || App.sources[i].name;
         }
         App.sourceNames = map;
+        reconcileHomeSources();
         paintSourceEntry();
         if (App.page === SUBS.sources) paintSources();
         else if (App.page === SUBS.srcGroup) {
@@ -6706,6 +6865,7 @@
                 TS.toast(done === total
                     ? ('已删除 ' + done + ' 个源')
                     : ('已删除 ' + done + ' 个，' + (total - done) + ' 个失败'));
+                reconcileHomeSources();          // ★ v4.1：首页缓存同步剔除
                 paintSourceEntry();
                 refreshSourceViews();
             }
@@ -6718,6 +6878,7 @@
             for (var i = arr.length - 1; i >= 0; i--) {
                 if (arr[i].id === o.id) arr.splice(i, 1);
             }
+            reconcileHomeSources();              // ★ v4.1：首页缓存同步剔除
             paintSourceEntry();
             refreshSourceViews();
         } else if (o && o.id) {
@@ -6738,6 +6899,31 @@
             refreshSourceViews();
         }
     };
+
+    /**
+     * ★ v4.1：按权威源表（App.sources）校正 App.homeSources。
+     * 首页源下拉/选择页渲染用的是 discoverSources 缓存的 homeSources，
+     * 之前删除/停用源后只更新了 App.sources，homeSources 不动 ——
+     * 表现为「首页删了，源管理还在；源管理删了，首页还在」的双向不同步。
+     * 规则：权威表非空时，id 不在表里的源视为已删除（剔除）；
+     * 在表里的跟随其 enabled 状态。
+     */
+    function reconcileHomeSources() {
+        var hs = App.homeSources;
+        if (!hs || !hs.length || !App.sources || !App.sources.length) return;
+        var st = {};
+        for (var i = 0; i < App.sources.length; i++) st[App.sources[i].id] = App.sources[i];
+        var out = [];
+        for (var h = 0; h < hs.length; h++) {
+            var s = hs[h];
+            if (!s || !s.id) continue;
+            var m = st[s.id];
+            if (!m) continue;                       // 已被删除 → 首页缓存同步剔除
+            s.enabled = m.enabled;                  // 停用状态跟随权威表
+            out.push(s);
+        }
+        App.homeSources = out;
+    }
 
     /** 删除/卸载后，统一按当前页刷新视图 */
     function refreshSourceViews() {
@@ -9133,6 +9319,26 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.1.0',
+            date: '2026-10-25',
+            fixes: [
+                '★★ 修复本地书源扫不到音频：媒体库不再按"音乐/时长"过滤（听书文件',
+                '   常被标成非音乐且时长未提取，之前整批漏掉），文件系统兜底扫描改为',
+                '   始终执行（.nomedia 目录、未索引文件不再丢）；存储权限请求同时兼容',
+                '   READ_MEDIA_AUDIO 与 READ_EXTERNAL_STORAGE（各家 ROM 都能弹窗）',
+                '★★ 修复小分辨率下悬浮球播放键偏移：播放图标居中改用 grid（老 WebView',
+                '   的 flex 偶发错位），小屏(<360px)球体自动缩到 48px，拖动起点补偿',
+                '   按压缩放差，位置记忆改为"靠边+比例"（旋转/换分辨率不再跑偏）',
+                '★ 源识别失败可救回：章节表为空时自动清缓存重试一次；仍失败会显示',
+                '   各源的具体报错 + 来源 + 一键重试按钮（之前只有一句"没读到章节"）',
+                '★★ 修复源列表双向不同步：首页删源后"书源管理"还留着、反之亦然 ——',
+                '   现在所有源操作后首页缓存与权威源表严格对齐',
+                '★ 首页左上角源下拉：长按任意源弹出 重命名/停用启用/测试连通/删除',
+                '   （内置与插件源不可删，提供停用）；首页批量删除对内置/插件源',
+                '   自动改为停用并明确提示，不再"点了删除却还在"'
+            ]
+        },
         {
             ver: '3.9.54',
             date: '2026-10-19',
