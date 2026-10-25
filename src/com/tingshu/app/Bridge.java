@@ -3978,15 +3978,18 @@ public class Bridge {
                         callback("onPlayError", new JSONObject());
                         return;
                     }
-                    // ★ v4.5.0：盘内扫描的书（shareUrl 形如 "__disk__|书名"）
-                    //   书名用文件夹名；分享书仍用「网盘名 · 分享」
+                    // ★ v4.6.0 修复串书：盘内书原来用书名原文当 id，书名里含
+                    //   「/」时 replaceAll(".*/","") 会把不同书截成同一个 id
+                    //   （「三体/上」「三体/下」都变「disk_上」级联撞 key）——
+                    //   历史/续播/直链缓存跟着串，表现就是「播的是别的书」。
+                    //   现在对 id 做消毒：非法字符全部换成 _，不同书必不同 id。
                     boolean disk = shareUrl != null && shareUrl.startsWith("__disk__|");
                     String bookName = disk
                             ? shareUrl.substring("__disk__|".length())
                             : com.tingshu.app.pan.PanResolver.nameOf(platform) + " · 分享";
-                    // 书：id 用分享标识（同一分享 = 同一本书，历史/续播才认得出）
-                    String shareId = shareUrl == null ? "" : shareUrl.replaceAll(".*/", "");
-                    final Book b = new Book(platform, (disk ? "disk_" : "share_") + shareId,
+                    String rawId = shareUrl == null ? "" : shareUrl.replaceAll(".*/", "");
+                    String bookId = rawId.replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_");
+                    final Book b = new Book(platform, (disk ? "disk_" : "share_") + bookId,
                             bookName);
                     b.url = com.tingshu.app.pan.PanSource.PREFIX + shareUrl;
                     b.intro = disk ? "来自网盘扫描" : (shareUrl == null ? "" : shareUrl);
@@ -4011,15 +4014,41 @@ public class Bridge {
                         public void run() { player.setQueue(b, chs, 0); }
                     });
 
+                    // ★ v4.6.0 修复「播的不是网盘资源」：网盘书不再走聚合
+                    //   audioWithFallback（按候选源顺序试，异常时静默换），
+                    //   而是**只走本网盘源**取直链——网盘书换到互联网源毫无意义，
+                    //   失败就如实报错。直链缓存/自愈不受影响（取链缓存 key
+                    //   以书 id 隔离，上面已消毒）。
                     final String[] out = new String[2];
                     @SuppressWarnings("unchecked")
                     final Map<String, String>[] outHdr = new Map[1];
-                    String url = Aggregator.audioWithFallback(b, 1, d, out, outHdr);
-                    if (url == null) {
-                        callback("onPlayError", new JSONObject());
+                    String urlTmp = null;
+                    Throwable chainErr = null;
+                    try {
+                        com.tingshu.app.pan.PanSource ps =
+                                new com.tingshu.app.pan.PanSource(platform);
+                        com.tingshu.app.data.Models.Chapter ch0 = chs.get(0);
+                        urlTmp = ps.audioUrl(ch0, b);
+                        out[0] = platform;
+                        out[1] = ch0.url;
+                        if (urlTmp != null && urlTmp.length() > 0) {
+                            try { outHdr[0] = ps.audioHeaders(urlTmp); } catch (Throwable ignored) {}
+                        }
+                    } catch (Throwable t) {
+                        chainErr = t;
+                    }
+                    if (urlTmp == null || urlTmp.length() == 0) {
+                        JSONObject e = new JSONObject();
+                        try {
+                            e.put("error", chainErr == null
+                                    ? "网盘直链获取失败（Cookie 失效或文件被删？）"
+                                    : "网盘取链失败：" + chainErr.getMessage());
+                        } catch (Throwable ignored) {}
+                        callback("onPlayError", e);
                         return;
                     }
-                    final String usedSrc = out[0] != null ? out[0] : platform;
+                    final String url = urlTmp;
+                    final String usedSrc = platform;
                     final Map<String, String> hdr = outHdr[0];
                     final String title = chs.get(0).title;
                     ui.post(new Runnable() {
