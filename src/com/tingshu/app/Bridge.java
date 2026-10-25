@@ -38,6 +38,11 @@ public class Bridge {
     /** 宿主 Activity，分享/主题等需要 Context 的能力用 */
     private final android.app.Activity activity;
 
+    /** ★ v4.2.0：上次自动弹存储权限的时间戳（3 秒节流，防连环弹窗） */
+    private volatile long lastAutoPermAt = 0L;
+    /** ★ v4.2.0：115 扫码轮询取消标志（关弹窗时置位） */
+    private volatile boolean panQrStopped = false;
+
     /** 播放控制接口，便于后续把实现从 Activity 换成 Service 而不动 Bridge */
     public interface PlayerControl {
         /**
@@ -3464,6 +3469,24 @@ public class Bridge {
                         o.put("error", String.valueOf(t.getMessage()));
                     } catch (Throwable ignored) {}
                 }
+                // ★ v4.2.0：权限不足时**自动弹出系统授权框**（用户点扫描不用再
+                //   多按一次「去授权」）。带 3 秒节流，避免权限回调没回来期间
+                //   反复点扫描导致连环弹窗；拒绝后走原有 needPermission 提示。
+                if (o.optBoolean("needPermission") && activity != null
+                        && (activity instanceof com.tingshu.app.MainActivity)) {
+                    final long now = System.currentTimeMillis();
+                    if (now - lastAutoPermAt > 3000L) {
+                        lastAutoPermAt = now;
+                        ui.post(new Runnable() {
+                            public void run() {
+                                try {
+                                    ((com.tingshu.app.MainActivity) activity)
+                                            .requestStoragePermission();
+                                } catch (Throwable ignored) {}
+                            }
+                        });
+                    }
+                }
                 callback("onLocalScan", o);
             }
         });
@@ -3642,6 +3665,175 @@ public class Bridge {
                 callback("onPanSaved", o);
             }
         });
+    }
+
+    // ==================== ★ v4.2.0 网盘登录（免粘贴 Cookie） ====================
+
+    /**
+     * 115 扫码登录：取二维码 → 后台轮询 → 确认后自动拿 Cookie 落库。
+     *
+     * <p>回调 {@code onPanQr}：
+     * <ul>
+     *   <li>{ok:true, qr:"https://..."} —— 前端渲染二维码</li>
+     *   <li>{ok:true, state:0/1, msg:".."} —— 等待扫码 / 已扫码</li>
+     *   <li>{ok:true, done:true, platform} —— 登录成功，Cookie 已存</li>
+     *   <li>{ok:true, expired:true, msg} —— 二维码过期，前端提示重开</li>
+     *   <li>{ok:false, error} —— 网络/接口错误</li>
+     * </ul>
+     * 轮询最长 120 秒（60 次 × 2s），期间调 {@link #panQrStop()} 可随时取消。
+     */
+    @JavascriptInterface
+    public void panQrStart(final String platform) {
+        if (!"pan_115".equals(platform)) {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("ok", false);
+                o.put("platform", platform);
+                o.put("error", "该平台暂不支持扫码登录");
+            } catch (Throwable ignored) {}
+            callback("onPanQr", o);
+            return;
+        }
+        panQrStopped = false;
+        bg(new Runnable() {
+            public void run() {
+                String uid = "", time = "", sign = "";
+                try {
+                    JSONObject t = com.tingshu.app.pan.PanLogin.qr115Token();
+                    uid = t.optString("uid", "");
+                    time = String.valueOf(t.optLong("time", 0L));
+                    sign = t.optString("sign", "");
+                    String qr = t.optString("qrcode", "");
+                    if (qr.length() == 0) {
+                        qr = "https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode?uid=" + uid;
+                    }
+                    JSONObject o = new JSONObject();
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                    o.put("qr", qr);
+                    callback("onPanQr", o);
+                } catch (Throwable e) {
+                    callback("onPanQr", errObj(platform, String.valueOf(e.getMessage())));
+                    return;
+                }
+                // 轮询扫码状态（最长 120 秒）
+                for (int i = 0; i < 60 && !panQrStopped; i++) {
+                    try {
+                        Thread.sleep(2000L);
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
+                    if (panQrStopped) return;
+                    int st;
+                    try {
+                        st = com.tingshu.app.pan.PanLogin.qr115Status(uid, time, sign);
+                    } catch (Throwable e) {
+                        continue;   // 单次网络抖动不终止，下一轮再试
+                    }
+                    if (st == 1) {
+                        JSONObject o = new JSONObject();
+                        try {
+                            o.put("ok", true);
+                            o.put("platform", platform);
+                            o.put("state", 1);
+                            o.put("msg", "已扫码，请在手机上确认登录");
+                        } catch (Throwable ignored) {}
+                        callback("onPanQr", o);
+                        continue;
+                    }
+                    if (st < 0) {
+                        JSONObject o = new JSONObject();
+                        try {
+                            o.put("ok", true);
+                            o.put("platform", platform);
+                            o.put("expired", true);
+                            o.put("msg", "二维码已过期，请重新打开扫码登录");
+                        } catch (Throwable ignored) {}
+                        callback("onPanQr", o);
+                        return;
+                    }
+                    if (st >= 2) {
+                        try {
+                            String ck = com.tingshu.app.pan.PanLogin.qr115Cookie(uid);
+                            com.tingshu.app.pan.PanResolver.saveCookie(platform, ck);
+                            JSONObject o = new JSONObject();
+                            o.put("ok", true);
+                            o.put("platform", platform);
+                            o.put("done", true);
+                            callback("onPanQr", o);
+                        } catch (Throwable e) {
+                            // 确认了但取 Cookie 失败（偶发在刚扫码瞬间）——
+                            // 提示后再试一轮，仍失败才报错
+                            if (i < 58) continue;
+                            callback("onPanQr", errObj(platform,
+                                    "已确认但取 Cookie 失败：" + e.getMessage()));
+                        }
+                        return;
+                    }
+                    // st == 0：继续等
+                }
+                if (!panQrStopped) {
+                    JSONObject o = new JSONObject();
+                    try {
+                        o.put("ok", true);
+                        o.put("platform", platform);
+                        o.put("expired", true);
+                        o.put("msg", "等待超时，请重新打开扫码登录");
+                    } catch (Throwable ignored) {}
+                    callback("onPanQr", o);
+                }
+            }
+        });
+    }
+
+    /** 停止扫码轮询（关弹窗 / 换二维码） */
+    @JavascriptInterface
+    public void panQrStop() {
+        panQrStopped = true;
+    }
+
+    /**
+     * 天翼云盘账号密码登录（RSA 加密提交，成功后自动取 COOKIE_LOGIN_USER）。
+     *
+     * <p>回调 {@code onPanPwdLogin}：{ok:true, platform} 或 {ok:false, error}。
+     */
+    @JavascriptInterface
+    public void panPwdLogin(final String platform, final String user, final String pwd) {
+        if (!"pan_tianyi".equals(platform)) {
+            callback("onPanPwdLogin", errObj(platform, "该平台暂不支持密码登录"));
+            return;
+        }
+        final String u = (user == null) ? "" : user.trim();
+        final String p = (pwd == null) ? "" : pwd;
+        if (u.length() == 0 || p.length() == 0) {
+            callback("onPanPwdLogin", errObj(platform, "账号和密码都不能为空"));
+            return;
+        }
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    String ck = com.tingshu.app.pan.PanLogin.login189(u, p);
+                    com.tingshu.app.pan.PanResolver.saveCookie(platform, ck);
+                    JSONObject o = new JSONObject();
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                    callback("onPanPwdLogin", o);
+                } catch (Throwable e) {
+                    callback("onPanPwdLogin",
+                            errObj(platform, String.valueOf(e.getMessage())));
+                }
+            }
+        });
+    }
+
+    private JSONObject errObj(String platform, String error) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("ok", false);
+            o.put("platform", platform == null ? "" : platform);
+            o.put("error", error == null ? "" : error);
+        } catch (Throwable ignored) {}
+        return o;
     }
 
     /**
