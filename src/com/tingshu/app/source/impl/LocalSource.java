@@ -64,6 +64,9 @@ public final class LocalSource extends AbsSource {
     private static final long TTL = 60_000L;
     private static final Object LOCK = new Object();
 
+    /** ★ v4.2.0：扫描结果持久化文件（filesDir 下，重开 App 免重扫） */
+    private static final String CACHE_FILE = "local_scan_cache.json";
+
     private static volatile String lastError = "";
 
     /**
@@ -140,6 +143,13 @@ public final class LocalSource extends AbsSource {
     public static List<Book> scan(boolean force) {
         long now = System.currentTimeMillis();
         if (!force && now - scanAt < TTL && !CACHE.isEmpty()) return cached();
+        // ★ v4.2.0：进程重启后内存缓存是空的 —— 先尝试从磁盘恢复上一次
+        //   扫描结果。恢复成功就直接用（不再强制全盘重扫，「重开 App 还得
+        //   重新扫描」的老问题到此为止）；只有用户手动点「扫描本机音频」
+        //   （force=true）或缓存文件不存在时才真正重扫。
+        if (!force && CACHE.isEmpty()) {
+            if (restoreFromDisk()) return cached();
+        }
         Context ctx = App.ctx();
         if (ctx == null) { lastError = "no-ctx"; return cached(); }
         if (!hasReadPermission(ctx)) {
@@ -209,8 +219,108 @@ public final class LocalSource extends AbsSource {
             CACHE.putAll(out);
             scanAt = System.currentTimeMillis();
             lastError = "";
+            persistLocked();
         }
         return cached();
+    }
+
+    // ==================== ★ v4.2.0 扫描结果持久化 ====================
+
+    private static java.io.File cacheFile() {
+        try {
+            Context ctx = App.ctx();
+            if (ctx == null) return null;
+            return new java.io.File(ctx.getFilesDir(), CACHE_FILE);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 扫描成功后把结果写盘（同步写：文件很小，且调用点都在后台线程） */
+    private static void persistLocked() {
+        java.io.File f = cacheFile();
+        if (f == null) return;
+        try {
+            org.json.JSONObject root = new org.json.JSONObject();
+            root.put("root", rootDir());
+            root.put("scanAt", scanAt);
+            org.json.JSONArray books = new org.json.JSONArray();
+            for (Map.Entry<String, Book> e : CACHE.entrySet()) {
+                org.json.JSONObject b = new org.json.JSONObject();
+                b.put("bookId", e.getKey());
+                b.put("title", e.getValue().title == null ? "" : e.getValue().title);
+                b.put("url", e.getValue().url == null ? "" : e.getValue().url);
+                books.put(b);
+            }
+            root.put("books", books);
+            org.json.JSONObject files = new org.json.JSONObject();
+            for (Map.Entry<String, List<String>> e : FILES.entrySet()) {
+                files.put(e.getKey(), new org.json.JSONArray(e.getValue()));
+            }
+            root.put("files", files);
+            java.io.Writer w = new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(f), "UTF-8");
+            w.write(root.toString());
+            w.close();
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * 从磁盘恢复上次扫描结果（进程重启后 CACHE/FILES 已空）。
+     *
+     * <p>恢复时校验「保存时的扫描目录」与当前一致 —— 用户中途改过扫描
+     * 范围就作废（旧目录的书会误导），触发一次真正的重扫。
+     *
+     * @return true = 恢复成功且非空
+     */
+    private static boolean restoreFromDisk() {
+        synchronized (LOCK) {
+            if (!CACHE.isEmpty()) return true;
+            java.io.File f = cacheFile();
+            if (f == null || !f.exists()) return false;
+            try {
+                java.io.Reader r = new java.io.InputStreamReader(
+                        new java.io.FileInputStream(f), "UTF-8");
+                char[] buf = new char[1024];
+                StringBuilder sb = new StringBuilder();
+                int n;
+                while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
+                r.close();
+                org.json.JSONObject root = new org.json.JSONObject(sb.toString());
+                if (!rootDir().equals(root.optString("root", ""))) return false;
+                org.json.JSONArray books = root.optJSONArray("books");
+                org.json.JSONObject files = root.optJSONObject("files");
+                if (books == null || books.length() == 0 || files == null) return false;
+                CACHE.clear();
+                FILES.clear();
+                for (int i = 0; i < books.length(); i++) {
+                    org.json.JSONObject b = books.optJSONObject(i);
+                    if (b == null) continue;
+                    String bookId = b.optString("bookId", "");
+                    if (bookId.length() == 0) continue;
+                    Book bk = new Book(ID, bookId, b.optString("title", "未命名"));
+                    bk.url = b.optString("url", "");
+                    bk.artist = "";
+                    CACHE.put(bookId, bk);
+                }
+                java.util.Iterator<String> it = files.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    org.json.JSONArray arr = files.optJSONArray(k);
+                    if (arr == null) continue;
+                    List<String> fs = new ArrayList<String>();
+                    for (int i = 0; i < arr.length(); i++) {
+                        String p = arr.optString(i, "");
+                        if (p.length() > 0) fs.add(p);
+                    }
+                    FILES.put(k, fs);
+                }
+                scanAt = root.optLong("scanAt", System.currentTimeMillis());
+                return !CACHE.isEmpty();
+            } catch (Throwable t) {
+                return false;
+            }
+        }
     }
 
     /** 往「文件夹 → 文件列表」中间表加一条（保序去重） */
