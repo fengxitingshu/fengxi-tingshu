@@ -2851,3 +2851,22 @@ body.multi-on .chk { display: block; }
     padding: 10px 4px 2px;
 }
 .homebatchbar .sbb-cnt { font-size: 13px; color: var(--text2, #666); margin-right: auto; }
+
+/* ==================== ★ v4.6.0 盘内扫描书列表 ==================== */
+.panbook-hd {
+    font-size: 12px; opacity: .72; margin: 10px 0 6px;
+}
+.panbook-list { display: flex; flex-direction: column; gap: 6px; }
+.panbook-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border-radius: 10px;
+    background: rgba(127, 179, 255, .06);
+    border: 1px solid rgba(127, 179, 255, .12);
+}
+.panbook-main { flex: 1; min-width: 0; }
+.panbook-name {
+    font-size: 14px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.panbook-sub { font-size: 12px; opacity: .6; margin-top: 2px; }
+.panbook-row .mini { flex: none; }
