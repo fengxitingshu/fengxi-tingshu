@@ -3786,6 +3786,52 @@ public class Bridge {
         });
     }
 
+    /**
+     * v4.5.0：扫描已登录网盘内的有声书（DFS 找含音频的文件夹）。
+     *
+     * <p>回调 {@code onPanScan}：{ok:true, platform, books:[{name, files:[…]}]}
+     * 或 {ok:false, error}。阿里云盘网页接口有签名风控，返回 ok:false 说明原因。
+     */
+    @JavascriptInterface
+    public void panScan(final String platform) {
+        bg(new Runnable() {
+            public void run() {
+                JSONObject o = new JSONObject();
+                try {
+                    java.util.List<com.tingshu.app.pan.PanResolver.DiskBook> books =
+                            com.tingshu.app.pan.PanResolver.scanDisk(platform);
+                    JSONArray arr = new JSONArray();
+                    for (com.tingshu.app.pan.PanResolver.DiskBook b : books) {
+                        JSONObject bj = new JSONObject();
+                        bj.put("name", b.name);
+                        JSONArray fs = new JSONArray();
+                        for (com.tingshu.app.pan.PanResolver.PanFile f : b.files) {
+                            JSONObject fj = new JSONObject();
+                            fj.put("id", f.id);
+                            fj.put("name", f.name);
+                            fj.put("size", f.size);
+                            fj.put("dir", f.dir);
+                            fj.put("token", f.token == null ? "" : f.token);
+                            fs.put(fj);
+                        }
+                        bj.put("files", fs);
+                        arr.put(bj);
+                    }
+                    o.put("ok", true);
+                    o.put("platform", platform);
+                    o.put("books", arr);
+                } catch (Throwable t) {
+                    try {
+                        o.put("ok", false);
+                        o.put("platform", platform);
+                        o.put("error", String.valueOf(t.getMessage()));
+                    } catch (Throwable ignored) {}
+                }
+                callback("onPanScan", o);
+            }
+        });
+    }
+
     /** 停止扫码轮询（关弹窗 / 换二维码） */
     @JavascriptInterface
     public void panQrStop() {
@@ -3932,12 +3978,18 @@ public class Bridge {
                         callback("onPlayError", new JSONObject());
                         return;
                     }
+                    // ★ v4.5.0：盘内扫描的书（shareUrl 形如 "__disk__|书名"）
+                    //   书名用文件夹名；分享书仍用「网盘名 · 分享」
+                    boolean disk = shareUrl != null && shareUrl.startsWith("__disk__|");
+                    String bookName = disk
+                            ? shareUrl.substring("__disk__|".length())
+                            : com.tingshu.app.pan.PanResolver.nameOf(platform) + " · 分享";
                     // 书：id 用分享标识（同一分享 = 同一本书，历史/续播才认得出）
                     String shareId = shareUrl == null ? "" : shareUrl.replaceAll(".*/", "");
-                    final Book b = new Book(platform, "share_" + shareId,
-                            com.tingshu.app.pan.PanResolver.nameOf(platform) + " · 分享");
+                    final Book b = new Book(platform, (disk ? "disk_" : "share_") + shareId,
+                            bookName);
                     b.url = com.tingshu.app.pan.PanSource.PREFIX + shareUrl;
-                    b.intro = shareUrl == null ? "" : shareUrl;
+                    b.intro = disk ? "来自网盘扫描" : (shareUrl == null ? "" : shareUrl);
 
                     final List<com.tingshu.app.data.Models.Chapter> chs =
                             new ArrayList<com.tingshu.app.data.Models.Chapter>();
