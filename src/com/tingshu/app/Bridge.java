@@ -3793,6 +3793,29 @@ public class Bridge {
     }
 
     /**
+     * v4.4.0：网盘「网页登录」——内嵌 WebView 打开网盘官方登录页，
+     * 用户正常登录后自动抓 Cookie 保存，成功后回调 onPanSaved。
+     */
+    @JavascriptInterface
+    public void panWebLogin(final String platform) {
+        activity.runOnUiThread(new Runnable() {
+            public void run() {
+                com.tingshu.app.pan.PanWebLogin.show(activity, platform, new Runnable() {
+                    public void run() {
+                        JSONObject o = new JSONObject();
+                        try {
+                            o.put("ok", true);
+                            o.put("platform", platform);
+                            o.put("ready", true);
+                        } catch (Throwable ignored) {}
+                        callback("onPanSaved", o);
+                    }
+                });
+            }
+        });
+    }
+
+    /**
      * 天翼云盘账号密码登录（RSA 加密提交，成功后自动取 COOKIE_LOGIN_USER）。
      *
      * <p>回调 {@code onPanPwdLogin}：{ok:true, platform} 或 {ok:false, error}。
