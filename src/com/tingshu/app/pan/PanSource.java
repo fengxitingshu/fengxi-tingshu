@@ -75,12 +75,21 @@ public final class PanSource extends AbsSource {
     private static final java.util.Map<String, List<Chapter>> DISK_CH =
             new java.util.HashMap<String, List<Chapter>>();
 
+    /**
+     * 盘内书统一 id（v4.7.1）：与 Bridge.panPlay 的 bookId 用同一套规则——
+     * "disk_" 前缀 + share 截到最后一个斜杠（同 Bridge 的正则）再消毒非法字符。
+     * <p>★ v4.7.0 的 bug：写入端（Bridge）算出来是 {@code disk___disk___书名}，
+     * 读取端（detail）只用书名消毒版 {@code 书名}，两个 key 对不上 →
+     * 选集/详情永远拿到空列表（「不能选集」的根因之一）。
+     */
+    public static String diskBookId(String share) {
+        String rawId = share == null ? "" : share.replaceAll(".*/", "");
+        return "disk_" + rawId.replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_");
+    }
+
     /** 从 "__disk__|<id>" 里取出消毒后的书 id（与 Bridge.panPlay 的 bookId 一致） */
     public static String diskIdOf(String share) {
-        // Bridge 存的是 "__disk__|" + 书名；bookId 消毒发生在 Bridge 侧，
-        // 这里读缓存时用 share 的「书名消毒版」当 key（与写入端约定一致）
-        String name = share.startsWith("__disk__|") ? share.substring("__disk__|".length()) : share;
-        return name.replaceAll("[^0-9A-Za-z\\u4e00-\\u9fa5_-]", "_");
+        return diskBookId(share);
     }
 
     /** 播放时注册整份章节表（Bridge.panPlay 调用） */
@@ -164,15 +173,26 @@ public final class PanSource extends AbsSource {
         String[] parts = ch.url.split("\\|", -1);
         if (parts.length < 4) throw new Exception("网盘章节信息不完整");
         String p = parts[0];
-        String share = parts[1];
-        String fileId = parts[2];
-        String token = parts[3];
+        // ★ v4.7.1 修复「播放失败」根因：盘内书 chapter.url =
+        //   pid|__disk__|书名|fileId|token —— share 段本身含「|」，
+        //   按固定下标取会把「书名」当 fileId、「fileId」当 token，
+        //   整体错位一位 → 直链接口必然失败（报「第0集播放失败」）。
+        //   改成从尾部取：最后一段 = token，倒数第二段 = fileId，
+        //   中间全部拼回 share（兼容不含「|」的分享链接旧格式）。
+        String token = parts[parts.length - 1];
+        String fileId = parts[parts.length - 2];
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < parts.length - 2; i++) {
+            if (sb.length() > 0) sb.append('|');
+            sb.append(parts[i]);
+        }
+        String share = sb.toString();
         PanResolver.PanFile f = new PanResolver.PanFile();
         f.id = fileId;
         f.token = token;
         f.dir = false;
         // ★ v4.5.0：盘内文件（扫描网盘出来的）不走分享直链，走盘内直链
-        if ("__disk__".equals(share)) return PanResolver.diskDownloadUrl(p, f);
+        if (share.startsWith("__disk__")) return PanResolver.diskDownloadUrl(p, f);
         return PanResolver.downloadUrl(p, f, share);
     }
 
