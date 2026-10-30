@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<title>枫兮听书</title>
+<link rel="stylesheet" href="style.css">
+<!-- ★ v4.14.0-car：车机大屏驾驶样式（body.car 时生效，见 mode.js / build.sh CAR_MODE） -->
+<link rel="stylesheet" href="car.css">
+<!-- ★ v4.14.0-car：构建模式标志（std/car），build.sh 按变体覆盖生成 -->
+<script src="mode.js"></script>
+</head>
+<body>
+
+<!-- ★ v4.14.0：HTML 启动页已移除 —— 原生 SplashActivity 就是唯一启动层，
+     加载动画合并进了那里。保留 hideSplash() 调用（元素不存在时直接返回）。 -->
+
+<!-- ==================== 首页（发现好书） ==================== -->
+<div id="pageHome" class="page">
+  <div class="nav">
+    <!-- 左：源选择下拉；中：软件名；右：搜索 -->
+    <div class="srcdd" id="homeSrcDD">
+      <div class="srcdd-btn" id="homeSrcBtn" onclick="App.ui.homeSrcToggle(event)">
+        <span id="homeSrcName">发现好书</span>
+        <span class="srcdd-caret">&#9662;</span>
+      </div>
+      <!-- 悬浮下拉：绝对定位挂在按钮正下方 -->
+      <div class="srcdd-pop hide" id="homeSrcPop">
+        <div class="srcdd-list" id="homeSrcList"></div>
+      </div>
+    </div>
+    <h1 class="nav-center">枫兮听书</h1>
+    <div class="btn nav-right" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div class="content" id="homeContentWrap">
+    <!-- 下拉刷新指示器：默认藏在内容上方，下拉时出现 -->
+    <div class="pull-refresh" id="pullRefresh">
+      <div class="pr-inner">
+        <div class="pr-spinner"></div>
+        <span class="pr-text" id="pullText">下拉刷新</span>
+      </div>
+    </div>
+    <div class="catirow">
+      <div id="discoverCats" class="chips"></div>
+    </div>
+    <!-- 当前分类的书籍列表（分类本身在上方 chips 里横向滑动切换）
+         ★ v3.7.7：这里原来也挂了 class="content" —— 但 .content 自带
+         flex:1 + overflow-y:auto + padding-bottom，套在外层 homeContentWrap
+         里面就成了"双层滚动容器"：内层高度塌成内容高度、还多叠一份底部留白，
+         导致「加载更多」后新卡插到按钮上方、用户停在原地看不到新内容。
+         现在内层只做普通块级容器，滚动统一交给外层。 -->
+    <div id="homeContent" style="padding-top:4px">
+      <div class="loading"><div class="spinner"></div>加载中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 搜索页 ==================== -->
+<div id="pageSearch" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">搜索</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="searchbar">
+    <input id="kw" type="search" placeholder="搜书名、作者或播音" autocomplete="off" enterkeyhint="search">
+    <button onclick="App.ui.doSearch()">搜索</button>
+  </div>
+  <div id="searchChips" class="chips schips hide"></div>
+  <div id="searchContent" class="content">
+    <div id="searchHist" class="histwrap"></div>
+    <div class="empty" id="searchEmpty"><div class="big">&#128218;</div>输入关键词开始搜索
+      <div style="font-size:12.5px;margin-top:8px">多源同时搜索，自动去重合并</div></div>
+    <div id="searchResult"></div>
+  </div>
+</div>
+
+<!-- ==================== 收藏页 ==================== -->
+<div id="pageFav" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.goTab('mine')">&#9776;</div>
+    <h1 class="nav-left">我的收藏</h1>
+    <div class="btn" onclick="App.ui.manageGroups()">&#9783;</div>
+  </div>
+  <div id="favContent" class="content"><div class="loading"><div class="spinner"></div>加载中…</div></div>
+</div>
+
+<!-- ==================== 历史页 ==================== -->
+<div id="pageHistory" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.goTab('mine')">&#9776;</div>
+    <h1 class="nav-left">收听历史</h1>
+    <div class="btn" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div id="historyContent" class="content"><div class="loading"><div class="spinner"></div>加载中…</div></div>
+</div>
+
+<!-- ==================== 我的（源管理 + 设置） ==================== -->
+<div id="pageMine" class="page hide">
+  <div class="nav">
+    <div class="btn ghost"></div>
+    <h1 class="nav-left">我的</h1>
+    <div class="btn" onclick="App.ui.goTab('search')" title="搜索">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </div>
+  </div>
+  <div class="content">
+    <div class="chapter-hd"><span>账号</span></div>
+    <!-- 账号入口：先做占位与接口预留，后续接注册/登录服务 -->
+    <div class="entry-card" id="accountCard" onclick="App.ui.openAccount()">
+      <div class="eicon" id="accIcon">&#128100;</div>
+      <div class="einfo">
+        <div class="et" id="accTitle">未登录</div>
+        <div class="es" id="accSub">登录后可同步书源、收藏与收听进度</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <div class="chapter-hd"><span>书源</span></div>
+    <div class="entry-card" onclick="App.ui.openSources()">
+      <div class="eicon">&#128218;</div>
+      <div class="einfo">
+        <div class="et">书源管理</div>
+        <div class="es" id="srcEntrySub">加载中…</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v2.5：播放 / 缓存 / 外观三组设置全部收进「设置」二级页 -->
+    <div class="chapter-hd"><span>偏好</span></div>
+    <div class="entry-card" onclick="App.ui.openSettings()">
+      <div class="eicon">&#9881;</div>
+      <div class="einfo">
+        <div class="et">设置</div>
+        <div class="es" id="setEntrySub">播放 / 缓存 / 外观</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <!-- ★ v3.9.51：「我的下载」「备份与恢复」「更新公告」与设置页重复，
+         「我的」页只保留 设置 这一个偏好入口（去重，见用户反馈） -->
+
+    <div class="chapter-hd"><span>其它</span></div>
+    <div class="setrow" onclick="App.ui.shareApp()">
+      <div class="setlabel">推荐给朋友</div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <!-- 赞赏入口：完全自愿的赠与，不与任何功能解锁挂钩 -->
+    <div class="entry-card" onclick="App.ui.openReward()">
+      <div class="eicon">&#9749;</div>
+      <div class="einfo">
+        <div class="et">支持开发者</div>
+        <div class="es">纯自愿赞赏，不影响任何功能</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="entry-card" onclick="App.ui.openAbout()">
+      <div class="eicon">&#8505;</div>
+      <div class="einfo">
+        <div class="et">关于</div>
+        <div class="es" id="aboutEntrySub">版本 3.9.10 · 更新与交流</div>
+      </div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="tabsafe"></div>
+  </div>
+</div>
+
+<!-- ==================== 设置（播放 / 缓存 / 外观，二级页） ==================== -->
+<div id="pageSettings" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">设置</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="chapter-hd"><span>播放设置</span></div>
+    <div class="setrow">
+      <div class="setlabel">默认倍速</div>
+      <div class="speed" id="speedList"></div>
+    </div>
+    <!-- ★ v3.1：音量增益（声音增幅/降幅）。50%~300%，100% 为原始音量 -->
+    <div class="setrow">
+      <div class="setlabel">音量增益<span class="setdesc">低于 100% 减弱、高于 100% 增强，用于前后集音量不匀</span></div>
+      <div class="speed" id="gainList"></div>
+    </div>
+    <!-- ★ v3.1：被微信语音等其他媒体打断时的处理策略 -->
+    <div class="setrow" onclick="App.ui.focusModeMenu()">
+      <div class="setlabel">其他声音打断<span class="setdesc">微信语音、其它播放器发声时的处理方式</span></div>
+      <div class="setval" id="focusModeVal">不处理</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">快进快退步长<span class="setdesc">5 秒一档，播放页快进/快退按钮用它</span></div>
+      <select id="setFf" onchange="App.ui.setNumber('ff_seconds',this.value)">
+        <option>5</option><option>10</option><option>15</option><option>20</option>
+        <option>25</option><option>30</option><option>35</option><option>40</option>
+        <option>45</option><option>50</option><option>55</option><option>60</option>
+      </select>
+    </div>
+    <!-- ★ v4.12.0：播放模式 + 自动连播 -->
+    <!-- ★ v4.14.0：进度条锚点动效 -->
+    <div class="setrow" onclick="App.ui.barFxMenu()">
+      <div class="setlabel">进度条锚点动效<span class="setdesc">播放页进度条圆点的动态效果，暂停时自动冻结</span></div>
+      <div class="setval" id="barFxVal">呼吸光晕</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">播放模式<span class="setdesc">顺序 / 单曲循环 / 列表循环 / 随机</span></div>
+      <select id="setPlayMode" onchange="App.ui.setNumber('play_mode',this.value)">
+        <option value="0">顺序播放</option>
+        <option value="1">单曲循环</option>
+        <option value="2">列表循环</option>
+        <option value="3">随机播放</option>
+      </select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">自动连播<span class="setdesc">顺序模式下，播完当前集自动跳下一集</span></div>
+      <label class="sw"><input id="setAutoNext" type="checkbox"
+        onchange="App.ui.setBool('auto_next',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">仅 WiFi 下播放<span class="setdesc">移动网络不自动播放</span></div>
+      <label class="sw"><input id="setWifiPlay" type="checkbox"
+        onchange="App.ui.setBool('wifi_play_only',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">点开播放页自动播放<span class="setdesc">点悬浮球进全屏页时立刻开始播放</span></div>
+      <label class="sw"><input id="setPlayOnFull" type="checkbox"
+        onchange="App.ui.setBool('play_on_full',this.checked)"><i></i></label>
+    </div>
+    <!-- ★ v2.8 自绘悬浮球：可拖动、自动吸附屏幕边缘 -->
+    <div class="setrow">
+      <div class="setlabel">播放悬浮球<span class="setdesc">软件内的小圆球，可拖动到任意位置，点它回到播放页</span></div>
+      <label class="sw"><input id="setFloatBall" type="checkbox"
+        onchange="App.ui.toggleFloatBall(this.checked)"><i></i></label>
+    </div>
+
+    <!-- ★ v2.9：这一节只管「缓存」—— 播放时自动预读，只为播放顺畅。
+         用户主动保存文件请用「下载」（在章节列表里操作）。 -->
+    <div class="chapter-hd"><span>缓存（播放预读）</span></div>
+    <div class="setrow">
+      <div class="setlabel">播放时自动预读<span class="setdesc">听这集时顺手把后面几集取回来，切集不用等</span></div>
+      <label class="sw"><input id="setAutoCache" type="checkbox"
+        onchange="App.ui.setBool('auto_cache_enabled',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">预读集数<span class="setdesc">最多 50，可选「自定义」输入</span></div>
+      <select id="setAutoCacheCount" onchange="App.ui.autoCacheCountPick(this.value)">
+        <option>1</option><option>2</option><option>3</option><option>5</option>
+        <option>10</option><option>20</option><option>30</option><option>50</option>
+        <option value="custom">自定义…</option>
+      </select>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">仅 WiFi 下预读</div>
+      <label class="sw"><input id="setWifiCache" type="checkbox"
+        onchange="App.ui.setBool('wifi_cache_only',this.checked)"><i></i></label>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">缓存上限<span class="setdesc">单位：MB，超出自动清理最旧的</span></div>
+      <select id="setCacheLimit" onchange="App.ui.setNumber('cache_limit_mb',this.value)">
+        <option>512</option><option>1024</option><option>2048</option>
+        <option>4096</option><option>8192</option>
+      </select>
+    </div>
+
+    <!-- ★ v3.7.18：存储占用可视化 + 一键清理。
+         此前 App 内看不到"到底占了多少、占在哪"，用户只能去系统设置里
+         看到一个大数字（反馈的 500+ MB）。这里把占用的构成逐项列出来，
+         并区分「可清理」与「不可清理（书源/运行时）」两类。 -->
+    <div class="setrow">
+      <div class="setlabel">存储占用<span class="setdesc" id="stDesc">正在统计…</span></div>
+      <button class="btn-mini" onclick="App.ui.storageRefresh()">刷新</button>
+    </div>
+    <div class="setrow" onclick="App.ui.clearAllCache()">
+      <div class="setlabel">一键清理缓存<span class="setdesc" id="stClearDesc">清音频缓存 / 封面 / 详情缓存，不动书源</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" id="stDetailRow" style="display:none">
+      <div class="setlabel" style="flex:1">
+        <div class="setdesc" id="stDetail" style="line-height:1.9;white-space:pre-line"></div>
+      </div>
+    </div>
+
+    <!-- ★ v2.9：下载节 —— 与缓存完全独立，不受缓存上限管理 -->
+    <div class="chapter-hd"><span>下载</span></div>
+    <div class="setrow">
+      <div class="setlabel">下载目录<span class="setdesc" id="dlDirDesc">仅 App 内（其它播放器看不到）</span></div>
+      <button class="btn-mini" onclick="App.ui.pickDlDir()">更改</button>
+    </div>
+    <div class="setrow" id="dlDirResetRow" style="display:none">
+      <div class="setlabel">恢复默认<span class="setdesc">清空自定义目录，之后下载只留在 App 内</span></div>
+      <button class="btn-mini" onclick="App.ui.clearDlDir()">恢复</button>
+    </div>
+    <div class="setrow" onclick="App.ui.openDlManage()">
+      <div class="setlabel">下载管理<span class="setdesc">查看已下载的内容 / 总占用</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v3.8.0：数据备份与恢复 -->
+    <div class="setrow" onclick="App.ui.openBackup()">
+      <div class="setlabel">备份与恢复<span class="setdesc">书源 / 收藏 / 历史 / 设置，本机或网盘</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v3.2：启动自动验证已移除（冷启动时跑十几个源会明显拖慢首屏）。
+         验证改为完全手动的「批量验证」，入口在书源管理页顶部。 -->
+
+    <div class="chapter-hd"><span>外观</span></div>
+    <div class="setrow">
+      <div class="setlabel">界面主题<span class="setdesc">夜间自动用深色配色</span></div>
+      <div class="seg" id="themeSeg">
+        <div class="seg-item" id="thSystem" onclick="App.ui.setTheme('system')">跟随系统</div>
+        <div class="seg-item" id="thLight" onclick="App.ui.setTheme('light')">白天</div>
+        <div class="seg-item" id="thDark" onclick="App.ui.setTheme('dark')">夜间</div>
+      </div>
+    </div>
+
+    <!-- ★ v3.9.38 首页显示方式 -->
+    <div class="setrow">
+      <div class="setlabel">首页显示<span class="setdesc">源列表：先选源再看内容；内容直达：打开秒显上次内容（本地缓存，有操作才刷新）</span></div>
+      <div class="seg" id="homeModeSeg">
+        <div class="seg-item" id="hmList" onclick="App.ui.setHomeMode('list')">源列表</div>
+        <div class="seg-item" id="hmClassic" onclick="App.ui.setHomeMode('classic')">内容直达</div>
+      </div>
+    </div>
+
+    <!-- ★ v4.6.0：首页列数从顶栏按钮挪到设置 -->
+    <div class="setrow">
+      <div class="setlabel">首页列数<span class="setdesc">书封面一排显示几列</span></div>
+      <div class="seg" id="homeColsSeg">
+        <div class="seg-item" id="hc1" onclick="App.ui.setHomeCols(1)">1 列</div>
+        <div class="seg-item" id="hc2" onclick="App.ui.setHomeCols(2)">2 列</div>
+        <div class="seg-item" id="hc3" onclick="App.ui.setHomeCols(3)">3 列</div>
+      </div>
+    </div>
+
+    <!-- ★ v4.6.0：自定义源（本地书源 + 网盘接口）入口移到设置 -->
+    <div class="setrow" onclick="App.ui.openCustomFromSettings()">
+      <div class="setlabel">自定义源<span class="setdesc">本地书源扫描 + 网盘接口登录 / 配置</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <div class="tip">这些设置只保存在本机，换设备不会同步。</div>
+  </div>
+</div>
+
+<!-- ==================== 关于（二级页） ==================== -->
+<div id="pageAbout" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">关于</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="ab-hero">
+      <!-- ★ v3.9.1：原来这里是一个 🎵 emoji，跟桌面上看到的 App 图标毫无关系。
+           现在直接用真实的应用图标位图（assets/www/appicon.png，
+           与 mipmap/ic_launcher 同一张图），关于页与桌面图标一致。 -->
+      <img class="ab-logo" src="appicon.png" alt="枫兮听书">
+      <div class="ab-name">枫兮听书</div>
+      <div class="ab-ver">版本 <span id="aboutVer">3.9.10</span></div>
+    </div>
+
+    <div class="chapter-hd"><span>信息</span></div>
+    <div class="setrow"><div class="setlabel">版本</div><div class="setval" id="appVer">3.9.10</div></div>
+    <div class="setrow" onclick="App.ui.openChangelog()">
+      <div class="setlabel">更新公告<span class="setdesc">本版修复了哪些问题 / 增加了哪些功能</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow"><div class="setlabel">网络</div><div class="setval" id="netInfo">检测中…</div></div>
+    <div class="setrow"><div class="setlabel">数据存储</div><div class="setval">仅本机</div></div>
+
+    <!-- ★ v3.7.9：更新接口 —— 点一下查 GitHub 最新发布版，有新版直接给入口 -->
+    <div class="chapter-hd"><span>软件更新</span></div>
+    <div class="upd-card">
+      <div class="upd-hd">
+        <span class="upd-ico">&#128260;</span>
+        <span class="upd-t">检查更新</span>
+      </div>
+      <div class="upd-bd" id="updMsg">
+        点下面的按钮向 GitHub 查询最新发布版本。当前版本 <b id="updCurVer">3.7.14</b>。
+      </div>
+      <div class="upd-qr" id="updActions">
+        <div class="upd-qr-l">
+          <div class="upd-qr-k">更新渠道</div>
+          <div class="upd-qr-v">GitHub Releases</div>
+        </div>
+        <button class="mini" id="updCheckBtn" onclick="App.ui.checkUpdate()">检查更新</button>
+      </div>
+      <div class="upd-tip">
+        <a class="ab-link" onclick="App.ui.openGitHub()">打开 GitHub 仓库 &#8250;</a>
+      </div>
+    </div>
+
+    <!-- ★ v3.7.9：开源与反馈 -->
+    <div class="chapter-hd"><span>开源与反馈</span></div>
+    <div class="setrow" onclick="App.ui.openGitHub()">
+      <div class="setlabel">GitHub 仓库<span class="setdesc">源码、发布包与更新记录</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openGitHubIssues()">
+      <div class="setlabel">问题反馈<span class="setdesc">遇到 bug 或有建议，在这里提</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v4.11.0：协议与合规 —— 上架与合规化的基础三件套 -->
+    <div class="chapter-hd"><span>协议与合规</span></div>
+    <div class="setrow" onclick="App.ui.openDoc('agre')">
+      <div class="setlabel">用户协议<span class="setdesc">软件性质、内容责任与使用规范</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openDoc('priv')">
+      <div class="setlabel">隐私政策<span class="setdesc">不注册、不上传，数据仅存本机</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openDoc('rule')">
+      <div class="setlabel">内容合规声明<span class="setdesc">仅支持公版 / 自有 / 公开订阅内容，附权利人通道</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v3.7.15-fix：诊断 —— 源加载自检 + 崩溃日志，截图即可反馈 -->
+    <div class="chapter-hd"><span>问题诊断</span></div>
+    <div class="setrow" onclick="App.ui.openPlayerLog()">
+      <div class="setlabel">播放诊断日志<span class="setdesc">播放全流程记录（含 WMA 转码），播放失败时请把这里的内容发来</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.openCrashLog()">
+      <div class="setlabel">崩溃日志<span class="setdesc">闪退记录，反馈时请附上</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ★ v2.5：更新与反馈入口 —— 点一下复制群号并提示去 QQ 搜群 -->
+    <div class="chapter-hd"><span>更新与反馈（QQ 群）</span></div>
+    <div class="upd-card">
+      <div class="upd-hd">
+        <span class="upd-ico">&#128227;</span>
+        <span class="upd-t">获取最新版本</span>
+      </div>
+      <div class="upd-bd">
+        新版本、书源、使用问题都在群里同步。加群后可在群文件里拿到最新包，
+        遇到问题也可以直接在群里问。
+      </div>
+      <div class="upd-qr">
+        <div class="upd-qr-l">
+          <div class="upd-qr-k">QQ 群号</div>
+          <div class="upd-qr-v" id="qqGroupNo">1129386208</div>
+        </div>
+        <button class="mini" onclick="App.ui.copyGroup()">复制群号</button>
+      </div>
+      <div class="upd-tip">复制后打开 QQ → 搜索 → 粘贴群号即可。</div>
+    </div>
+
+    <div class="tip">所有收藏、历史、缓存都只保存在本机，不联网上传、不需要账号。</div>
+  </div>
+</div>
+
+<!-- ==================== 源加载诊断（二级页） ★ v3.7.15-fix ==================== -->
+<div id="pageDiag" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">源加载诊断</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="diag-sum" id="diagSum">正在检测…</div>
+    <div id="diagList"></div>
+    <div class="chapter-hd"><span>运行期记录</span></div>
+    <pre class="diag-log" id="diagLog">（暂无）</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.diagRefresh()">重新检测</button>
+      <button class="mini ghost" onclick="App.ui.diagCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.diagClear()">清空记录</button>
+    </div>
+    <div class="tip">
+      这一页只显示本机当前状态，不上传任何数据。反馈问题时把这页截图发出来即可。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 备份与恢复（二级页） ★ v3.8.0 ==================== -->
+<div id="pageBackup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">备份与恢复</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <!-- 概览：备份包里会装什么 -->
+    <div class="diag-sum" id="bkSummary">正在统计…</div>
+
+    <div class="chapter-hd"><span>备份内容</span></div>
+    <div class="setrow">
+      <div class="setlabel">书源<span class="setdesc">自定义源 / 分组 / JS 插件包 / Python 源 / jar 插件</span></div>
+      <div class="setval" id="bkScopeSrc">…</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">收藏与历史<span class="setdesc">收藏 / 分组 / 播放历史 / 播放进度</span></div>
+      <div class="setval" id="bkScopeFav">…</div>
+    </div>
+    <div class="setrow">
+      <div class="setlabel">软件设置<span class="setdesc">播放 / 缓存 / 外观等全部偏好</span></div>
+      <div class="setval" id="bkScopeSet">…</div>
+    </div>
+    <div class="tip">不含音频缓存与已下载文件（体积大且可重新获取）。恢复时会先自动备份当前数据，再整体覆盖。</div>
+
+    <!-- ===== 一、本地备份 ===== -->
+    <div class="chapter-hd"><span>本地备份</span></div>
+    <div class="setrow" onclick="App.ui.bkPickDir()">
+      <div class="setlabel">备份位置<span class="setdesc">选择一个文件夹，长期记住</span></div>
+      <div class="setval" id="bkDirVal">未设置 &#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkBackupLocal()">
+      <div class="setlabel">备份到本机<span class="setdesc">生成 .fxbak 备份包</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkPickFile()">
+      <div class="setlabel">从备份包恢复<span class="setdesc">选择 .fxbak 文件</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ===== 二、网络备份（WebDAV） ===== -->
+    <div class="chapter-hd"><span>网络备份（WebDAV · 试用）</span></div>
+    <div class="setrow" id="bkDavStateRow">
+      <div class="setlabel">连接状态<span class="setdesc">支持坚果云 / Nextcloud / 群晖 / 威联通 / Alist 等</span></div>
+      <div class="setval" id="bkDavState">未配置</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkDavEdit()">
+      <div class="setlabel">服务器设置<span class="setdesc">地址 / 账号 / 密码 / 目录</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+    <div class="setrow" onclick="App.ui.bkDavTest()">
+      <div class="setlabel">测试连接</div>
+      <div class="setval" id="bkDavTestVal">&#8250;</div>
+    </div>
+    <!-- ★ v3.9.43 信任自签名证书（家庭 NAS 的 HTTPS 全是自签） -->
+    <div class="setrow">
+      <div class="setlabel">信任自签名证书<span class="setdesc">用 https:// 访问飞牛/群晖等 NAS 时需开启（http:// 不受影响）</span></div>
+      <label class="sw"><input id="bkTrustSsl" type="checkbox"
+        onchange="App.ui.bkTrustSsl(this.checked)"><i></i></label>
+    </div>
+    <div class="diag-act">
+      <button class="mini" id="bkDavUpBtn" disabled onclick="App.ui.bkDavBackup()">备份到网盘</button>
+      <button class="mini ghost" onclick="App.ui.bkDavRefresh()">网盘备份列表</button>
+    </div>
+    <div id="bkDavList"></div>
+
+    <!-- ===== 二·补、多设备续听（★ v4.16.0 试用功能，挂远程功能锁 sync_progress） ===== -->
+    <div class="chapter-hd"><span>多设备续听（试用）</span></div>
+    <div class="tip">把收听进度同步到上面的 WebDAV，换手机 / 车机 / 平板接着听。每本书各自取最新进度，两台设备不会互相覆盖。</div>
+    <div class="setrow">
+      <div class="setlabel">开启多设备续听<span class="setdesc">需先配置上面的 WebDAV</span></div>
+      <label class="sw"><input id="progSyncOn" type="checkbox"
+        onchange="App.ui.setProgressSync(this.checked)"><i></i></label>
+    </div>
+    <div class="setrow" onclick="App.ui.syncProgressNow()">
+      <div class="setlabel">立即同步<span class="setdesc" id="progSyncLast">尚未同步</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
+
+    <!-- ===== 三、自动备份（恢复前的保命包） ===== -->
+    <div class="chapter-hd"><span>自动备份</span></div>
+    <div class="tip">每次恢复前都会自动打一个当前状态的包放在这里，最多保留 3 份。恢复出错时可以用它退回。</div>
+    <div id="bkAutoList"></div>
+
+    <!-- ===== 四、恢复实时进度 ===== -->
+    <div class="chapter-hd"><span>执行记录</span></div>
+    <pre class="diag-log" id="bkLog">（暂无）</pre>
+    <div class="diag-act">
+      <button class="mini ghost" onclick="App.ui.bkClearLog()">清空记录</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 播放诊断日志（二级页） ★ v4.10.10 ==================== -->
+<div id="pagePlog" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">播放诊断日志</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <pre class="diag-log" id="plogBody">正在读取…</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.plogRefresh()">重新读取</button>
+      <button class="mini ghost" onclick="App.ui.plogCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.plogClear()">清空日志</button>
+    </div>
+    <div class="tip">
+      记录最近 300 条播放流程（播放入口 / WMA 判定 / 转码进度 / 自救分支 / 失败原因）。
+      只存本机内存，不上传。播放失败后点「复制全部」发给开发者即可定位。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 崩溃日志（二级页） ★ v3.7.15-fix ==================== -->
+<div id="pageCrash" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">崩溃日志</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <pre class="diag-log" id="crashBody">正在读取…</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.crashRefresh()">重新读取</button>
+      <button class="mini ghost" onclick="App.ui.crashCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.crashClear()">清空日志</button>
+    </div>
+    <div class="tip">
+      只记录本机闪退堆栈，不会上传。若这里为空，说明还没抓到闪退记录。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 小组件诊断（二级页） ★ v3.8.4 ==================== -->
+<div id="pageWgDiag" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">小组件诊断</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <pre class="diag-log" id="wgdiagBody">正在读取…</pre>
+    <div class="diag-act">
+      <button class="mini" onclick="App.ui.wgDiagRefresh()">重新读取</button>
+      <button class="mini ghost" onclick="App.ui.wgDiagCopy()">复制全部</button>
+      <button class="mini ghost" onclick="App.ui.wgDiagClear()">清空日志</button>
+    </div>
+    <div class="tip">
+      记录桌面小组件的添加 / 刷新 / 移除事件。若小组件显示异常，添加一次小组件后把这里的日志截图反馈。
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 用户协议（二级页） ★ v4.11.0 ==================== -->
+<div id="pageAgre" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">用户协议</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="legal">
+      <p class="legal-upd">更新日期：2026 年 10 月 26 日　生效日期：2026 年 10 月 26 日</p>
+      <p>欢迎使用枫兮听书（下称「本软件」）。请在使用前仔细阅读本协议，<b>安装或使用本软件即表示你已阅读并同意本协议的全部内容</b>；如不同意，请停止使用并卸载本软件。</p>
+
+      <h2>一、软件性质</h2>
+      <p>1.1 本软件是一款<b>本地音频播放与订阅工具</b>，功能包括：播放本机音频文件、订阅收听公开分发的播客 RSS、收听公版（版权已进入公有领域）著作朗读、以及访问你自行授权登录的个人网盘中你自有的音频文件。</p>
+      <p>1.2 <b>本软件不提供、不存储、不推荐、不编辑任何受版权保护的音频内容。</b>你可以访问到的全部内容，均来自你自己提供的数据源（本机文件、你添加的 RSS 订阅地址、你自己登录的网盘账号）。</p>
+
+      <h2>二、内容与你的责任</h2>
+      <p>2.1 你通过本软件访问的任何内容，其合法性由<b>内容来源与你自己</b>负责。你承诺仅使用以下内容：</p>
+      <ul>
+        <li>你本人拥有合法权利的内容（自行录制、自行购买）；</li>
+        <li>版权已进入公有领域的作品（公版书等）；</li>
+        <li>制作方公开发布、开放订阅的内容（播客 RSS 等）；</li>
+        <li>你已获得权利人授权许可的内容。</li>
+      </ul>
+      <p>2.2 你承诺<b>不会利用本软件获取、传播任何未经授权的受版权保护内容</b>，不将本软件用于任何违法或侵权用途。因你违反本条产生的全部责任由你自行承担。</p>
+
+      <h2>三、第三方服务</h2>
+      <p>3.1 本软件支持的网盘（夸克等）与 RSS 订阅源均为第三方服务。你登录网盘、订阅 RSS 时发生的数据交互在<b>你与该第三方之间</b>进行，第三方服务的可用性、内容合规性不由本软件开发者控制或担保。</p>
+      <p>3.2 你向第三方授权（如网盘登录）前，应阅读其服务条款与隐私政策。</p>
+
+      <h2>四、使用规范</h2>
+      <ul>
+        <li>不得逆向、反编译本软件，或利用漏洞危害本软件与第三方服务的安全；</li>
+        <li>不得将本软件用于批量抓取、转卖、再分发他人内容；</li>
+        <li>不得移除、规避本软件的版权提示与合规声明。</li>
+      </ul>
+
+      <h2>五、知识产权</h2>
+      <p>5.1 本软件的代码、界面、图标等归开发者所有。第三方名称、商标与内容归其各自权利人所有。</p>
+
+      <h2>六、免责与责任限制</h2>
+      <p>6.1 本软件按「现状」提供。因第三方服务变更、内容失效、设备或网络问题导致的无法使用，开发者不承担责任。</p>
+      <p>6.2 在法律允许的最大范围内，开发者对你因使用本软件产生的间接损失不承担责任。</p>
+
+      <h2>七、协议变更</h2>
+      <p>7.1 软件更新可能调整本协议，重大变更会在软件内公告。更新后继续使用即视为接受新协议。</p>
+
+      <h2>八、联系与反馈</h2>
+      <p>8.1 如对内容有权利主张或对本协议有疑问，请通过「关于 → 问题反馈」或软件发布页（GitHub）联系开发者。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 隐私政策（二级页） ★ v4.11.0 ==================== -->
+<div id="pagePriv" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">隐私政策</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="legal">
+      <p class="legal-upd">更新日期：2026 年 10 月 26 日　生效日期：2026 年 10 月 26 日</p>
+      <p>枫兮听书（下称「本软件」）非常重视你的隐私。<b>本软件的核心隐私设计：不注册、不登录、不上传——你的所有数据都只保存在你自己的手机里。</b></p>
+
+      <h2>一、我们不做什么</h2>
+      <ul>
+        <li><b>不收集</b>你的姓名、手机号、位置、通讯录、相册等个人信息；</li>
+        <li><b>不上传</b>你的书架、播放记录、收藏、订阅等任何数据；</li>
+        <li><b>没有</b>统计 SDK、广告 SDK、行为分析组件；</li>
+        <li><b>不内嵌</b>任何账号体系（无需注册登录）。</li>
+      </ul>
+
+      <h2>二、本机存储的信息</h2>
+      <p>以下信息<b>仅保存在本机应用目录</b>，卸载即删除，任何服务器都拿不到：</p>
+      <ul>
+        <li>书架、收藏、播放历史与进度；</li>
+        <li>设置项（倍速、音效、定时关闭等）；</li>
+        <li>你添加的书源配置与播客订阅地址；</li>
+        <li>你自己登录网盘时产生的 Cookie（仅用于你本机直接向网盘请求数据）；</li>
+        <li>下载的音频缓存与诊断日志（仅本机内存/文件，供你复制后自行反馈）。</li>
+      </ul>
+
+      <h2>三、权限说明</h2>
+      <ul>
+        <li><b>存储 / 音频媒体权限</b>：仅用于扫描你手机里的本地音频文件；</li>
+        <li><b>网络权限</b>：仅用于你主动发起的访问——请求你添加的 RSS、你登录的网盘、软件更新检查（GitHub）；</li>
+        <li><b>媒体通知 / 前台服务</b>：用于系统通知栏播放控制；</li>
+        <li><b>开机启动（可选）</b>：用于恢复上次播放状态。</li>
+      </ul>
+
+      <h2>四、第三方数据交互</h2>
+      <p>4.1 你请求的内容（RSS 音频、网盘文件）直接从相应第三方服务器获取，本软件没有中转服务器，开发者看不到也不记录你的请求。</p>
+      <p>4.2 网盘授权在你与网盘服务商之间完成。请阅读其隐私政策。</p>
+
+      <h2>五、未成年人</h2>
+      <p>本软件不收集任何用户信息，未成年人可在监护人指导下使用。</p>
+
+      <h2>六、政策变更与联系</h2>
+      <p>6.1 政策如有变更，将在软件更新中公告。</p>
+      <p>6.2 有任何隐私疑问，请通过「关于 → 问题反馈」联系开发者。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 内容合规声明（二级页） ★ v4.11.0 ==================== -->
+<div id="pageRule" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">内容合规声明</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="legal">
+      <p class="legal-upd">更新日期：2026 年 10 月 26 日</p>
+      <p>为保护著作权人合法权益，枫兮听书作如下声明：</p>
+
+      <h2>一、本软件不提供任何内容</h2>
+      <p>本软件是播放与订阅工具，不含、不存储、不推荐任何音频内容。你能听到的内容都来自：你自己的本机文件、你添加的公开 RSS 订阅、你自行登录的网盘。</p>
+
+      <h2>二、合规内容范围</h2>
+      <p>内置的「播客电台」与「公版书」两个来源仅包含：</p>
+      <ul>
+        <li><b>播客电台</b>：制作方公开发布、开放订阅（RSS）的节目；</li>
+        <li><b>公版书</b>：版权已进入公有领域的著作，及其作者本人公开发布的免费朗读版。</li>
+      </ul>
+
+      <h2>三、禁止事项</h2>
+      <ul>
+        <li>禁止使用本软件获取、传播任何未经授权的受版权保护内容；</li>
+        <li>禁止利用本软件的网盘、解析等功能规避平台的版权保护措施；</li>
+        <li>禁止将本软件用于商业性分发他人版权内容。</li>
+      </ul>
+
+      <h2>四、权利人通知</h2>
+      <p>4.1 如你是权利人，认为经由本软件可访问的内容侵害了你的合法权益，请通过「关于 → 问题反馈」向我们发送通知，并提供：权利证明、具体内容定位（书名/链接）、联系方式。</p>
+      <p>4.2 经核实，我们将<b>及时从内置推荐清单中移除相关订阅条目</b>；涉及第三方服务器的内容，请同时向该平台（网盘 / RSS 发布方）主张权利。</p>
+
+      <h2>五、违规后果</h2>
+      <p>用户违反本声明的，由用户自行承担全部法律责任；情节严重的，开发者有权拒绝提供后续软件更新与支持。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 更新公告（二级页） ★ v3.7.3 ==================== -->
+<div id="pageChangelog" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">更新公告</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <!-- 当前版本高亮卡：标题 + 日期 + 两栏（修复 / 新增） -->
+    <div class="cl-cur">
+      <div class="cl-cur-t">当前版本 <span id="clCurVer">3.7.3</span></div>
+      <div class="cl-cur-s">以下是本版修复的问题与新增的功能</div>
+    </div>
+    <div id="changelogBody" class="cl-body"></div>
+    <div class="tip" style="text-align:center">更早的更新记录可在文末展开查看。</div>
+  </div>
+</div>
+
+<!-- ==================== 支持开发者（赞赏，二级页） ==================== -->
+<div id="pageReward" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">支持开发者</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="rw-hero">
+      <div class="rw-ico">&#9749;</div>
+      <div class="rw-title">枫兮听书 · 纯自愿赞赏</div>
+      <div class="rw-sub">
+        这个 App 没有广告、没有会员、不收集任何数据。<br>
+        如果它帮你听完了想听的书，愿意的话可以请开发者喝杯咖啡。
+      </div>
+    </div>
+
+    <!-- 金额档位：点一下选中，仅作展示（扫码时用户自己输金额） -->
+    <div class="chapter-hd"><span>选择金额</span><span class="rt">仅作参考</span></div>
+    <div class="rw-amounts" id="rwAmounts"></div>
+
+    <!-- 收款码：长按识别 -->
+    <div class="chapter-hd"><span>扫码赞赏</span><span class="rt">长按图片识别</span></div>
+    <div class="rw-codes">
+      <div class="rw-code" id="rwWechat">
+        <div class="rw-code-img">
+          <img id="rwImgWx" src="" alt="微信赞赏码">
+        </div>
+        <div class="rw-code-name"><span class="rw-dot wx"></span>微信</div>
+      </div>
+      <div class="rw-code" id="rwAlipay">
+        <div class="rw-code-img">
+          <img id="rwImgAli" src="" alt="支付宝收款码">
+        </div>
+        <div class="rw-code-name"><span class="rw-dot ali"></span>支付宝</div>
+      </div>
+    </div>
+
+    <!-- 说明：这一段很重要 —— 明确"自愿赠与"，且不与功能挂钩 -->
+    <div class="rw-note">
+      <div class="rw-note-hd">说明</div>
+      <div class="rw-note-bd">
+        · 赞赏完全出于自愿，<b>不购买任何功能、不解除任何限制</b>；<br>
+        · 所有功能本来就全部可用，赞赏前后没有任何区别；<br>
+        · 赞赏属于对工具本身的赠与，与任何内容方无关；<br>
+        · 未成年人请在监护人同意下操作。
+      </div>
+    </div>
+
+    <div class="tip" style="text-align:center">感谢每一份支持 🙏</div>
+  </div>
+</div>
+
+<!-- ==================== 书源管理（二级页） ==================== -->
+<div id="pageSources" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">书源管理</h1>
+    <div class="btn nav-right" onclick="App.ui.importMenu()" title="导入书源">
+      <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    </div>
+  </div>
+  <div id="sourcesPageContent" class="content">
+    <div class="loading"><div class="spinner"></div>加载中…</div>
+  </div>
+</div>
+
+<!-- ==================== 源分组详情页（二级） ==================== -->
+<div id="pageSrcGroup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="srcGroupTitle" class="nav-left">源分组</h1>
+    <!-- ★ v3.7.6：「全部开启 / 全部关闭」从分组标题行移到橙色顶栏右侧 -->
+    <div class="btn ghost srcnav-acts" id="srcGroupNavActs"></div>
+  </div>
+  <div id="srcGroupContent" class="content"></div>
+</div>
+
+<!-- ==================== 自定义源页（二级）★ v3.9.0 ==================== -->
+<div id="pageCustom" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="customTitle" class="nav-left">自定义源</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="customPageContent" class="content"></div>
+</div>
+
+<!-- ==================== 自定义源页（二级）★ v3.9.0 ==================== -->
+<div id="pageCustom" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="customTitle" class="nav-left">自定义源</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="customPageContent" class="content"></div>
+</div>
+
+<!-- ==================== 详情页 ==================== -->
+<div id="pageDetail" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 id="detailTitle" class="nav-left">详情</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="detailContent" class="content"></div>
+</div>
+
+<!-- ==================== 分组管理页 ==================== -->
+<div id="pageGroup" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">分组管理</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div id="groupContent" class="content"></div>
+</div>
+
+<!-- ==================== 发现页 ==================== -->
+<div id="pageDiscover" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">发现好书</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div id="discoverCats" class="chips"></div>
+    <div id="discoverList" class="content" style="padding-top:4px"></div>
+  </div>
+</div>
+
+<!-- ==================== 缓存管理页 ==================== -->
+<div id="pageCache" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">离线缓存</h1>
+    <div class="btn" onclick="App.ui.clearCache()">清空</div>
+  </div>
+  <div id="cacheContent" class="content"></div>
+</div>
+
+<!-- ==================== ★ v2.9 下载管理页 ==================== -->
+<div id="pageDlManage" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">我的下载</h1>
+  </div>
+  <div id="dlManageBody" class="content"></div>
+</div>
+
+<!-- ==================== 全屏播放页 ==================== -->
+<!-- 背景层：取封面同图放大 + 重高斯模糊垫底，再叠一层主题色渐变，
+     形成"背景自动吸取封面虚化填充"的效果。 -->
+<div id="pageFull" class="page full hide">
+  <div class="fbg" aria-hidden="true">
+    <img id="fbgImg" class="fbg-blur" src="" alt="">
+    <div class="fbg-tint" id="fbgTint"></div>
+  </div>
+
+  <div class="fnav">
+    <div class="btn" onclick="App.ui.back()">&#8964;</div>
+    <div class="ftitle" id="fullTitle">播放中</div>
+    <!-- 右上角：书源名称 + 收藏。★ v3.7.7：两者包进 .fnav-right 一簇，
+         整簇右对齐，中间留固定小间距（原来书源名浮动在标题和收藏之间，
+         间距忽大忽小、看着像三块散件）。 -->
+    <div class="fnav-right">
+      <div class="fsrc-tag" id="fullSourceTag"></div>
+      <div class="btn favbtn" onclick="App.ui.toggleFavCurrent()" id="fullFav">&#9734;</div>
+    </div>
+  </div>
+  <div class="fbody">
+    <div class="ftop">
+      <!-- 圆形唱片封面：播放时旋转，暂停时停住（见 style.css .fdisc.playing）。
+           注意：这里不能有任何门板/底色/内阴影，否则封面会被"蒙一层白"。
+           ★ v4.3.0：点击圆盘 = 播放/暂停（大目标好按，按下有轻微缩放反馈）。 -->
+      <div class="fcover-wrap">
+        <div class="fdisc" id="fDisc" role="button" tabindex="0"
+             aria-label="点击播放或暂停" onclick="App.ui.toggle()">
+          <img id="fullCover" class="fcover" src="" alt=""
+               onerror="if(!this.dataset.fb){this.dataset.fb=1;this.classList.remove('fail');this.src='appicon.png';}else{this.classList.add('fail');}">
+        </div>
+      </div>
+
+      <!-- 书籍信息区：整体左对齐（.finfo）。
+           第一行 = 书名；第二行 = 集数「(N/M)」+ 主播名（★ v3.7.6 去汉字改纯数字括号）。 -->
+      <div class="finfo">
+        <div class="fbook" id="fullBook" data-mq></div>
+        <div class="fmeta">
+          <span class="fep" id="fullEp"></span>
+          <span class="fartist" id="fullArtist"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="fbottom">
+      <!-- 功能按钮：上调到进度条上方，按使用频率排序 -->
+      <div class="fops">
+        <div class="fop" onclick="App.ui.openChapterList()">&#9783; 选集</div>
+        <div class="fop" onclick="App.ui.sleepMenu()" id="sleepBtn">&#9201; 定时</div>
+        <div class="fop" id="moreToggle" onclick="App.ui.moreMenu()">&#8943; 更多</div>
+      </div>
+
+      <!-- 倍速面板：默认折叠，点「更多 → 倍速」展开 -->
+      <div class="speed-collapse hide" id="speedPanel">
+        <div class="speed" id="fullSpeed"></div>
+      </div>
+
+      <!-- ★ v3.1 音量增益面板：与倍速面板互斥展开 -->
+      <div class="speed-collapse hide" id="gainPanel">
+        <div class="speed" id="fullGain"></div>
+      </div>
+
+      <!-- 进度条 -->
+      <div class="fbar-wrap">
+        <div class="bar" id="fbar">
+          <div class="fill" id="fFill"></div>
+          <div class="knob"></div>
+        </div>
+        <div class="ftimes">
+          <span id="fCur" class="ftime-cur">00:00</span>
+          <span id="fDur">00:00</span>
+        </div>
+      </div>
+
+      <!-- 播放控制：尺寸与厚度见 style.css .fctrl .pbtn -->
+      <div class="fctrl">
+        <div class="pbtn" onclick="App.ui.prev()">
+          <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </div>
+        <div class="pbtn sm" onclick="App.ui.jumpDir(-1)">
+          <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+        </div>
+        <!-- 主按钮：外圈那条会转的弧线 = 取链/缓冲中的加载动画 -->
+        <div class="pbtn main" id="fPlayBtn" onclick="App.ui.toggle()">
+          <svg class="spin" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="spin-track" cx="50" cy="50" r="47"></circle>
+            <circle class="spin-arc" cx="50" cy="50" r="47"></circle>
+          </svg>
+          <svg id="fPlayIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="pbtn sm" onclick="App.ui.jumpDir(1)">
+          <svg viewBox="0 0 24 24"><path d="M13 6v12l8.5-6L13 6zM4 18l8.5-6L4 6v12z"/></svg>
+        </div>
+        <div class="pbtn" onclick="App.ui.next()">
+          <svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 播放悬浮球（右下角） ==================== -->
+<div id="player" class="player show empty" onclick="App.ui.tapBall()">
+  <svg class="pfab-ring" viewBox="0 0 100 100" aria-hidden="true">
+    <circle class="ring-bg" cx="50" cy="50" r="46"></circle>
+    <circle class="ring-fg" id="ballRing" cx="50" cy="50" r="46"></circle>
+  </svg>
+  <img id="pCover" class="pcover" src="" alt="">
+  <div class="pfab-icon" id="pFabIcon">
+    <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+  </div>
+  <!-- ★ v4.12.0：定时关闭剩余角标（悬浮球右上角，仅设定定时时显示） -->
+  <span class="sleepbadge" id="sleepBadge" style="display:none"></span>
+  <!-- 供无障碍 / 长按提示用的隐藏信息，不参与视觉 -->
+  <span class="sr-only" id="pTitle">未播放</span>
+  <span class="sr-only" id="pSrc"></span>
+</div>
+
+<!-- ==================== 底部导航 ==================== -->
+<div id="tabbar" class="tabbar hide">
+  <div class="tabitem on" data-tab="home">
+    <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+    <span>发现</span>
+  </div>
+  <div class="tabitem" data-tab="fav">
+    <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+    <span>收藏</span>
+  </div>
+  <div class="tabitem" data-tab="history">
+    <svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 111.7 4.56l-1.42 1.42A9 9 0 1013 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+    <span>历史</span>
+  </div>
+  <div class="tabitem" data-tab="mine">
+    <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+    <span>我的</span>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="qrcode.min.js"></script>
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

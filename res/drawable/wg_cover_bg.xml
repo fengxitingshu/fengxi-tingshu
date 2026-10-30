@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.0 封面底色：方形圆角（白板重写，56dp + 12dp 圆角）。
+
+  56x56dp 方形 + 12dp 圆角 + 细白边，让封面"浮"在渐变卡上。
+  centerCrop 下不会把竖版封面裁得只剩中间一条。
+  无封面时这个形状同时充当占位块（中间叠一个 ♪）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#38FFFFFF"/>
+    <stroke android:width="1dp" android:color="#33FFFFFF"/>
+    <corners android:radius="12dp"/>
+</shape>

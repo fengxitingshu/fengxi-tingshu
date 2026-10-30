@@ -1,0 +1,324 @@
+@charset "UTF-8";
+
+/* ============================================================
+   车机大屏驾驶模式（v4.13.2-car · 第四轮：等比缩放 + 宽屏排布）
+   ------------------------------------------------------------
+   生效链路：build.sh CAR_MODE=1 → 注入 assets/www/mode.js
+             → app.js init() 检测 window.FX_MODE==='car' → body 加 .car
+             → 本文件接管排布与尺寸
+
+   ★ 为什么要重做（前三轮都错在哪）
+   ① viewport initial-scale：主工程 WebView 未开 setUseWideViewPort，
+      meta 压根不生效；
+   ② body zoom：对 position:fixed 的播放页/悬浮球缩放不一致，
+      同一屏出现两套坐标系，球放大了、播放页没放大、图标还跑出球外；
+   ③ 1:1 CSS 像素 + 局部放大：字是按手机尺寸写的，车机屏 1920×720 上
+      一行列表横跨 1920、字号还是 19px —— 又小又散，像"手机界面被拉宽"。
+
+   ★ 本版做法：全量等比缩放
+   定义 --u = 1px（设计基准高度 720）：
+       --u: 0.13889vh  →  720 高时 1u = 1px，1080 高时 1u = 1.5px
+   之后所有尺寸都写成 calc(N * var(--u))（N = 720 高度下的像素值）。
+   整屏高度一变，字号 / 间距 / 圆角 / 图标按同一比例缩放，
+   比例关系永远不乱，也不会出现"某一项被单独放大"的割裂感。
+   宽度用同一套 u 单位 + max-width 百分比兜底，保证超宽屏不会一行过长。
+   ============================================================ */
+
+body.car {
+    /* 1u = 1px @ 720 高。同时用 vw 兜一道上限：
+       万一车机把 WebView 锁成竖屏（720 宽 / 1280 高），只按高度缩放会把
+       字号放大到装不下 —— min() 取两者较小值，横竖屏都不会溢出。 */
+    --u: min(0.13889vh, 0.0625vw);
+    --tabbar-h: calc(104 * var(--u));
+    --ball: calc(100 * var(--u));
+}
+
+/* ============================================================
+   一、通用骨架：顶栏 / 底栏 / 基础排版
+   ============================================================ */
+body.car .nav { padding: calc(14 * var(--u)) calc(26 * var(--u)); padding-top: calc(14 * var(--u) + var(--safe-t)); gap: calc(12 * var(--u)); }
+/* 顶栏标题旁挂一枚「车机版」小标：一眼能确认装的是车机包，
+   避免又装成标准版却以为是布局没生效。 */
+body.car .nav h1.nav-center::after {
+    content: "车机版";
+    display: inline-block; vertical-align: middle;
+    margin-left: calc(12 * var(--u));
+    padding: calc(5 * var(--u)) calc(10 * var(--u));
+    font-size: calc(15 * var(--u)); font-weight: 500; line-height: 1;
+    letter-spacing: 0; border-radius: calc(9 * var(--u));
+    background: rgba(255, 255, 255, .24);
+}
+
+body.car .nav h1,
+body.car .nav h1.nav-left,
+body.car .nav h1.nav-center { font-size: calc(30 * var(--u)); max-width: 40vw; }
+body.car .nav .btn { width: calc(46 * var(--u)); height: calc(46 * var(--u)); min-width: calc(46 * var(--u)); font-size: calc(24 * var(--u)); }
+body.car .nav .btn svg { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+
+/* 源选择下拉 */
+body.car .srcdd-btn { font-size: calc(20 * var(--u)); padding: calc(9 * var(--u)) calc(16 * var(--u)); border-radius: calc(20 * var(--u)); }
+body.car .srcdd-list { min-width: calc(280 * var(--u)); }
+body.car .srcdd-item { font-size: calc(19 * var(--u)); padding: calc(14 * var(--u)) calc(18 * var(--u)); }
+
+/* 底栏：图标/文字放大，并把各项收在中间一段，避免 1920 宽下四点散开 */
+body.car .tabbar { justify-content: center; }
+body.car .tabitem { flex: 0 1 calc(260 * var(--u)); max-width: calc(300 * var(--u)); gap: calc(6 * var(--u)); }
+body.car .tabitem svg { width: calc(38 * var(--u)); height: calc(38 * var(--u)); }
+body.car .tabitem span { font-size: calc(18 * var(--u)); }
+
+/* 提示条 / 空态 */
+body.car #toast { font-size: calc(19 * var(--u)); padding: calc(12 * var(--u)) calc(24 * var(--u)); border-radius: calc(24 * var(--u)); }
+body.car .tip { font-size: calc(17 * var(--u)); padding: calc(16 * var(--u)) calc(20 * var(--u)) calc(24 * var(--u)); }
+body.car .empty { font-size: calc(20 * var(--u)); padding: calc(80 * var(--u)) calc(24 * var(--u)); }
+body.car .empty .big { font-size: calc(64 * var(--u)); }
+body.car .loading { font-size: calc(18 * var(--u)); }
+
+/* ============================================================
+   二、列表页（首页 / 集合 / 收藏 / 历史）
+   ============================================================ */
+body.car .content { padding-bottom: calc(var(--tabbar-h) + calc(28 * var(--u))); }
+body.car.has-player .content { padding-bottom: calc(var(--tabbar-h) + calc(112 * var(--u))); }
+
+/* 分类 chips */
+body.car .chips { padding: calc(14 * var(--u)) calc(24 * var(--u)); gap: calc(12 * var(--u)); }
+body.car .chip { font-size: calc(21 * var(--u)); padding: calc(10 * var(--u)) calc(22 * var(--u)); border-radius: calc(22 * var(--u)); }
+
+/* 「继续收听」大卡 */
+body.car .hero { padding: calc(22 * var(--u)) calc(24 * var(--u)); gap: calc(20 * var(--u)); }
+body.car .hero img { width: calc(104 * var(--u)); height: calc(104 * var(--u)); border-radius: calc(14 * var(--u)); }
+body.car .hero .hlabel { font-size: calc(18 * var(--u)); }
+body.car .hero .hname { font-size: calc(34 * var(--u)); margin: calc(8 * var(--u)) 0 calc(6 * var(--u)); }
+body.car .hero .hsub { font-size: calc(20 * var(--u)); }
+body.car .hero .hbtn { font-size: calc(22 * var(--u)); padding: calc(13 * var(--u)) calc(30 * var(--u)); border-radius: calc(24 * var(--u)); }
+
+/* 书籍卡片：封面加大、书名/副标题成比例放大（原来 15.5px 在车机上等于"蚂蚁字"） */
+body.car .bookcard { padding: calc(18 * var(--u)) calc(22 * var(--u)); gap: calc(18 * var(--u)); margin-bottom: 0; border-radius: calc(14 * var(--u)); }
+body.car .bookcard > img { width: calc(80 * var(--u)); height: calc(106 * var(--u)); border-radius: calc(10 * var(--u)); }
+body.car .bookcard .info { gap: calc(7 * var(--u)); }
+body.car .bookcard .t { font-size: calc(28 * var(--u)); }
+body.car .bookcard .s { font-size: calc(20 * var(--u)); }
+body.car .bookcard .tag { font-size: calc(16 * var(--u)); padding: calc(3 * var(--u)) calc(9 * var(--u)); border-radius: calc(8 * var(--u)); }
+body.car .fav-btn { font-size: calc(26 * var(--u)); }
+body.car .home-more { font-size: calc(18 * var(--u)); }
+body.car .home-more .hm-btn { font-size: calc(20 * var(--u)); padding: calc(12 * var(--u)) calc(30 * var(--u)); border-radius: calc(24 * var(--u)); }
+
+/* ============================================================
+   三、二级页（详情 / 我的 / 设置 / 下载 …）
+   ============================================================ */
+body.car .content { max-width: calc(1560 * var(--u)); margin: 0 auto; width: 100%; }
+
+body.car .detail-head { padding: calc(24 * var(--u)); gap: calc(22 * var(--u)); }
+body.car .detail-head > img { width: calc(140 * var(--u)); height: calc(186 * var(--u)); border-radius: calc(14 * var(--u)); }
+body.car .detail-head .t { font-size: calc(34 * var(--u)); }
+body.car .detail-head .row { font-size: calc(20 * var(--u)); }
+body.car .detail-actions { gap: calc(12 * var(--u)); margin-top: calc(14 * var(--u)); }
+body.car .detail-actions button { font-size: calc(19 * var(--u)); padding: calc(11 * var(--u)) calc(22 * var(--u)); border-radius: calc(22 * var(--u)); }
+body.car .intro { font-size: calc(21 * var(--u)); padding: calc(20 * var(--u)); line-height: 1.7; }
+body.car .intro .h { font-size: calc(21 * var(--u)); }
+
+body.car .chapter-hd { font-size: calc(20 * var(--u)); padding: calc(16 * var(--u)) calc(24 * var(--u)); }
+body.car .chapter-hd .rt { font-size: calc(16 * var(--u)); }
+body.car .chrow { font-size: calc(22 * var(--u)); padding: calc(19 * var(--u)) calc(22 * var(--u)); }
+
+body.car .entry-card { padding: calc(20 * var(--u)) calc(24 * var(--u)); gap: calc(18 * var(--u)); }
+body.car .entry-card .eicon { width: calc(52 * var(--u)); height: calc(52 * var(--u)); font-size: calc(26 * var(--u)); border-radius: calc(14 * var(--u)); }
+body.car .entry-card .et { font-size: calc(26 * var(--u)); }
+body.car .entry-card .es { font-size: calc(20 * var(--u)); margin-top: calc(5 * var(--u)); }
+
+body.car .setrow { padding: calc(20 * var(--u)) calc(24 * var(--u)); min-height: calc(72 * var(--u)); }
+body.car .setlabel { font-size: calc(23 * var(--u)); }
+body.car .setval { font-size: calc(20 * var(--u)); }
+body.car .setrow .seg button, body.car .seg button { font-size: calc(18 * var(--u)); padding: calc(9 * var(--u)) calc(18 * var(--u)); }
+body.car .switch, body.car .sw { transform: scale(1.35); transform-origin: right center; }
+
+/* ============================================================
+   四、播放页（竖屏车机：按 --u 等比放大，不改排布）
+   ============================================================ */
+body.car .fnav { padding: calc(12 * var(--u)) calc(24 * var(--u)); padding-top: calc(12 * var(--u) + var(--safe-t)); }
+body.car .fnav .btn { width: calc(52 * var(--u)); height: calc(52 * var(--u)); min-width: calc(52 * var(--u)); font-size: calc(26 * var(--u)); }
+body.car .fnav .ftitle { font-size: calc(24 * var(--u)); }
+body.car .fsrc-tag { font-size: calc(16 * var(--u)); }
+
+body.car .fctrl { gap: calc(22 * var(--u)); }
+body.car .fctrl .pbtn { width: calc(92 * var(--u)); height: calc(92 * var(--u)); }
+body.car .fctrl .pbtn svg { width: calc(40 * var(--u)); height: calc(40 * var(--u)); }
+body.car .fctrl .pbtn.sm { width: calc(82 * var(--u)); height: calc(82 * var(--u)); }
+body.car .fctrl .pbtn.sm svg { width: calc(36 * var(--u)); height: calc(36 * var(--u)); }
+body.car .fctrl .pbtn.main { width: calc(118 * var(--u)); height: calc(118 * var(--u)); }
+body.car .fctrl .pbtn.main svg#fPlayIcon { width: calc(54 * var(--u)); height: calc(54 * var(--u)); }
+
+body.car .bar { height: calc(10 * var(--u)); border-radius: calc(5 * var(--u)); }
+body.car .bar .fill { border-radius: calc(5 * var(--u)); }
+body.car .bar .knob { width: calc(26 * var(--u)); height: calc(26 * var(--u)); margin-left: calc(-13 * var(--u)); margin-top: calc(-13 * var(--u)); }
+body.car .bar:before { top: calc(-20 * var(--u)); bottom: calc(-20 * var(--u)); }
+body.car .ftimes { font-size: calc(18 * var(--u)); }
+body.car .fop { font-size: calc(19 * var(--u)); padding: calc(10 * var(--u)) calc(22 * var(--u)); border-radius: calc(22 * var(--u)); }
+body.car .fbook { font-size: calc(30 * var(--u)); }
+body.car .fmeta { font-size: calc(19 * var(--u)); }
+
+/* 悬浮球：图标尺寸显式给死（不依赖百分比，父层定位异常时也不会塌成 0）。
+   居中由 style.css 的「绝对定位 + transform」保证，这里不要覆盖 transform。 */
+body.car .player .pfab-icon svg {
+    width: calc(46 * var(--u)); height: calc(46 * var(--u));
+}
+body.car .player .sleepbadge { font-size: calc(14 * var(--u)); padding: calc(5 * var(--u)) calc(9 * var(--u)); border-radius: calc(14 * var(--u)); }
+
+/* ============================================================
+   五、横屏车机（≥900px）：真正的宽屏排布
+   ============================================================ */
+@media (orientation: landscape) and (min-width: 900px) {
+
+    /* ---------- 5.1 首页书籍列表：两列铺满宽屏 ---------- */
+    /* 单列 1920 宽时，一行只有 5 本、右边全是空白 —— 车机上像"界面没做完"。
+       两列卡片网格把横屏宽度用起来，一屏能扫到 10 本。 */
+    body.car #homeContent,
+    body.car #discoverList,
+    body.car #favContent,
+    body.car #historyContent,
+    body.car #groupContent {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: calc(12 * var(--u));
+        padding: calc(14 * var(--u)) calc(24 * var(--u)) calc(26 * var(--u));
+        align-content: start;
+    }
+    /* 网格里这些块要跨满两列 */
+    body.car #homeContent > .hero,
+    body.car #homeContent > .loading,
+    body.car #homeContent > .empty,
+    body.car #homeContent > .home-more,
+    body.car #searchContent > .histwrap,
+    body.car #searchContent > .empty,
+    body.car #searchContent > .loading,
+    body.car #favContent > .empty,
+    body.car #historyContent > .empty { grid-column: 1 / -1; }
+
+    body.car #homeContent > .hero { margin: 0 0 calc(6 * var(--u)); }
+
+    /* ---------- 5.2 播放页：左封面 + 右控制（等比放大后的宽屏版本） ---------- */
+    body.car .page.full .fbody {
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        /* ★ v4.13.3：两列拉开一些 —— 原来 90u 在 1920 宽屏上显得"贴在一起" */
+        gap: calc(150 * var(--u));
+        /* 底部多留一截：封面居中后，书名两行会顶到屏幕下沿。
+           加 padding-bottom 让整组内容整体上移半截，上下留白才均衡。 */
+        padding: 0 calc(48 * var(--u)) calc(64 * var(--u));
+        overflow: hidden;
+    }
+    /* 左列 = 封面 + 书名 + 集数，作为一个整体在垂直方向居中。
+       ★ v4.13.3：书名不再 absolute 挂在封面下沿 —— 那样书名会溢出
+       .fbody（overflow:hidden）被裁掉半行；改为正常排版，
+       整组高度参与居中，上下留白自然对称，也与右列控制块同心。 */
+    body.car .page.full .ftop {
+        position: relative;
+        flex: 0 0 auto;
+        /* 列宽 = 封面宽度：左右两列的"视觉外缘"才能与屏幕等距 */
+        width: calc(315 * var(--u));
+        height: auto;
+        display: flex; flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    body.car .page.full .fcover-wrap { flex: 0 0 auto; margin: 0; }
+    /* ★ v4.13.3：车机播放页封面恢复**长方形**（书封 3:4 比例），不再裁成圆盘。
+       长方形转起来会在圆角外露白，所以车机版关掉旋转动画。 */
+    body.car .page.full .fdisc {
+        width: calc(315 * var(--u)); height: calc(420 * var(--u));
+        max-width: none; max-height: none;
+        border-radius: calc(18 * var(--u));
+        animation: none !important;
+        box-shadow: 0 calc(18 * var(--u)) calc(48 * var(--u)) rgba(0, 0, 0, .30);
+    }
+    body.car .page.full .fcover {
+        border-radius: calc(18 * var(--u)); object-fit: cover;
+    }
+    body.car .page.full .finfo {
+        position: static; transform: none;
+        width: calc(560 * var(--u)); max-width: 34vw;
+        margin: calc(20 * var(--u)) 0 0; padding: 0; text-align: center;
+    }
+    /* 车机屏很宽，书名不该被省略号截断 —— 允许两行，长书名直接读全 */
+    body.car .page.full .fbook {
+        font-size: calc(34 * var(--u)); text-align: center; line-height: 1.3;
+        white-space: normal; display: -webkit-box;
+        -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+        text-overflow: clip;
+    }
+    body.car .page.full .fmeta {
+        display: flex; justify-content: center; align-items: center;
+        font-size: calc(20 * var(--u)); margin-top: calc(10 * var(--u));
+    }
+
+    /* 右列：功能按钮 / 进度 / 播放控制，整列垂直居中，宽度固定好让进度条有合适长度 */
+    body.car .page.full .fbottom {
+        flex: 0 0 auto;
+        width: calc(820 * var(--u));
+        max-width: 46vw;
+        height: auto;
+        display: flex; flex-direction: column; justify-content: center;
+        padding-top: 0;
+    }
+    body.car .page.full .fops {
+        justify-content: center; margin: 0 0 calc(28 * var(--u)); gap: calc(16 * var(--u));
+    }
+    body.car .page.full .fop {
+        font-size: calc(23 * var(--u)); padding: calc(13 * var(--u)) calc(30 * var(--u)); border-radius: calc(28 * var(--u));
+    }
+    body.car .page.full .fbar-wrap { margin: 0 0 calc(18 * var(--u)); }
+    body.car .page.full .bar { height: calc(12 * var(--u)); border-radius: calc(6 * var(--u)); }
+    body.car .page.full .bar .fill { border-radius: calc(6 * var(--u)); }
+    body.car .page.full .bar .knob { width: calc(28 * var(--u)); height: calc(28 * var(--u)); margin-left: calc(-14 * var(--u)); margin-top: calc(-14 * var(--u)); }
+    body.car .page.full .ftimes { font-size: calc(20 * var(--u)); }
+    body.car .page.full .fctrl { gap: calc(34 * var(--u)); margin-top: calc(26 * var(--u)); }
+    body.car .page.full .fctrl .pbtn { width: calc(108 * var(--u)); height: calc(108 * var(--u)); }
+    body.car .page.full .fctrl .pbtn.sm { width: calc(96 * var(--u)); height: calc(96 * var(--u)); }
+    body.car .page.full .fctrl .pbtn.main { width: calc(172 * var(--u)); height: calc(172 * var(--u)); }
+    body.car .page.full .fctrl .pbtn svg { width: calc(46 * var(--u)); height: calc(46 * var(--u)); }
+    body.car .page.full .fctrl .pbtn.sm svg { width: calc(42 * var(--u)); height: calc(42 * var(--u)); }
+    body.car .page.full .fctrl .pbtn.main svg#fPlayIcon { width: calc(76 * var(--u)); height: calc(76 * var(--u)); }
+    body.car .page.full .speed { margin-top: calc(12 * var(--u)); font-size: calc(19 * var(--u)); }
+
+    /* ---------- 5.3 弹窗：横屏居中卡片（底部弹层在横屏里很丑） ---------- */
+    /* 车机 WebView 上出现过整块弹层缩到左上角 —— 这里把遮罩的
+       尺寸与居中方式全部显式写死，不依赖任何简写/默认值。 */
+    body.car .sheet-mask {
+        top: 0; right: 0; bottom: 0; left: 0;
+        width: 100%; height: 100%;
+        align-items: center; justify-content: center;
+    }
+    body.car .sheet {
+        width: calc(780 * var(--u)); max-width: 54vw; min-width: 420px;
+        max-height: 84%; border-radius: calc(20 * var(--u));
+        padding-bottom: calc(10 * var(--u));
+        box-shadow: 0 calc(24 * var(--u)) calc(60 * var(--u)) rgba(0, 0, 0, .3);
+    }
+    body.car .sheet-hd { font-size: calc(22 * var(--u)); padding: calc(22 * var(--u)); }
+    body.car .sheet-item { font-size: calc(24 * var(--u)); padding: calc(22 * var(--u)) calc(24 * var(--u)); }
+    body.car .sheet-item.cancel { margin: calc(8 * var(--u)) calc(20 * var(--u)) calc(6 * var(--u)); border-radius: calc(14 * var(--u)); border-bottom: none; }
+    body.car .sheet-sec { font-size: calc(17 * var(--u)); padding: calc(18 * var(--u)) calc(22 * var(--u)) calc(6 * var(--u)); }
+    body.car .sheet-tip { font-size: calc(17 * var(--u)); }
+    body.car .sheet-input { font-size: calc(20 * var(--u)); padding: calc(14 * var(--u)) calc(16 * var(--u)); }
+
+    body.car .chsheet {
+        width: calc(1040 * var(--u)); max-width: 66vw; min-width: 480px;
+        max-height: 80%; margin: 0 auto;
+        border-radius: calc(20 * var(--u));
+    }
+    body.car .chsheet-hd { font-size: calc(22 * var(--u)); padding: calc(18 * var(--u)) calc(24 * var(--u)); }
+    body.car .chsheet-sub { font-size: calc(16 * var(--u)); }
+    body.car .chsheet-x { font-size: calc(22 * var(--u)); }
+}
+
+/* ============================================================
+   六、播放页虚化背景：车机 GPU 降负 + blur 层失效时的兜底底色
+   ============================================================ */
+body.car .fbg-blur { filter: blur(28px) saturate(165%); }
+html.dark body.car .fbg-blur { filter: blur(32px) saturate(160%) brightness(.7); }
+body.car .fbg {
+    /* blur 层若被车机 GPU 丢弃，至少有主色渐变垫底，不再是死灰一片 */
+    background: linear-gradient(180deg, var(--primary) 0%, var(--card) 100%);
+}
+body.car .fbg-tint { background: rgba(255, 255, 255, .30); }
+html.dark body.car .fbg-tint { background: rgba(0, 0, 0, .34); }

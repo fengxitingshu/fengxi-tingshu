@@ -1,0 +1,31 @@
+# ★ 签名密钥 —— 绝对不能入库（泄露 = 别人能签出同源应用）
+*.keystore
+*.jks
+*.idsig
+
+# 构建中间产物与产物包（体积大，不入库；需要可从源码重建）
+out/
+*.apk
+*.aab
+*.idsig
+*.tar.gz
+.mapping
+mapping.txt
+# 发布目录（APK/校验/jar 等构建产物，不入库）
+release/
+apk/
+
+# 截图等非源码资源（不入库）
+截图/
+
+# 验证/预览工作区
+uiprev/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 证书与备份（绝对不出库）
+.fengxi-env/
+.fx-secrets.json

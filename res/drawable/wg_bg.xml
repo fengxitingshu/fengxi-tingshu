@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.0 小组件白板背景：深蓝灰斜向渐变卡。
+
+  旧版是半透明中性灰（#CC2A2E3A）—— 在深色壁纸上和背景糊在一起、
+  白字对比度不足。新版改为**不透明深色渐变**（135°，#1B2133 → #2C3550），
+  任意壁纸上都是同一块"深色玻璃卡"，白字对比度稳定；顶部一条窄高光带
+  提质感，外圈一道 20% 白细描边勾边。
+
+  圆角 26dp（约卡片高度的 1/8），与旧版一致但视觉更整。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 底层：深色斜向渐变 + 大圆角 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:startColor="#1B2133"
+                android:endColor="#2C3550"
+                android:type="linear"/>
+            <corners android:radius="26dp"/>
+        </shape>
+    </item>
+
+    <!-- 高光层：顶部窄带折光（快速收掉，避免整块发灰） -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#1FFFFFFF"
+                android:centerColor="#08FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:type="linear"/>
+            <corners android:radius="26dp"/>
+        </shape>
+    </item>
+
+    <!-- 描边：一圈淡白边，勾出卡片边缘 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#00000000"/>
+            <stroke android:width="1dp" android:color="#33FFFFFF"/>
+            <corners android:radius="26dp"/>
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.0 控制键圆形背板（上一集/下一集/停止）。
+
+  半透明白填充 + 一圈细白边：在深色渐变卡上是一枚"半透明玻璃圆钮"，
+  比旧版的裸图标（无背板）有一倍大的有效点击区 —— 小组件高度有限，
+  40dp 的行高里图标实际可点范围只有中间一小块，加背板后整圆都可点。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#26FFFFFF"/>
+    <stroke android:width="1dp" android:color="#33FFFFFF"/>
+</shape>

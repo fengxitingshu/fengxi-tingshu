@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.fengxi.gatesctl"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application
+        android:label="枫兮锁控"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true">
+
+        <!-- 群主私用遥控器：拨开关 → 浏览器/Java 同款 SHA-256 签名 → 直写 WebDAV 的 index.html。
+             targetSdk 28：无 scoped storage / 前台服务限制；cleartext 允许局域网 http 的 WebDAV。 -->
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

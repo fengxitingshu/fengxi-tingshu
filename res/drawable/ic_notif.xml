@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.1 状态栏（通知）小图标：与软件图标同源的「翻开的书」单色剪影。
+
+  Android 5.0+ 会把通知小图标强制**单色化**（只取 alpha 通道），
+  所以这里必须是纯白实心剪影 —— 上彩色的话状态栏里会糊成一坨白块。
+  原实现用的是 android.R.drawable.ic_media_play（系统框架位图），
+  与"枫兮听书"的品牌没有任何关联，用户认不出这是谁的播放通知。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,6.5C10.4,5.1 7.8,4.6 4,5.3v12.4c3.8,-0.7 6.4,-0.2 8,1.2 1.6,-1.4 4.2,-1.9 8,-1.2V5.3c-3.8,-0.7 -6.4,-0.2 -8,1.2zM12,6.5v12.4"/>
+</vector>

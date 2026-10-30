@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ v3.9.3 小组件布局 = v3.8.5 逐字节复刻（用户 iQOO 15 / originOS 7 实测可用）。
+
+  【为什么又回到 3.8.5 结构】
+    v3.9.2 已把 RemoteViews 动作集收回到 3.8.5 实测六类，用户反馈仍是白卡。
+    对比 3.8.5 与 3.9.2 的布局反编译结果，剩下的差异全在结构层：
+      · 3.9.x 封面是 FrameLayout 三层叠（占位符 TextView + 封面 ImageView
+        + 状态点 TextView），3.8.5 只是一个 ImageView；
+      · 3.9.x 进度条只有一层 20 格（每格又上色又挂点击），
+        3.8.5 是两层：wgBar0..19（4dp 显示格，只上色）+
+        wgSeek0..19（全高透明点击层，只挂 PendingIntent）；
+      · 3.9.x 有 wgLive/wgRate/wgSleep 三个额外 TextView 接收
+        setTextViewText/setInt 动作，3.8.5 没有；
+      · 3.9.x 布局引用了 @string 资源、0.5dp 分数边距，3.8.5 全部是
+        字面值。
+    无法远程判定具体哪一条压垮 originOS 桌面，所以全部对齐：
+    v3.9.3 的布局结构与 build() 调用序列 = 3.8.5 原样复刻，
+    代价是放弃角标（倍速/定时）与状态点 —— 可用性优先于花哨。
+
+  ★ ID 契约（PlayerWidgetProvider.build() 按 ID 找视图，一个都不能少）：
+    wgRoot / wgCover / wgInfoTap / wgTitle / wgSub /
+    wgTimeCur / wgTimeDur / wgBar0..19 / wgSeek0..19 /
+    wgPrev / wgToggle / wgNext / wgStop
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wgRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FF4C5866">
+
+    <!-- ★ v3.9.25 内衬：与 wgRoot 之间形成 2dp「边界圈」，背景色由
+         build() 按用户设置的不透明度动态着色（0% = 高级材质透明） -->
+    <LinearLayout
+        android:id="@+id/wgBody"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="2dp"
+        android:orientation="vertical"
+        android:background="#FF222530"
+        android:paddingLeft="12dp"
+        android:paddingTop="8dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="6dp">
+
+    <!-- 上半：封面 + 书名/副标题（点封面或文字进 App） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/wgCover"
+            android:layout_width="58dp"
+            android:layout_height="58dp"
+            android:background="#33FFFFFF"
+            android:scaleType="centerCrop"/>
+
+        <LinearLayout
+            android:id="@+id/wgInfoTap"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginLeft="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/wgTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:text="枫兮听书"/>
+
+            <TextView
+                android:id="@+id/wgSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textSize="12sp"
+                android:textColor="#C9FFFFFF"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:text="点一下，继续听"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 中部：当前时间 + 20 格进度 + 总时长。
+         ★ v3.9.24 正式版：白卡元凶已确认为跑马灯动作（setSelected），
+         与进度格无关 → 恢复可拖动的两层进度格：
+         wgBar0..19 = 4dp 显示格，颜色由 build() setInt 逐格上色；
+         wgSeek0..19 = 全高透明点击层，build() 挂 seek PendingIntent。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/wgTimeCur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="34dp"
+            android:textSize="11sp"
+            android:textColor="#D9FFFFFF"
+            android:gravity="left"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"/>
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="24dp"
+            android:layout_weight="1"
+            android:layout_marginLeft="7dp"
+            android:layout_marginRight="7dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="4dp"
+                android:layout_gravity="center_vertical"
+                android:orientation="horizontal"
+                android:background="#33FFFFFF">
+
+                <ImageView android:id="@+id/wgBar0"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar1"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar2"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar3"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar4"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar5"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar6"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar7"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar8"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar9"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar10" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar11" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar12" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar13" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar14" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar15" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar16" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar17" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar18" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgBar19" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal">
+
+                <ImageView android:id="@+id/wgSeek0"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek1"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek2"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek3"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek4"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek5"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek6"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek7"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek8"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek9"  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek10" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek11" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek12" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek13" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek14" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek15" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek16" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek17" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek18" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+                <ImageView android:id="@+id/wgSeek19" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+            </LinearLayout>
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/wgTimeDur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="34dp"
+            android:textSize="11sp"
+            android:textColor="#D9FFFFFF"
+            android:gravity="right"
+            android:singleLine="true"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"/>
+    </LinearLayout>
+
+    <!-- 下半：四键控制（本包矢量图 + 白色 tint）。
+         ★ v3.9.14：原来四键用 @android:drawable（框架资源）——与 v3.9.4
+         在 build() 里修过的问题同源：RemoteViews 由桌面渲染，部分桌面
+         解析框架 drawable 失败 → 整块白卡。四个键全部改用本包资源。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="46dp"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/wgPrev"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_prev"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgToggle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginLeft="6dp"
+            android:layout_marginRight="6dp"
+            android:padding="4dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_play"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgNext"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_next"
+            android:tint="#FFFFFF"/>
+
+        <ImageView
+            android:id="@+id/wgStop"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_notif_stop"
+            android:tint="#FFFFFF"/>
+    </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
