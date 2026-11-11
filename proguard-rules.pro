@@ -86,3 +86,8 @@
 # Config/LogCallback 等被 native 侧回调引用，同样整体 keep。
 -keep class com.arthenica.mobileffmpeg.** { *; }
 -dontwarn com.arthenica.mobileffmpeg.**
+
+# ---------- 10. ★ v4.21.36 自动更新 ----------
+# UpdateProvider 在 AndroidManifest 里按类名注册（authorities com.tingshu.app.update），
+# 被 R8 改名后系统找不到类，安装 APK 时直接崩；keep 整类。
+-keep class com.tingshu.app.core.UpdateProvider { *; }

@@ -124,13 +124,45 @@ public final class CacheManager {
         });
     }
 
-    /** 缓存单集（自动缓存后续章节用） */
+    /** 缓存单集（手动：章节列表下载按钮 / 整本缓存） */
     public static void cacheChapter(final Book book, final int humanIdx) {
+        cacheChapter(book, humanIdx, false);
+    }
+
+    /** 自动预读的集间间隔：不给间隔的话 50 集连发会把限流站打挂，后面全部失败 */
+    private static final long AUTO_PACE_MS = 1200L;
+    /** 自动预读熔断阈值：连续失败达此数暂停预读（源在限流/挂了），5 分钟后自动重试 */
+    private static final int AUTO_FAIL_LIMIT = 5;
+    private static final java.util.concurrent.atomic.AtomicInteger AUTO_FAIL_STREAK =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+    private static volatile long AUTO_LAST_FAIL_AT = 0L;
+
+    /**
+     * 缓存单集。
+     * @param auto true = 自动预读（任务前插间隔 + 失败熔断计数；手动下载不受此限）
+     */
+    public static void cacheChapter(final Book book, final int humanIdx, final boolean auto) {
         if (book == null || CTX == null) return;
         final String jk = jobKey(book.key(), humanIdx);
         if (!QUEUED.add(jk)) return;
         POOL.execute(new Runnable() {
             public void run() {
+                if (auto) {
+                    // ★ v4.21.41 熔断：连续失败说明源在限流/挂了，暂停预读，
+                    //   避免把剩余的集全部撞死、白烧流量（这就是「预存 50 集
+                    //   却没真正预存」的主因之一：前几集失败后后面跟着全失败）
+                    if (AUTO_FAIL_STREAK.get() >= AUTO_FAIL_LIMIT) {
+                        QUEUED.remove(jk);
+                        return;
+                    }
+                    // ★ v4.21.41 限流间隔：自动预读的每一集之间歇一下
+                    try {
+                        Thread.sleep(AUTO_PACE_MS);
+                    } catch (InterruptedException e) {
+                        QUEUED.remove(jk);
+                        return;
+                    }
+                }
                 boolean ok = false;
                 try {
                     if (!CacheRepo.isCached(book.key(), humanIdx)) {
@@ -143,6 +175,14 @@ public final class CacheManager {
                     }
                 } finally {
                     QUEUED.remove(jk);
+                }
+                if (auto) {
+                    if (ok) {
+                        AUTO_FAIL_STREAK.set(0);
+                    } else {
+                        AUTO_FAIL_STREAK.incrementAndGet();
+                        AUTO_LAST_FAIL_AT = System.currentTimeMillis();
+                    }
                 }
                 // ★ v3.7.18：单集缓存**也要**跑容量上限。
                 //   原 bug：`enforceLimit` 只在 `cacheBook()`（整本缓存）末尾调过一次，
@@ -206,16 +246,39 @@ public final class CacheManager {
 
     /**
      * 自动缓存：播放到第 idx 集时，把后面 N 集排队。
+     *
+     * <p>★ v4.21.41 修复「预存 50 集没有真正预存」：
+     * <ul>
+     *   <li><b>越界保护</b>：以前不查总集数，超出末集的号在取链时会「退到最后一集」，
+     *       把最后一集的音频错标成第 N 集（缓存列表看着有、内容全是错的）</li>
+     *   <li><b>限流间隔 + 熔断</b>：50 集连发无间隔会触发站点限流，从某一集起
+     *       全部失败；现在集间歇 1.2s，连续 5 次失败暂停预读，5 分钟后自动恢复</li>
+     * </ul>
      */
     public static void autoCacheAhead(Book book, int idx, int ahead) {
+        autoCacheAhead(book, idx, ahead, 0);
+    }
+
+    /**
+     * 自动缓存（带总集数钳制）。totalChapters &gt; 0 时超出总集数直接停；
+     * 0 = 未知总数，保持旧行为。
+     */
+    public static void autoCacheAhead(Book book, int idx, int ahead, int totalChapters) {
         if (book == null || ahead <= 0) return;
         if (!Settings.autoCacheEnabled()) return;
         if (Settings.wifiCacheOnly() && !isWifi()) return;
+        // 熔断恢复：距上次失败超过 5 分钟视为源已恢复，重新放行预读
+        if (AUTO_FAIL_STREAK.get() > 0
+                && System.currentTimeMillis() - AUTO_LAST_FAIL_AT > 5 * 60 * 1000L) {
+            AUTO_FAIL_STREAK.set(0);
+        }
+        if (AUTO_FAIL_STREAK.get() >= AUTO_FAIL_LIMIT) return;   // 熔断中，不入队
         for (int i = 1; i <= ahead; i++) {
             int t = idx + i;
             if (t <= 0) continue;
+            if (totalChapters > 0 && t > totalChapters) break;   // 超出末集，直接停
             if (CacheRepo.isCached(book.key(), t)) continue;
-            cacheChapter(book, t);
+            cacheChapter(book, t, true);
         }
     }
 

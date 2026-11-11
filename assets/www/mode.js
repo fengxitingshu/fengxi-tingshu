@@ -1,1 +1,1 @@
-window.FX_MODE="car";
+window.FX_MODE="std";

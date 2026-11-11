@@ -128,11 +128,14 @@ public final class JsEngine {
          * @param outer 额外的注册观察者（可为 null）。Scope 自己始终会收集一份，
          *              outer 只用于「边加载边打印/边入库」这类旁路需求。
          */
-        Scope(final SourceSink outer) {
+        Scope(final SourceSink outer) { this(outer, null); }
+
+        Scope(final SourceSink outer, final HostFactory hf) {
             Context cx = FACTORY.enterContext();
             try {
                 global = cx.initStandardObjects(null, false);
                 injectGlobals(cx, global, new SourceSink() {
+                    private Object scopeHost;
                     public void onSource(Scriptable src) {
                         // 同 id 重复注册时后一个覆盖前一个（脚本内部可能有条件注册）
                         String id = Context.toString(ScriptableObject.getProperty(src, "id"));
@@ -150,6 +153,17 @@ public final class JsEngine {
                             sources.add(src);
                         }
                         byId.put(id, src);
+                        // ★ v4.20.4：registerSource 时立即挂 host（惰性构建一次）。
+                        //   prelude 系插件在加载期就读 registerSource(...).host，
+                        //   等适配器构造完再挂就晚了。老插件读 this.host 时，
+                        //   适配器稍后 putProperty 会覆盖成各自的 host，行为不变。
+                        if (hf != null && scopeHost == null) {
+                            try { scopeHost = hf.build(cx, global); } catch (Throwable ignored) {}
+                        }
+                        if (scopeHost != null) {
+                            try { ScriptableObject.putProperty(src, "host", scopeHost); }
+                            catch (Throwable ignored) {}
+                        }
                         if (outer != null) {
                             try { outer.onSource(src); } catch (Throwable ignored) {}
                         }
@@ -186,10 +200,30 @@ public final class JsEngine {
             long old = pushDeadline(60 * 1000L);     // 加载期给 60s，正常脚本毫秒级
             Context cx = FACTORY.enterContext();
             try {
-                cx.evaluateString(global, code, name, 1, null);
+                // ★ v4.20.4：语法降级（async/await 等）+ 预置生成器 shim。
+                //   对老脚本零影响（needs() 不命中直接原样返回）。
+                String js = JsCompat.transform(code);
+                if (js != code) js = JsCompat.RUNTIME_SHIM + "\n" + js;
+                cx.evaluateString(global, js, name, 1, null);
+                cx.processMicrotasks();   // 泵一遍 Promise 微任务（send(inited) 等异步链）
             } finally {
                 Context.exit();
                 popDeadline(old);
+            }
+        }
+
+        /**
+         * ★ v4.20.4：在作用域全局里求值一段 JS（LX 运行时取链驱动用）。
+         * 求值后泵微任务，保证已同步完成的 Promise 链交付结果。
+         */
+        public Object evalJs(String code, String name) {
+            Context cx = FACTORY.enterContext();
+            try {
+                Object r = cx.evaluateString(global, code, name, 1, null);
+                cx.processMicrotasks();
+                return r;
+            } finally {
+                Context.exit();
             }
         }
 
@@ -285,6 +319,21 @@ public final class JsEngine {
     }
 
     /**
+     * ★ v4.20.4：带宿主工厂的作用域。
+     *
+     * <p>registerSource 时立即把 host 挂到源对象上 —— 第三方插件生态
+     * （如 prelude 系）的写法是 {@code host = registerSource({...}).host}，
+     * 在**加载期**就要拿到 host；旧流程"加载完才挂 host"会让这类插件
+     * 拿到 undefined。工厂在第一次 registerSource 时惰性构建。
+     */
+    public static Scope newScope(HostFactory hf) {
+        return new Scope(null, hf);
+    }
+
+    /** ★ v4.20.4：作用域级 host 构建工厂（惰性，registerSource 时才调用） */
+    public interface HostFactory { Object build(Context cx, Scriptable global); }
+
+    /**
      * 把一个 Java 对象转成 JS 侧可用的值。
      * 用于把 host 对象、以及各种 JSON 数据塞给脚本。
      */
@@ -316,11 +365,16 @@ public final class JsEngine {
     private static void injectGlobals(final Context cx, final Scriptable scope,
                                       final SourceSink sink) {
         // registerSource(source)
+        // ★ v4.20.0：改为**返回源对象本身**。第三方插件生态（如 prelude 系）
+        //   的写法是 `var _src = registerSource({...})`，注册后要从返回值上
+        //   取 host 或做惰性解引用；返回 undefined 会让这类插件加载即崩。
+        //   老插件从不使用返回值，此改动向后兼容。
         put(scope, "registerSource", new BaseFunction() {
             @Override
             public Object call(Context c, Scriptable s, Scriptable thisObj, Object[] a) {
                 if (a.length > 0 && a[0] instanceof Scriptable) {
                     sink.onSource((Scriptable) a[0]);
+                    return a[0];
                 }
                 return Undefined.instance;
             }

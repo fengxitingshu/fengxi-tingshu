@@ -27,8 +27,10 @@ DEPS=(
   "$TOOL/okio-jvm-3.0.0.jar"
   "$TOOL/rhino-1.7.14.jar"
   "$LIB/chaquopy_java.jar"
+  "$LIB/ijkplayer-java.jar"
+  "$LIB/mobile-ffmpeg.jar"
 )
-JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-1.7.14.jar:$TOOL/jsoup-1.17.2.jar:$LIB/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar"
+JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-1.7.14.jar:$TOOL/jsoup-1.17.2.jar:$LIB/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar:$LIB/ijkplayer-java.jar"
 
 KCP="$TOOL/kotlin-compiler-embeddable-1.8.22.jar:$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/kotlin-reflect-1.8.22.jar:$TOOL/trove4j-1.0.20200330.jar:$TOOL/annotations-13.0.jar"
 

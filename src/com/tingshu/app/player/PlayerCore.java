@@ -331,7 +331,14 @@ public class PlayerCore {
         //
         // 注意：只换 audio，不动画 headers —— lastHeaders 留着原始认证信息，
         // 诊断日志和后续自愈都还要用；播放器多带几个头请求本地代理也无害。
-        if (isPersonalLib(source) && audio != null && audio.startsWith("http")) {
+        // ★ v4.21.24：百度网盘音频也一律先走本地代理。
+        //   代理中继层有「断流自动续传」——百度对非会员下载的经典套路是
+        //   冲一波流量后长时间暂停再续，直接把直链丢给系统内核，
+        //   一断就前功尽弃（播 10~20 秒停）；经代理后由 Java 层续传，
+        //   播放器完全无感。
+        boolean panBaidu = audio != null && (audio.contains("pcs.baidu.com")
+                || audio.contains("baidupcs.com") || audio.contains("bcebos.com"));
+        if ((isPersonalLib(source) || panBaidu) && audio != null && audio.startsWith("http")) {
             String p = com.tingshu.app.core.LocalProxy.servePersistent(audio, extraHeaders);
             if (p != null) {
                 proxyRealUrl = audio;

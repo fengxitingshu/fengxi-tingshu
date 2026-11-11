@@ -235,7 +235,7 @@ public final class DownloadManager {
                 Chapter ch = new Chapter();
                 ch.index = idx;
                 ch.title = "第" + idx + "集";
-                ok = downloadOne(book, idx, ch);
+                ok = downloadOne(book, idx, ch, task);
             } catch (Throwable ignored) {
             }
             if (ok) task.done++;
@@ -288,12 +288,18 @@ public final class DownloadManager {
         // running=true 时无需入队 —— 循环下一轮检查 paused=false 自然继续
     }
 
-    /** 取消任务：剩余集清空（已下好的集不受影响），任务出簿 */
+    /**
+     * 取消任务：剩余集清空（已下好的集不受影响），任务出簿。
+     * ★ v4.19.0：立即从任务簿移除 —— 前端 1 秒轮询后 UI 马上消失；
+     * 正在下的这一集由 Net.download 的 Cancel 钩子秒级中止，不再等整集下完。
+     */
     public static void cancel(String bookKey) {
-        Task t = TASKS.get(bookKey);
-        if (t == null) return;
-        t.cancelled = true;
-        t.paused = false;
+        Task t;
+        synchronized (TASKS) { t = TASKS.remove(bookKey); }
+        if (t != null) {
+            t.cancelled = true;
+            t.paused = false;
+        }
     }
 
     /** 任务清单 JSON（下载管理页轮询用）：[{key,title,done,total,curIdx,paused}] */
@@ -335,6 +341,10 @@ public final class DownloadManager {
     // ==================== 核心：下到私有 + 移动到外部 ====================
 
     private static boolean downloadOne(Book book, int humanIdx, Chapter stub) {
+        return downloadOne(book, humanIdx, stub, null);
+    }
+
+    private static boolean downloadOne(Book book, int humanIdx, Chapter stub, final Task task) {
         try {
             DownloadRepo.markStatus(book.key(), humanIdx, DownloadRepo.ST_DOWNLOADING);
 
@@ -361,11 +371,48 @@ public final class DownloadManager {
 
             File dest = DownloadRepo.chapterFile(CTX, book.key(), humanIdx);
 
-            Net.DlResult r = Net.download(audio, referer, hdr, dest, null, null);
+            // ★ v4.19.0：接上取消钩子 —— 任务取消后 Net.download 秒级中止，
+            //   不再让「取消」等当前这一整集下完才生效。
+            Net.DlResult r = Net.download(audio, referer, hdr, dest, null,
+                    task == null ? null : new Net.Cancel() {
+                        public boolean isCancelled() { return task.cancelled; }
+                    });
+            if (task != null && task.cancelled) {
+                // 用户取消：删掉半截文件，状态保持原样（不算失败），集丢弃
+                try {
+                    dest.delete();
+                    new File(dest.getAbsolutePath() + ".part").delete();
+                } catch (Throwable ignored) {}
+                return false;
+            }
             if (!(r.ok && dest.exists() && dest.length() > 4096)) {
                 DownloadRepo.markStatus(book.key(), humanIdx, DownloadRepo.ST_FAIL);
                 err(book, humanIdx, r.error == null ? "下载失败" : r.error);
                 return false;
+            }
+
+            // ★ v4.19.0：下载格式选了 MP3 且源不是 MP3 → 转码（失败保留原格式，不算失败）
+            //   ★ v4.19.1：未生效时写 PlayerLog（诊断页可查原因），不再完全静默
+            //   ★ v4.19.2：转码未生效时弹 Toast —— 用户当场看到原因，不再"像没生效"
+            File f = dest;
+            if ("mp3".equals(com.tingshu.app.data.Settings.dlFormat())
+                    && !DlTrans.isMp3(dest)) {
+                File mp3 = DlTrans.toMp3(dest);
+                if (mp3 != null) {
+                    f = mp3;
+                } else {
+                    final String reason = DlTrans.available()
+                            ? "转码失败 " + DlTrans.lastError()
+                            : "无 FFmpeg 库（标准版）";
+                    PlayerLog.log("下载转码未生效（" + dest.getName() + "）：" + reason);
+                    UI.post(new Runnable() {
+                        public void run() {
+                            android.widget.Toast.makeText(CTX,
+                                    "转 MP3 未生效，已保留原格式：" + reason,
+                                    android.widget.Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }
             }
 
             // ★ v4.15.2：下载附封面 —— 该书私有目录里补一张 cover.jpg，
@@ -374,10 +421,10 @@ public final class DownloadManager {
 
             // ★ v4.14.0：转存开关开着 → 先把私有文件传 WebDAV（异步排队，
             //  不阻塞下载队列），传的是私有文件本身，与 SAF 移动互不影响。
-            autoExportToWebDav(book, humanIdx, dest);
+            autoExportToWebDav(book, humanIdx, f);
 
             // ★ v2.9：若配了外部文件夹 → 移动过去
-            moveToSafIfNeeded(book, humanIdx, dest, audio);
+            moveToSafIfNeeded(book, humanIdx, f, audio);
             return true;
         } catch (Throwable t) {
             DownloadRepo.markStatus(book.key(), humanIdx, DownloadRepo.ST_FAIL);
@@ -486,11 +533,14 @@ public final class DownloadManager {
             String user = com.tingshu.app.data.BackupCred.user();
             String pass = com.tingshu.app.data.BackupCred.pass();
             String auth = com.tingshu.app.data.BackupCred.authType();
-            // 目录：<备份目录>/转存/<书名>/第N集.m4a（复用备份凭据，不另设一套）
+            // 目录：<备份目录>/转存/<书名>/第N集.m4a|.mp3（复用备份凭据，不另设一套）
+            // ★ v4.19.2：按【实际内容】判扩展名 —— 私有文件统一叫 cXXXXX.m4a，
+            //   源本身是 MP3 时内容已是 MP3，看文件名会误判成 m4a
+            String ext = DlTrans.isMp3(f) ? "mp3" : "m4a";
             String sub = "转存/" + (book.title == null ? "未知书名" : book.title);
             String dirUrl = com.tingshu.app.data.WebDavClient.joinUrl(base,
                     com.tingshu.app.data.BackupCred.dir() + "/" + sub);
-            String fileName = String.format("第%05d集.m4a", humanIdx);
+            String fileName = String.format("第%05d集." + ext, humanIdx);
 
             // ---- 去重验证：远端已有同尺寸文件 → 跳过 ----
             java.util.Map<String, Long> sizes = existingSizes;
@@ -605,6 +655,7 @@ public final class DownloadManager {
         try {
             Uri tree = Uri.parse(treeStr);
             // 子目录用「书名」（用户看得懂），文件名用「第N集」
+            // ★ v4.19.0：扩展名/MIME 跟随实际文件（下载转码后可能是 .mp3）
             String bookName = SafOut.safeName(book.title == null ? "未知书名" : book.title);
             Uri bookDir = SafOut.ensureDir(CTX, tree, bookName);
             if (bookDir == null) {
@@ -615,8 +666,11 @@ public final class DownloadManager {
                 return;
             }
 
-            String fileName = String.format("第%05d集.m4a", humanIdx);
-            Uri target = SafOut.createFile(CTX, bookDir, fileName, "audio/mp4");
+            // ★ v4.19.2：按【实际内容】判扩展名（同 WebDAV 转存处说明）
+            boolean isMp3 = DlTrans.isMp3(src);
+            String fileName = String.format("第%05d集." + (isMp3 ? "mp3" : "m4a"), humanIdx);
+            Uri target = SafOut.createFile(CTX, bookDir, fileName,
+                    isMp3 ? "audio/mpeg" : "audio/mp4");
             if (target == null) {
                 DownloadRepo.markDone(book.key(), humanIdx, src.getAbsolutePath(),
                         src.length(), srcUrl);

@@ -69,13 +69,17 @@
     <input id="kw" type="search" placeholder="搜书名、作者或播音" autocomplete="off" enterkeyhint="search">
     <button onclick="App.ui.doSearch()">搜索</button>
   </div>
-  <div id="searchChips" class="chips schips hide"></div>
-  <div id="searchContent" class="content">
-    <div id="searchHist" class="histwrap"></div>
-    <div class="empty" id="searchEmpty"><div class="big">&#128218;</div>输入关键词开始搜索
-      <div style="font-size:12.5px;margin-top:8px">多源同时搜索，自动去重合并</div></div>
-    <div id="searchResult"></div>
+  <!-- ★ v4.21.19 双栏搜索（参考成熟听书 App）：左侧源列表竖排，右侧结果流 -->
+  <div class="ssplit">
+    <div id="searchSide" class="sside hide"></div>
+    <div id="searchContent" class="content sres">
+      <div id="searchHist" class="histwrap"></div>
+      <div class="empty" id="searchEmpty"><div class="big">&#128218;</div>输入关键词开始搜索
+        <div style="font-size:12.5px;margin-top:8px">多源同时搜索，自动去重合并</div></div>
+      <div id="searchResult"></div>
+    </div>
   </div>
+  <div id="searchStatus" class="sstatus hide" onclick="App.ui.toggleDiag()"></div>
 </div>
 
 <!-- ==================== 收藏页 ==================== -->
@@ -299,6 +303,17 @@
       <div class="setlabel">下载管理<span class="setdesc">查看已下载的内容 / 总占用</span></div>
       <div class="setval">&#8250;</div>
     </div>
+    <div class="setrow">
+      <div class="setlabel">下载格式<span class="setdesc">选 MP3 时非 MP3 源自动转码（完整版功能）</span></div>
+      <select id="setDlFormat" class="setselect" onchange="App.ui.setDlFormat(this.value)">
+        <option value="orig">保持原始格式</option>
+        <option value="mp3">统一转为 MP3</option>
+      </select>
+    </div>
+    <div class="setrow" onclick="App.ui.diagLog()">
+      <div class="setlabel">诊断日志<span class="setdesc">播放/转码全过程日志，反馈问题时点开复制给开发者</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
 
     <!-- ★ v3.8.0：数据备份与恢复 -->
     <div class="setrow" onclick="App.ui.openBackup()">
@@ -374,7 +389,7 @@
     <div class="setrow"><div class="setlabel">网络</div><div class="setval" id="netInfo">检测中…</div></div>
     <div class="setrow"><div class="setlabel">数据存储</div><div class="setval">仅本机</div></div>
 
-    <!-- ★ v3.7.9：更新接口 —— 点一下查 GitHub 最新发布版，有新版直接给入口 -->
+    <!-- ★ v4.21.35：更新源改为官方下载站（原 GitHub Releases 已移除） -->
     <div class="chapter-hd"><span>软件更新</span></div>
     <div class="upd-card">
       <div class="upd-hd">
@@ -382,29 +397,16 @@
         <span class="upd-t">检查更新</span>
       </div>
       <div class="upd-bd" id="updMsg">
-        点下面的按钮向 GitHub 查询最新发布版本。当前版本 <b id="updCurVer">3.7.14</b>。
+        点下面的按钮检查最新版本，有新版会<b>自动下载并安装</b>。
+        当前版本 <b id="updCurVer">3.7.14</b>。
       </div>
       <div class="upd-qr" id="updActions">
         <div class="upd-qr-l">
           <div class="upd-qr-k">更新渠道</div>
-          <div class="upd-qr-v">GitHub Releases</div>
+          <div class="upd-qr-v">官方更新渠道</div>
         </div>
         <button class="mini" id="updCheckBtn" onclick="App.ui.checkUpdate()">检查更新</button>
       </div>
-      <div class="upd-tip">
-        <a class="ab-link" onclick="App.ui.openGitHub()">打开 GitHub 仓库 &#8250;</a>
-      </div>
-    </div>
-
-    <!-- ★ v3.7.9：开源与反馈 -->
-    <div class="chapter-hd"><span>开源与反馈</span></div>
-    <div class="setrow" onclick="App.ui.openGitHub()">
-      <div class="setlabel">GitHub 仓库<span class="setdesc">源码、发布包与更新记录</span></div>
-      <div class="setval">&#8250;</div>
-    </div>
-    <div class="setrow" onclick="App.ui.openGitHubIssues()">
-      <div class="setlabel">问题反馈<span class="setdesc">遇到 bug 或有建议，在这里提</span></div>
-      <div class="setval">&#8250;</div>
     </div>
 
     <!-- ★ v4.11.0：协议与合规 —— 上架与合规化的基础三件套 -->
@@ -424,6 +426,10 @@
 
     <!-- ★ v3.7.15-fix：诊断 —— 源加载自检 + 崩溃日志，截图即可反馈 -->
     <div class="chapter-hd"><span>问题诊断</span></div>
+    <div class="setrow" onclick="App.ui.openFdiag()">
+      <div class="setlabel">功能诊断<span class="setdesc">勾选功能块逐一体检（网络/书源/网盘/播放/存储），哪一环断了日志一目了然</span></div>
+      <div class="setval">&#8250;</div>
+    </div>
     <div class="setrow" onclick="App.ui.openPlayerLog()">
       <div class="setlabel">播放诊断日志<span class="setdesc">播放全流程记录（含 WMA 转码），播放失败时请把这里的内容发来</span></div>
       <div class="setval">&#8250;</div>
@@ -455,6 +461,31 @@
     </div>
 
     <div class="tip">所有收藏、历史、缓存都只保存在本机，不联网上传、不需要账号。</div>
+  </div>
+</div>
+
+<!-- ==================== 功能诊断（二级页） ★ v4.21.20 ==================== -->
+<div id="pageFdiag" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left">功能诊断</h1>
+    <div class="btn ghost"></div>
+  </div>
+  <div class="content">
+    <div class="tip">勾选要体检的功能块，点「开始诊断」逐块执行。每块给出通过/失败与具体日志，截图即可反馈。</div>
+    <div class="chapter-hd"><span>选择功能块</span></div>
+    <div id="fdiagMods"></div>
+    <div class="diag-act">
+      <button class="mini" id="fdiagRunBtn" onclick="App.ui.fdiagRun()">开始诊断</button>
+      <button class="mini ghost" onclick="App.ui.fdiagAll(true)">全选</button>
+      <button class="mini ghost" onclick="App.ui.fdiagAll(false)">全不选</button>
+    </div>
+    <div class="chapter-hd"><span>诊断结果</span></div>
+    <pre class="diag-log" id="fdiagOut">（尚未运行）</pre>
+    <div class="diag-act">
+      <button class="mini ghost" onclick="App.ui.fdiagCopy()">复制全部</button>
+    </div>
+    <div class="tip">诊断只在本机执行，不上传任何数据。</div>
   </div>
 </div>
 

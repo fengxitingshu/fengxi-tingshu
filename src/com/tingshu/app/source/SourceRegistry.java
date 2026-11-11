@@ -251,10 +251,41 @@ public final class SourceRegistry {
                 com.tingshu.app.core.JarLoader.JarResult r =
                         com.tingshu.app.core.JarLoader.load(p.filePath, pluginOptDir());
                 if (r.ok) {
-                    for (Source s : r.sources) ALL.put(s.id(), s);
+                    // ★ v4.21.41：按记录里的 sourceIds 白名单过滤。
+                    //   旧版无条件把插件文件里的源全部装回来 —— 用户删掉某个
+                    //   插件源后（记录里已摘除该 id），reload 又把它装回去，
+                    //   表现为「点删除没办法真的删除源」。
+                    java.util.Set<String> allow = allowedSourceIds(p);
+                    for (Source s : r.sources) {
+                        if (blockedByWhitelist(allow, s.id())) continue;
+                        ALL.put(s.id(), s);
+                    }
                 }
             } catch (Throwable ignored) {}
         }
+    }
+
+    /**
+     * ★ v4.21.41：插件记录里的源 id 白名单。
+     *
+     * <p>规则：{@code sourceIds} 为 null（老记录、从未回填）→ 返回 null 表示
+     * 不过滤，保持旧行为；非 null（含空串）→ 返回白名单集合，
+     * **空集 = 该插件的所有源都被用户删掉了，一个都不装**。
+     */
+    private static java.util.Set<String> allowedSourceIds(
+            com.tingshu.app.data.PluginRepo.Plugin p) {
+        if (p == null || p.sourceIds == null) return null;
+        java.util.Set<String> out = new java.util.HashSet<String>();
+        for (String t : p.sourceIds.split(",")) {
+            t = t.trim();
+            if (t.length() > 0) out.add(t);
+        }
+        return out;
+    }
+
+    /** 白名单过滤：allow 为 null（不过滤）或包含 id 时返回 false（放行） */
+    private static boolean blockedByWhitelist(java.util.Set<String> allow, String id) {
+        return allow != null && id != null && !allow.contains(id);
     }
 
     /** dex 优化输出目录，懒初始化 */
@@ -291,6 +322,11 @@ public final class SourceRegistry {
             diag("JS 插件：功能锁已关闭，跳过加载");
             return;
         }
+        // ★ v4.21.7：清理旧版「每次导入都新增时间戳记录」堆出来的重复 JS 插件
+        //   （同一个音源被加载 N 份 → 搜索/取链多路并发、日志全双份）。
+        try {
+            com.tingshu.app.data.PluginRepo.dedupeJs();
+        } catch (Throwable ignored) {}
         List<com.tingshu.app.data.PluginRepo.Plugin> plugins;
         try {
             plugins = com.tingshu.app.data.PluginRepo.byKind(
@@ -304,16 +340,36 @@ public final class SourceRegistry {
         }
         diag("JS 插件：库里有 " + plugins.size() + " 个记录，开始重建源");
 
+        // ★ v4.21.8：按脚本内容指纹去重。同一个音源脚本用不同文件名导入多次
+        //   （以及旧版带时间戳的落盘路径）会产生多条记录、多个目录，启动后
+        //   同一个脚本被加载 N 份 → 日志全双份、搜索/取链多路并发。
+        java.util.Set<String> seenScripts = new java.util.HashSet<String>();
         for (int i = 0; i < plugins.size(); i++) {
             com.tingshu.app.data.PluginRepo.Plugin p = plugins.get(i);
             if (p == null || !p.enabled) continue;
+            // 单 .js 包装的插件目录里必有 script.js；多脚本 zip 包不参与此规则
+            if (p.filePath != null) {
+                java.io.File sf = new java.io.File(p.filePath, "script.js");
+                if (sf.isFile() && sf.length() > 0) {
+                    String sig = scriptKey(sf);
+                    if (sig != null && !seenScripts.add(sig)) {
+                        diag("JS 插件跳过重复：" + (Utils.empty(p.fileName)
+                                ? p.filePath : p.fileName) + "（同一音源脚本，去重 key=" + sig + "）");
+                        continue;
+                    }
+                }
+            }
             try {
                 // filePath 对 JS 插件来说是「解包后的目录」，目录里已有 manifest.json，
                 // 不需要再解一次 —— loader 提供了从目录直接加载的入口。
                 com.tingshu.app.core.js.JsPluginLoader.JsResult r =
                         com.tingshu.app.core.js.JsPluginLoader.loadInstalled(p.filePath);
                 if (r != null && r.ok) {
+                    // ★ v4.21.41：同 jar 插件 —— 按 sourceIds 白名单过滤，
+                    //   用户删掉的源不再被 reload 装回来
+                    java.util.Set<String> allow = allowedSourceIds(p);
                     for (Source s : r.sources) {
+                        if (blockedByWhitelist(allow, s.id())) continue;
                         if (s != null && s.id() != null) ALL.put(s.id(), s);
                     }
                     diag("JS 插件 OK：" + (Utils.empty(p.fileName) ? p.filePath : p.fileName)
@@ -333,6 +389,59 @@ public final class SourceRegistry {
                 android.util.Log.w("SourceRegistry", "JS 插件加载异常：" + fn + " — " + why);
                 diag("JS 插件加载异常：" + fn + " — " + why);
             }
+        }
+    }
+
+    /**
+     * ★ v4.21.8：单 .js 插件的去重 key。
+     * 优先「脚本头 @name + @version」（同一音源换文件名/多次导入都能合并，
+     * 不同版本仍各自保留）；取不到注解时回退到文件内容 MD5。
+     */
+    private static String scriptKey(java.io.File f) {
+        try {
+            byte[] head = new byte[(int) Math.min(f.length(), 8192)];
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            int off = 0, n;
+            while (off < head.length && (n = in.read(head, off, head.length - off)) > 0)
+                off += n;
+            in.close();
+            String h = new String(head, 0, off, "UTF-8");
+            String nm = headerVal(h, "name");
+            if (nm != null) {
+                String v = headerVal(h, "version");
+                return "name:" + nm + "@" + (v == null ? "-" : v);
+            }
+        } catch (Throwable ignored) {}
+        return scriptFingerprint(f);
+    }
+
+    private static String headerVal(String head, String field) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("@\\s*" + field + "\\s+([^\\r\\n*]+)").matcher(head);
+            if (!m.find()) return null;
+            String v = m.group(1).trim();
+            return (v.length() == 0 || "null".equals(v)) ? null : v;
+        } catch (Throwable ignored) { return null; }
+    }
+
+    /** ★ v4.21.8：脚本内容指纹（MD5 + 长度），用于合并「同名不同文件」的重复导入 */
+    private static String scriptFingerprint(java.io.File f) {
+        java.io.FileInputStream in = null;
+        try {
+            java.security.MessageDigest md =
+                    java.security.MessageDigest.getInstance("MD5");
+            in = new java.io.FileInputStream(f);
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
+            return sb.append(':').append(f.length()).toString();
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) {}
         }
     }
 

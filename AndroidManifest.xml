@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.tingshu.app"
-        android:versionCode="181"
-        android:versionName="4.18.1">
+        android:versionCode="234"
+        android:versionName="4.21.42">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
 
@@ -21,6 +21,8 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <!-- ★ v2.8：自绘悬浮球需要「显示在其他应用上层」权限（用户需在系统设置里手动授予） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <!-- ★ v4.21.36：自动更新（下载后直接拉起安装器需要该权限声明，系统会弹一次授权） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <application
         android:name=".core.App"
@@ -119,5 +121,13 @@
              wg_*.xml 绘制资源 —— 已全部删除。
              桌面播放控制改由「通知栏控制条 + 系统 MediaSession」承担，
              原子随身听 / 音乐控制中心仍可正常读取与操控播放。 -->
+
+        <!-- ★ v4.21.36 自动更新：把下载好的 APK 以 content:// 交给系统安装器
+             （工程没引 support-v4，自实现极简版，见 UpdateProvider） -->
+        <provider
+            android:name=".core.UpdateProvider"
+            android:authorities="com.tingshu.app.update"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
     </application>
 </manifest>

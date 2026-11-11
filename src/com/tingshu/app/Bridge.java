@@ -172,6 +172,197 @@ public class Bridge {
         } catch (Throwable ignored) {}
     }
 
+    // ==================== 崩溃日志取证（★ v4.20.1） ====================
+
+    /**
+     * 读取上次会话遗留的崩溃日志，回传 window.onCrashLogs({name, text})。
+     *
+     * <p>崩溃处理器把完整堆栈写进 files/crash/crash-*.log，但内部存储用户看不到。
+     * 这里以 files/crash.seen 的修改时间为"已读水位"：只上报水位之后新产生的
+     * 崩溃日志，读完把水位推到现在 —— 保证每次崩溃只弹一次，不骚扰。
+     * 首次安装诊断版时水位文件不存在，会立刻上报现存的所有旧崩溃（正是要的）。
+     */
+    @JavascriptInterface
+    public void crashCheck() {
+        try {
+            java.io.File dir = new java.io.File(activity.getFilesDir(), "crash");
+            java.io.File seen = new java.io.File(activity.getFilesDir(), "crash.seen");
+            long seenT = seen.exists() ? seen.lastModified() : 0L;
+            java.io.File[] all = dir.listFiles();
+            java.io.File newest = null;
+            if (all != null) {
+                for (java.io.File f : all) {
+                    if (f.isFile() && f.lastModified() > seenT
+                            && (newest == null || f.lastModified() > newest.lastModified())) {
+                        newest = f;
+                    }
+                }
+            }
+            if (newest != null && newest.length() > 0) {
+                java.io.FileInputStream in = new java.io.FileInputStream(newest);
+                byte[] buf = new byte[(int) Math.min(newest.length(), 20000)];
+                int n = in.read(buf);
+                in.close();
+                JSONObject o = new JSONObject();
+                o.put("name", newest.getName());
+                o.put("text", n > 0 ? new String(buf, 0, n, "UTF-8") : "(空日志)");
+                callback("onCrashLogs", o);
+            }
+            if (!seen.exists()) seen.createNewFile();
+            seen.setLastModified(System.currentTimeMillis());
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * ★ v4.20.3：诊断日志（PlayerLog：取链/转码/播放全过程），
+     * 回传 window.onDiagLog({log})。设置页入口，反馈 WMA 等播放问题时用。
+     */
+    @JavascriptInterface
+    public void diagLog() {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("log", com.tingshu.app.core.PlayerLog.dump());
+            callback("onDiagLog", o);
+        } catch (Throwable ignored) {}
+    }
+
+    // ==================== 功能诊断（★ v4.21.20） ====================
+
+    /**
+     * 功能诊断：按前端勾选的功能块逐块体检，结果流式回传。
+     *
+     * <p>ids 形如 "net,panlogin,pansave"。每完成一块回调
+     * {@code onFdiagModule({id, ok, ms, lines:[…]})}，全部完成后回调
+     * {@code onFdiagDone()}。行首 ✓ / ✗ 决定该块整体 ok —— 单块失败
+     * 不影响其它块继续跑。
+     */
+    @JavascriptInterface
+    public void featDiag(final String ids) {
+        bg(new Runnable() {
+            public void run() {
+                String[] list = (ids == null || ids.trim().length() == 0)
+                        ? new String[0] : ids.split(",");
+                for (String raw : list) {
+                    final String id = raw.trim();
+                    if (id.length() == 0) continue;
+                    JSONObject o = new JSONObject();
+                    try {
+                        o.put("id", id);
+                        long t0 = android.os.SystemClock.elapsedRealtime();
+                        java.util.List<String> lines = runFeatDiag(id);
+                        long ms = android.os.SystemClock.elapsedRealtime() - t0;
+                        JSONArray arr = new JSONArray();
+                        boolean fail = false;
+                        for (String l : lines) {
+                            arr.put(l == null ? "" : l);
+                            if (l != null && l.startsWith("✗")) fail = true;
+                        }
+                        o.put("lines", arr);
+                        o.put("ok", !fail);
+                        o.put("ms", ms);
+                    } catch (Throwable t) {
+                        try {
+                            o.put("ok", false);
+                            o.put("ms", 0);
+                            JSONArray arr = new JSONArray();
+                            arr.put("✗ 诊断执行异常：" + t.getClass().getSimpleName()
+                                    + (t.getMessage() == null ? "" : (": " + t.getMessage())));
+                            o.put("lines", arr);
+                        } catch (Throwable ignored) {}
+                    }
+                    callback("onFdiagModule", o);
+                }
+                callback("onFdiagDone", new JSONObject());
+            }
+        });
+    }
+
+    /** 执行单个功能块的自检，返回逐行输出 */
+    private java.util.List<String> runFeatDiag(String id) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if ("net".equals(id)) {
+            out.add("· 请求 https://pan.baidu.com …");
+            long t0 = System.currentTimeMillis();
+            com.tingshu.app.core.Net.Resp r = null;
+            try {
+                r = com.tingshu.app.core.Net.request(
+                        "https://pan.baidu.com/", null, "https://pan.baidu.com/", null, false);
+            } catch (Throwable ignored) {}
+            long ms = System.currentTimeMillis() - t0;
+            if (r == null) out.add("✗ 无响应（网络不可用？）");
+            else out.add((r.code >= 200 && r.code < 500 ? "✓" : "✗")
+                    + " HTTP " + r.code + "，耗时 " + ms + "ms");
+            out.add("· 请求 https://www.baidu.com …");
+            t0 = System.currentTimeMillis();
+            com.tingshu.app.core.Net.Resp r2 = null;
+            try {
+                r2 = com.tingshu.app.core.Net.request(
+                        "https://www.baidu.com/", null, null, null, false);
+            } catch (Throwable ignored) {}
+            ms = System.currentTimeMillis() - t0;
+            if (r2 == null) out.add("✗ 无响应");
+            else out.add((r2.code >= 200 && r2.code < 500 ? "✓" : "✗")
+                    + " HTTP " + r2.code + "，耗时 " + ms + "ms");
+            out.add("· IPv6：" + (com.tingshu.app.core.Net.ipv6Available()
+                    ? "可用" : "不可用（一般不影响使用）"));
+        } else if ("engine".equals(id)) {
+            JSONObject d = com.tingshu.app.source.SourceRegistry.diagJson();
+            int plugins = d.optInt("pluginCount", 0);
+            int live = d.optInt("liveSourceCount", 0);
+            int total = d.optInt("totalSources", 0);
+            out.add("· JS 插件包：" + plugins + " 个");
+            out.add("· JS 源存活：" + live + " 个");
+            out.add("· 当前源总数：" + total + " 个");
+            if (plugins == 0) {
+                out.add("✗ 没有已安装的 JS 插件包——去 书源管理→导入 重新装一次");
+            } else if (live == 0) {
+                out.add("✗ 插件包在但源没加载出来——详情看「关于→源加载诊断」");
+            } else {
+                out.add("✓ 书源引擎正常");
+            }
+        } else if ("panlogin".equals(id)) {
+            out.addAll(com.tingshu.app.pan.PanResolver.diagPanLogin());
+        } else if ("pansave".equals(id)) {
+            out.addAll(com.tingshu.app.pan.PanResolver.diagBaiduSave());
+        } else if ("player".equals(id)) {
+            String log = com.tingshu.app.core.PlayerLog.dump().trim();
+            if (log.length() == 0) {
+                out.add("· 暂无播放记录——播一集再回来看链路日志（取链/转码/播放全过程）");
+            } else {
+                String[] all = log.split("\n");
+                out.add("· 本次启动共 " + all.length + " 条播放链路记录，最近 10 条：");
+                int from = Math.max(0, all.length - 10);
+                boolean bad = false;
+                for (int i = from; i < all.length; i++) {
+                    out.add("    " + all[i]);
+                    if (all[i].contains("失败") || all[i].contains("ERROR")) bad = true;
+                }
+                out.add(bad ? "⚠ 最近记录里有失败——把这一块截图发出来即可定位"
+                            : "✓ 最近播放链路没有失败记录");
+            }
+        } else if ("storage".equals(id)) {
+            try {
+                java.io.File cache = activity.getCacheDir();
+                out.add("· 内部缓存目录：" + cache.getAbsolutePath());
+                String[] top = cache.list();
+                out.add("· 缓存顶层条目：" + (top == null ? 0 : top.length) + " 个");
+                long free = cache.getUsableSpace();
+                out.add("· 可用空间：" + (free / 1024 / 1024) + " MB");
+                java.io.File probe = new java.io.File(cache, "fdiag.tmp");
+                java.io.FileWriter w = new java.io.FileWriter(probe);
+                w.write("ok");
+                w.close();
+                out.add(probe.delete() ? "✓ 目录可写（写入+删除测试通过）"
+                                       : "⚠ 可写入但清理测试文件失败");
+            } catch (Throwable t) {
+                out.add("✗ 存储检测失败：" + t);
+            }
+        } else {
+            out.add("✗ 未知功能块：" + id);
+        }
+        return out;
+    }
+
     // ==================== 账号（接口预留） ====================
     // 本期只做接口占位：前端已经按这套契约写好，
     // 后续接入注册/登录服务时，只要在这里填充实现并回调 onAccount* 即可，
@@ -453,7 +644,13 @@ public class Bridge {
                         o.put("posMs", pos);
                         o.put("chapTitle", ct);
                         o.put("chapterCount", cnt);
-                        o.put("playing", false);
+                        // ★ v4.21.33：这里原来硬编码 false。方案 B 下服务里的暗核心
+                        //   可能正被界面接管且正在出声，网页据此把按钮画成「▶ 播放」，
+                        //   用户点一下反而把后台播放暂停了（表现为「要点两次才播」）。
+                        //   现在回传真实播放态，前端据此同步图标。
+                        boolean realPlaying = false;
+                        try { realPlaying = player.isPlaying(); } catch (Throwable ignored) {}
+                        o.put("playing", realPlaying);
                         o.put("live", true);
                         callback("onResumeSession", o);
                         return;
@@ -643,6 +840,19 @@ public class Bridge {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /**
+     * ★ v4.21.34：同步返回播放核心的真实状态。
+     *
+     * <p>用途：前端点播放/暂停按钮的瞬间直接拿真值，不再依赖缓存的
+     * App.playing —— 方案 B 下网页状态与服务暗核心可能短暂不一致，
+     * 拿缓存状态决定 pause/play 会出现「第一下点了没反应 / 误暂停」。
+     * JavascriptInterface 方法本就跑在独立的 JavaBridge 线程，同步返回无阻塞。
+     */
+    @JavascriptInterface
+    public boolean isPlayingNow() {
+        try { return playerIsPlaying(); } catch (Throwable t) { return false; }
     }
 
     private static String chapterTitle(int idx, Book b) {
@@ -1315,6 +1525,62 @@ public class Bridge {
     }
 
     /**
+     * ★ v4.21.39 输入网址 → 自动生成书源。
+     *
+     * <p>后台跑 {@link com.tingshu.app.source.gen.SourceProbe} 探测
+     * （进度走 {@code onGenProgress}），成功即导入（origin=gen）并立刻做一次
+     * 真实搜索测试，结果走 {@code onGenDone}（含 ok/id/name/test/diag）。
+     */
+    @JavascriptInterface
+    public void autoGenSource(final String url) {
+        Aggregator.singlePool().execute(new Runnable() {
+            public void run() {
+                com.tingshu.app.source.gen.SourceProbe.Result r =
+                        com.tingshu.app.source.gen.SourceProbe.probe(url,
+                                new com.tingshu.app.source.gen.SourceProbe.Cb() {
+                                    public void onProgress(String stage, int pct, String msg) {
+                                        JSONObject p = new JSONObject();
+                                        try {
+                                            p.put("stage", stage);
+                                            p.put("pct", pct);
+                                            p.put("msg", msg);
+                                        } catch (Throwable ignored) {}
+                                        callback("onGenProgress", p);
+                                    }
+                                });
+                JSONObject out = new JSONObject();
+                try {
+                    out.put("ok", r.ok);
+                    JSONArray dg = new JSONArray();
+                    for (String d : r.diag) dg.put(d);
+                    out.put("diag", dg);
+                    if (r.ok) {
+                        out.put("id", r.id);
+                        out.put("name", r.name);
+                        JSONObject imp = BridgeSource.importText(r.configJson, true, "gen");
+                        if (imp != null && imp.optBoolean("ok")) {
+                            // 导入成功 → 立刻做一次真实搜索测试（同步，一次请求量级）
+                            JSONObject test = BridgeSource.testCustom(r.id);
+                            out.put("test", test == null ? new JSONObject() : test);
+                        } else {
+                            out.put("ok", false);
+                            out.put("error", imp == null
+                                    ? "导入失败" : ("导入失败：" + imp.optString("error")));
+                        }
+                    } else {
+                        out.put("error", r.error);
+                    }
+                } catch (Throwable t) {
+                    try { out.put("ok", false); out.put("error", "处理失败：" + t); } catch (Throwable ignored) {}
+                }
+                callback("onCustomList", BridgeSource.customListJson());
+                callback("onSourceList", BridgeSource.allSourcesJson());
+                callback("onGenDone", out);
+            }
+        });
+    }
+
+    /**
      * ★ v3.1：批量验证书源（可选去重 + 失效自动关停）。
      *
      * <p>这是源管理里最重的一个操作：19 个 JS 源跑一遍要 10~40 秒（限流站还要等间隔），
@@ -1331,7 +1597,7 @@ public class Bridge {
      *
      * @param scope        "all" 全部源 / "enabled" 仅已启用 / "group:xxx" 某个分组
      * @param autoCloseDead 验证为失效的源自动停用
-     * @param dedup        同域名重复的源自动删除（保留优先级更高的）
+     * @param dedup        整理重复源：失效的自动关闭留好源，都能用的归入「重复源」分组（不删除）
      */
     @JavascriptInterface
     public void verifySources(final String scope, final boolean autoCloseDead,
@@ -1895,6 +2161,12 @@ public class Bridge {
             // ★ v4.14.0：进度条锚点动效 + 下载转存（试用）开关
             o.put("barFx", com.tingshu.app.data.Settings.barFx());
             o.put("webdavExport", com.tingshu.app.data.Settings.webdavExportOn());
+            // ★ v4.19.0：下载格式（orig / mp3）
+            o.put("dlFormat", com.tingshu.app.data.Settings.dlFormat());
+            // ★ v4.19.0：完整版（带 FFmpeg 转码组件）标志，设置页提示用
+            try {
+                o.put("ffLib", com.tingshu.app.player.WmaTrans.libraryAvailable());
+            } catch (Throwable ignored) {}
         } catch (Throwable ignored) {}
         callback("onSettings", o);
     }
@@ -2029,28 +2301,49 @@ public class Bridge {
                     o.put("local", local);
                 } catch (Throwable ignored) {}
                 try {
-                    String body = httpGetText(UPDATE_API, 8000);
-                    if (body == null || body.length() == 0) {
+                    // v4.21.35：更新源从 GitHub Releases 换成官方下载站的
+                    // manifest.json（与 NAS 锚点同一份数据），有新版直接给
+                    // APK 直链（带强制下载头，点开即下载）
+                    // 主站 → 公共镜像依次尝试，域名不回显到任何提示里
+                    String body = fetchManifestText();
+                    if (body == null) {
                         o.put("ok", false);
-                        o.put("error", "网络请求失败");
+                        o.put("error", "无法连接更新服务器，请检查网络后重试");
                         callback("onUpdateResult", o);
                         return;
                     }
                     org.json.JSONObject j = new org.json.JSONObject(body);
-                    String tag = j.optString("tag_name", "");
-                    String page = j.optString("html_url", "");
-                    if (tag.length() == 0) {
+                    String latest = "", file = "", md5 = "";
+                    org.json.JSONArray apps = j.optJSONArray("apps");
+                    if (apps != null) {
+                        for (int i = 0; i < apps.length(); i++) {
+                            org.json.JSONObject a = apps.optJSONObject(i);
+                            if (a == null) continue;
+                            String f = a.optString("file", "");
+                            if (f.startsWith("fengxi-tingshu")
+                                    || a.optString("app", "").contains("听书")) {
+                                latest = a.optString("version", "");
+                                file = f;
+                                md5 = a.optString("md5", "");
+                                break;
+                            }
+                        }
+                    }
+                    // 旧版顶层兼容字段兜底
+                    if (latest.length() == 0) latest = j.optString("version", "");
+                    if (file.length() == 0) file = j.optString("file", "");
+                    if (md5.length() == 0) md5 = j.optString("md5", "");
+                    if (latest.length() == 0) {
                         o.put("ok", false);
                         o.put("error", "没有找到发布版本");
                         callback("onUpdateResult", o);
                         return;
                     }
-                    String latest = tag.startsWith("v") || tag.startsWith("V")
-                            ? tag.substring(1) : tag;
                     o.put("ok", true);
                     o.put("latest", latest);
-                    o.put("tag", tag);
-                    o.put("url", page);
+                    o.put("md5", md5);
+                    o.put("url", file.length() > 0
+                            ? updUrl(lastUpdBase + file, true) : "");
                     o.put("hasNew", compareVer(latest, local) > 0);
                     callback("onUpdateResult", o);
                 } catch (Throwable t) {
@@ -2064,9 +2357,62 @@ public class Bridge {
         });
     }
 
-    /** 版本更新检查地址（GitHub Releases latest） */
-    private static final String UPDATE_API =
-            "https://api.github.com/repos/fengxitingshu/fengxi-tingshu/releases/latest";
+    /**
+     * 更新源（v4.21.37）：主站是自建 NAS 反代站，家宽入站 443 可能被运营商
+     * 封锁或反代未监听 IPv6，手机侧不一定可达 —— 所以主站连不上时自动
+     * 切换到公共镜像兜底，保证一定能完成更新。
+     * 域名只存在于代码常量里，**任何 UI 文案一律只说「更新服务器/官方渠道」，
+     * 不回显具体地址**，避免截图中泄密。
+     */
+    private static final String UPDATE_MANIFEST =
+            "https://fx.513969511.xyz/manifest.json";
+    private static final String UPDATE_BASE =
+            "https://fx.513969511.xyz/";
+    /** 兜底更新源：主站不可达时走公共镜像（同样需要分享码） */
+    private static final String UPDATE_MANIFEST_BAK =
+            "https://ab1f2330f397556fe.app.workbuddy.host/manifest.json";
+    private static final String UPDATE_BASE_BAK =
+            "https://ab1f2330f397556fe.app.workbuddy.host/";
+    /**
+     * 下载站源站不带分享码一律 403 —— 反向代理默认透传查询串，所以 App
+     * 每个请求都主动带上 sharecode；无码请求只作兜底。
+     */
+    private static final String UPDATE_SHARECODE = "LPIHFTHJ3X";
+
+    /** 本次检查更新实际命中的源（决定 APK 直链用哪个前缀） */
+    private static volatile String lastUpdBase = UPDATE_BASE;
+
+    /** 给下载站 URL 追加分享码（已有查询串时用 & 连接） */
+    private static String updUrl(String url, boolean withCode) {
+        if (!withCode || UPDATE_SHARECODE.length() == 0) return url;
+        return url + (url.contains("?") ? "&" : "?")
+                + "sharecode=" + UPDATE_SHARECODE;
+    }
+
+    /**
+     * 依次尝试拉取 manifest：主站带码 → 主站无码 → 公共镜像带码。
+     * httpGetText 内部已含 https 失败退 http 的重试。
+     * 只有「返回体真的是 JSON」才算命中，403 的 HTML 错误页不算。
+     */
+    private static String fetchManifestText() {
+        String[] tries = new String[]{
+                updUrl(UPDATE_MANIFEST, true),
+                UPDATE_MANIFEST,
+                updUrl(UPDATE_MANIFEST_BAK, true),
+        };
+        String[] bases = new String[]{UPDATE_BASE, UPDATE_BASE, UPDATE_BASE_BAK};
+        for (int i = 0; i < tries.length; i++) {
+            String b = httpGetText(tries[i], 8000);
+            if (b != null) {
+                String t = b.trim();
+                if (t.length() > 0 && t.charAt(0) == '{') {
+                    lastUpdBase = bases[i];
+                    return b;
+                }
+            }
+        }
+        return null;
+    }
 
     /** 读本地安装包的 versionName */
     private String localVersionName() {
@@ -2083,6 +2429,16 @@ public class Bridge {
      * 不引第三方库，超时短，失败返回 null。
      */
     private static String httpGetText(String url, int timeoutMs) {
+        // v4.21.36：NAS 域名是家里宽带的 IPv6 直连，https 证书/端口可能不稳，
+        // 先试 https，失败再退 http 同路径（清单已开 usesCleartextTraffic）。
+        String r = httpGetTextOnce(url, timeoutMs);
+        if (r == null && url.startsWith("https://")) {
+            r = httpGetTextOnce("http://" + url.substring(8), timeoutMs);
+        }
+        return r;
+    }
+
+    private static String httpGetTextOnce(String url, int timeoutMs) {
         java.net.HttpURLConnection conn = null;
         try {
             java.net.URL u = new java.net.URL(url);
@@ -2090,7 +2446,7 @@ public class Bridge {
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
             conn.setRequestMethod("GET");
-            conn.setRequestProperty("Accept", "application/vnd.github+json");
+            conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "FengxiTingshu");
             int code = conn.getResponseCode();
             if (code < 200 || code >= 300) return null;
@@ -2137,6 +2493,197 @@ public class Bridge {
             } catch (Throwable ignored) {}
         }
         return out;
+    }
+
+    // ==================== ★ v4.21.36 自动更新（检测→下载→安装一条龙） ====================
+
+    private static final Object UPDATE_LOCK = new Object();
+    private static volatile boolean updating;
+
+    /**
+     * 下载 APK 并自动拉起安装。前端「检测更新」发现新版后会自动调这里，
+     * 也可以点「立即下载」手动触发。进度通过 onUpdateProgress 回调：
+     * <pre>
+     *   {phase:'download',percent,mb} → {phase:'verify'} → {phase:'install'}
+     * </pre>
+     * 出错回 {phase:'error',error}；缺安装授权回 {phase:'permission'}。
+     */
+    @JavascriptInterface
+    public void downloadAndInstall(final String url, final String md5) {
+        if (url == null || url.length() == 0) {
+            updProgress("error", "下载地址未就绪");
+            return;
+        }
+        synchronized (UPDATE_LOCK) {
+            if (updating) return;   // 防重复点击
+            updating = true;
+        }
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    java.io.File dir = new java.io.File(
+                            activity.getExternalFilesDir(null), "update");
+                    if (!dir.exists()) dir.mkdirs();
+                    java.io.File f = new java.io.File(dir, "update.apk");
+                    // url 已带分享码（前端下发的就是带码直链），https 不稳再退 http
+                    if (!downloadApk(url, f)) {
+                        f.delete();
+                        if (url.startsWith("https://")) {
+                            downloadApk("http://" + url.substring(8), f);
+                        }
+                    }
+                    if (!isApk(f)) {
+                        f.delete();
+                        updProgress("error", "下载失败：文件不完整或网络不可达，请稍后重试");
+                        return;
+                    }
+                    // 校验 MD5（manifest 里带，防下载被截断或被换包）
+                    updProgress("verify", "");
+                    if (md5 != null && md5.length() == 32) {
+                        String real = fileMd5(f);
+                        if (real.length() > 0 && !real.equalsIgnoreCase(md5)) {
+                            f.delete();
+                            updProgress("error", "安装包校验失败（MD5 不符），请稍后重试");
+                            return;
+                        }
+                    }
+                    installApk(f);
+                } catch (Throwable t) {
+                    updProgress("error", "更新失败：" + t.getClass().getSimpleName());
+                } finally {
+                    updating = false;
+                }
+            }
+        });
+    }
+
+    /** 下载 APK，成功（文件落盘且超过 1MB）返回 true */
+    private boolean downloadApk(String url, java.io.File f) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(30000);
+            conn.setRequestProperty("User-Agent", "FengxiTingshu");
+            long total = conn.getContentLength();
+            java.io.InputStream in = conn.getInputStream();
+            java.io.FileOutputStream out = new java.io.FileOutputStream(f);
+            byte[] buf = new byte[16384];
+            long got = 0;
+            int n, lastPct = -1;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                got += n;
+                if (total > 0) {
+                    int pct = (int) (got * 100 / total);
+                    if (pct != lastPct) {
+                        lastPct = pct;
+                        JSONObject p = new JSONObject();
+                        p.put("phase", "download");
+                        p.put("percent", pct);
+                        p.put("mb", String.format(java.util.Locale.US, "%.1f/%.1fMB",
+                                got / 1048576.0, total / 1048576.0));
+                        callback("onUpdateProgress", p);
+                    }
+                }
+            }
+            out.flush();
+            out.close();
+            in.close();
+            return f.exists() && f.length() > 1024 * 1024;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            if (conn != null) { try { conn.disconnect(); } catch (Throwable ignored) {} }
+        }
+    }
+
+    /** 拉起系统安装器；Android 8+ 需要先有「安装未知应用」授权 */
+    private void installApk(java.io.File f) {
+        com.tingshu.app.core.UpdateProvider.setApk(f);
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            try {
+                if (!activity.getPackageManager().canRequestPackageInstalls()) {
+                    updProgress("permission", "");
+                    return;
+                }
+            } catch (Throwable ignored) {}
+        }
+        try {
+            android.content.Intent i = new android.content.Intent(
+                    android.content.Intent.ACTION_INSTALL_PACKAGE,
+                    android.net.Uri.parse("content://"
+                            + com.tingshu.app.core.UpdateProvider.AUTHORITY + "/update.apk"));
+            i.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(i);
+            updProgress("install", "");
+        } catch (Throwable t) {
+            updProgress("error", "无法拉起安装器：" + t.getClass().getSimpleName());
+        }
+    }
+
+    /** 前端点「去授权」：打开本应用的「安装未知应用」系统设置页 */
+    @JavascriptInterface
+    public void openInstallSettings() {
+        try {
+            android.content.Intent i;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                i = new android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:" + activity.getPackageName()));
+            } else {
+                i = new android.content.Intent(
+                        android.provider.Settings.ACTION_SECURITY_SETTINGS);
+            }
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(i);
+        } catch (Throwable t) {
+            js("window.onToast(" + JSONObject.quote("未找到系统设置入口，请到系统设置手动允许安装") + ")");
+        }
+    }
+
+    private void updProgress(String phase, String extra) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put("phase", phase);
+            if (extra != null && extra.length() > 0) p.put("error", extra);
+            callback("onUpdateProgress", p);
+        } catch (Throwable ignored) {}
+    }
+
+    /** 判断文件是不是有效 APK（ZIP 头 PK 且大于 1MB） */
+    private static boolean isApk(java.io.File f) {
+        if (f == null || !f.exists() || f.length() < 1024 * 1024) return false;
+        java.io.InputStream in = null;
+        try {
+            in = new java.io.FileInputStream(f);
+            byte[] h = new byte[2];
+            return in.read(h) == 2 && h[0] == 'P' && h[1] == 'K';
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            if (in != null) { try { in.close(); } catch (Throwable ignored) {} }
+        }
+    }
+
+    /** 算安装包 MD5（与下载站 manifest 比对用） */
+    private static String fileMd5(java.io.File f) {
+        try {
+            java.security.MessageDigest md =
+                    java.security.MessageDigest.getInstance("MD5");
+            java.io.InputStream in = new java.io.FileInputStream(f);
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            in.close();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Throwable t) {
+            return "";
+        }
     }
 
     // ==================== 缓存 ====================

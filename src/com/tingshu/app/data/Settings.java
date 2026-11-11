@@ -251,6 +251,41 @@ public final class Settings {
         SP.edit().putString("last_verify_summary", v == null ? "" : v).apply();
     }
 
+    // ---------- ★ v4.21.40 重复源分组标记 ----------
+
+    /**
+     * 「重复源」分组里的源 id 集合。
+     *
+     * <p>批量验证整理重复源时：同站点下**都能用**的源（≥2 个）不自动删除，
+     * 而是标进这个集合 —— 前端源管理页据此单独归一组展示，让用户自己决定
+     * 删哪个。失效的重复源不走这里，直接停用。
+     * 持久化用 SharedPreferences 存 JSON 数组即可（标记是轻量分析结果）。
+     */
+    public static java.util.Set<String> dupeIds() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<String>();
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(SP.getString("dupe_source_ids", "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                String id = a.optString(i, "");
+                if (id.length() > 0) out.add(id);
+            }
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    public static void setDupeIds(java.util.Collection<String> ids) {
+        org.json.JSONArray a = new org.json.JSONArray();
+        if (ids != null) for (String id : ids) if (id != null && id.length() > 0) a.put(id);
+        try { SP.edit().putString("dupe_source_ids", a.toString()).apply(); } catch (Throwable ignored) {}
+    }
+
+    /** 删除源时顺手清掉它的重复标记，避免残留孤儿标记 */
+    public static void clearDupeId(String id) {
+        if (id == null || id.length() == 0) return;
+        java.util.Set<String> s = dupeIds();
+        if (s.remove(id)) setDupeIds(s);
+    }
+
     /** 仅 WiFi 播放 */
     public static boolean wifiPlayOnly() {
         return SP.getBoolean("wifi_play_only", false);
@@ -352,6 +387,15 @@ public final class Settings {
     public static boolean hasDownloadTree() {
         String s = downloadTreeUri();
         return s != null && s.length() > 0;
+    }
+
+    /** ★ v4.19.0 下载格式：orig=保持原始 / mp3=下载后统一转码为 MP3（源已是 MP3 则不动） */
+    public static String dlFormat() {
+        return SP.getString("dl_format", "orig");
+    }
+
+    public static void setDlFormat(String v) {
+        SP.edit().putString("dl_format", "mp3".equals(v) ? "mp3" : "orig").apply();
     }
 
     /** 定时关闭：分钟数，0 = 关 */
@@ -500,6 +544,8 @@ public final class Settings {
         // ★ v4.14.0：进度条锚点动效（0~5）与下载转存 WebDAV 开关
         if ("bar_fx".equals(key)) { setBarFx(i(value, 1)); return; }
         if ("dav_export".equals(key)) { setWebdavExportOn(b(value)); return; }
+        // ★ v4.19.0：下载格式（orig / mp3）
+        if ("dl_format".equals(key)) { setDlFormat(value); return; }
         // ★ v3.1：音量增益（50~300）与其他声音打断策略（0/1/2）
         if ("gain_pct".equals(key)) { setGain(i(value, 100)); return; }
         if ("audio_focus_mode".equals(key)) { setAudioFocusMode(i(value, 0)); return; }

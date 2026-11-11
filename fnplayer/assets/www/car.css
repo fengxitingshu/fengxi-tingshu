@@ -1,0 +1,104 @@
+/* ==========================================================================
+   car.css — v2.22 车机浮窗适配（body.car 生效）
+   场景：深蓝 S05 + Deepal+ 桌面把 App 以浮窗卡片（约 320~479px 宽）运行。
+   - <420px：单列横排大卡（封面左、信息右），整卡 ≥72px 高，行车中好点；
+   - 420~479px：双列 16:9 小卡（浮窗里 2:3 双列一屏只露 1.5 张，改 16:9 一屏 3 行）；
+   - ≥480px：自动退出 car 态（由 app.js applyCarMode 控制，此处双保险）；
+   - 深色对比强化：浮窗常叠在车机浅色地图/桌面上，边线对比度必须拉高；
+   - 所有热区 ≥48px；尺寸只用 fr/%/aspect-ratio，不写死容器宽度，防破版。
+   ========================================================================== */
+
+/* ---- 深色主题对比强化 ---- */
+body.car {
+    --card: #232b3a;
+    --line: #39435a;
+    --txt: #f2f6ff;
+    --sub: #9fb0cc;
+}
+html[data-theme="light"] body.car {
+    --card: #ffffff;
+    --line: #c3cede;
+    --txt: #1a2233;
+    --sub: #5b6a85;
+}
+
+/* ---- 热区与导航 ---- */
+body.car .chip {
+    min-height: 48px;
+    padding: 10px 16px;
+    font-size: 14px;
+}
+body.car .tabitem {
+    min-height: 48px;
+    min-width: 48px;
+    font-size: 13px;
+}
+body.car .tabbar { height: 62px; }
+body.car .navico {
+    min-width: 48px;
+    min-height: 48px;
+}
+body.car .nav { padding-top: 10px; padding-bottom: 10px; }
+body.car .navtitle { font-size: 17px; }
+body.car .navsel {
+    min-height: 44px;
+    font-size: 14px;
+}
+
+/* ---- <420px：单列横排大卡 ---- */
+@media (max-width: 419px) {
+    body.car .shelf {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+    }
+    body.car .bk {
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        min-height: 72px;
+        padding: 8px;
+        gap: 12px;
+    }
+    body.car .bk-cv {
+        width: 112px;
+        flex: 0 0 112px;
+        aspect-ratio: 2 / 3;
+        height: auto;
+    }
+    body.car .bk-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 0;
+    }
+    body.car .bk-name {
+        font-size: 16px;
+        line-height: 1.35;
+    }
+    body.car .bk-sub {
+        font-size: 12px;
+        margin-top: 6px;
+    }
+    body.car .bk-src { font-size: 11px; }
+}
+
+/* ---- 420~479px：双列 16:9 小卡 ---- */
+@media (min-width: 420px) and (max-width: 479px) {
+    body.car .bk-cv {
+        aspect-ratio: 16 / 9;
+    }
+    body.car .bk-name { font-size: 14px; }
+    body.car .bk-sub { font-size: 11px; }
+}
+
+/* ---- 继续观看横滑（浮窗内同样放大热区） ---- */
+body.car .hcard { min-width: 96px; }
+body.car .hcard .hn { font-size: 12px; }
+
+/* ---- 弹层（源选择/线路选择）浮窗内留边 ---- */
+body.car .ovl-card {
+    max-width: calc(100% - 24px);
+    max-height: calc(100% - 24px);
+}
+body.car .ovl-item { min-height: 48px; font-size: 14px; }

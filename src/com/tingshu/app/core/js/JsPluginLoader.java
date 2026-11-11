@@ -11,6 +11,7 @@ import com.tingshu.app.source.Source;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.mozilla.javascript.Context;
 import org.mozilla.javascript.Scriptable;
 
 import java.io.ByteArrayOutputStream;
@@ -131,6 +132,40 @@ public final class JsPluginLoader {
                 return r;
             }
 
+            // ---- 0. ★ v4.20.4：单个 .js 源文件 —— 自动包装成插件目录（源文件不动） ----
+            if (zip.getName().toLowerCase().endsWith(".js")) {
+                String code = readText(zip);
+                String base = Utils.safe(stripExt(zip.getName()));
+                File parent = optDir != null ? optDir : root();
+                dir = new File(parent, base);
+                if (dir.exists()) deleteDir(dir);
+                if (!dir.mkdirs()) {
+                    r.error = "无法创建插件目录";
+                    return r;
+                }
+                r.dir = dir.getAbsolutePath();
+                writeText(new File(dir, "script.js"), code);
+                JSONObject mf = new JSONObject();
+                try {
+                    // ★ v4.21.3：显示名优先取脚本头注解 @name / @version
+                    //   （LX 脚本规范头，如「@name 墨澜聚合音源」）。
+                    //   文件名经 Utils.safe 会把中文冲成下划线，只能当兜底。
+                    String dn = headerField(code, "name");
+                    String dv = headerField(code, "version");
+                    mf.put("name", dn != null ? dn : base);
+                    mf.put("version", dv != null ? dv : "1.0");
+                    mf.put("author", headerField(code, "author") == null
+                            ? "" : headerField(code, "author"));
+                    mf.put("description", LxRuntime.looksLikeLx(code)
+                            ? "LX 音源脚本（App 运行时解析）" : "JS 单文件源");
+                    JSONArray sa = new JSONArray();
+                    sa.put("script.js");
+                    mf.put("scripts", sa);
+                } catch (Throwable ignored) {}
+                writeText(new File(dir, "manifest.json"), mf.toString());
+                return loadFromDir(dir, r);
+            }
+
             // ---- 1. 解包到独立目录（用 zip 文件名做目录名，同一包重复导入即覆盖） ----
             String base = Utils.safe(stripExt(zip.getName()));
             File parent = optDir != null ? optDir : root();
@@ -184,9 +219,19 @@ public final class JsPluginLoader {
         }
 
         // ---- 3. 逐脚本加载（同一 scope 内按序执行） ----
-        JsEngine.Scope scope = JsEngine.newScope();
+        // ★ v4.20.4：作用域级 host 工厂 —— registerSource 时立即挂 host，
+        //   prelude 系插件（如红果原版）在加载期就读 registerSource(...).host。
+        final String pkgId = r.pkgName == null ? dir.getName() : r.pkgName;
+        final JsHostApi.Callback cb = r.callback;
+        JsEngine.Scope scope = JsEngine.newScope(new JsEngine.HostFactory() {
+            @Override
+            public Object build(Context cx, Scriptable global) {
+                return new JsHostApi(pkgId, "", cb).build(cx, global);
+            }
+        });
         List<String> names = new ArrayList<String>();
         List<String> codes = new ArrayList<String>();
+        boolean lxMode = false;
         for (int i = 0; i < scripts.length(); i++) {
             String fn = scripts.optString(i, "");
             if (fn.length() == 0) continue;
@@ -199,8 +244,14 @@ public final class JsPluginLoader {
                 r.error = "脚本过大（>2MB）：" + fn;
                 return r;
             }
+            String code = readText(f);
+            // ★ v4.20.4：LX 音源脚本（如墨澜）→ 先装 lx 运行时再跑脚本
+            if (!lxMode && LxRuntime.looksLikeLx(code)) {
+                lxMode = true;
+                LxRuntime.install(scope, r.pkgName, code);
+            }
             names.add(fn);
-            codes.add(readText(f));
+            codes.add(code);
         }
 
         for (int i = 0; i < codes.size(); i++) {
@@ -215,6 +266,18 @@ public final class JsPluginLoader {
         // ---- 4. 包装成 Source ----
         List<Scriptable> raw = scope.sources();
         if (raw.isEmpty()) {
+            // ★ v4.20.4：LX 脚本不调 registerSource —— 注册出 LX 音源
+            if (lxMode && LxRuntime.hasRequestHandler(scope)) {
+                try {
+                    r.sources.add(new com.tingshu.app.source.LxSourceAdapter(
+                            scope, r.pkgName, LxRuntime.initedJson(scope)));
+                    r.ok = true;
+                    return r;
+                } catch (Throwable t) {
+                    r.error = "LX 源初始化失败：" + brief(t);
+                    return r;
+                }
+            }
             r.error = "插件没有注册出任何书源（脚本里没有调用 registerSource）";
             return r;
         }
@@ -378,6 +441,16 @@ public final class JsPluginLoader {
         }
     }
 
+    /** ★ v4.20.4：写小文本（单 .js 包装用） */
+    private static void writeText(File f, String s) {
+        try {
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
+            fo.write(s.getBytes(Charset.forName("UTF-8")));
+            fo.flush();
+            fo.close();
+        } catch (Throwable ignored) {}
+    }
+
     private static byte[] readAll(InputStream in) throws Exception {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
@@ -389,6 +462,25 @@ public final class JsPluginLoader {
             bos.write(buf, 0, len);
         }
         return bos.toByteArray();
+    }
+
+    /**
+     * ★ v4.21.3：从脚本头部注释取 LX 规范注解（@name / @version / @author）。
+     * 只扫前 4000 字符；取不到或值为 null 返回 null（调用方给兜底）。
+     */
+    private static String headerField(String code, String field) {
+        if (code == null || field == null) return null;
+        try {
+            String head = code.substring(0, Math.min(code.length(), 4000));
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("@\\s*" + field + "\\s+([^\\r\\n*]+)")
+                    .matcher(head);
+            if (!m.find()) return null;
+            String v = m.group(1).trim();
+            return (v.length() == 0 || "null".equals(v)) ? null : v;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static String stripExt(String name) {

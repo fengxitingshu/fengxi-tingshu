@@ -75,6 +75,10 @@ public final class PanWebLogin {
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    /** ★ v4.19.1：天翼登录页是桌面版宽布局，手机 WebView 里二维码显示不全 → 用移动 UA 走 H5 登录页 */
+    private static final String UA_MOBILE =
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 
     private static WebView  sWeb;
     private static Dialog   sDialog;
@@ -118,6 +122,20 @@ public final class PanWebLogin {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         bar.addView(tip, tp);
 
+        final TextView reloadBtn = new TextView(activity);
+        reloadBtn.setText("↻ 刷新");
+        reloadBtn.setTextColor(Color.parseColor("#7FB3FF"));
+        reloadBtn.setTextSize(13);
+        reloadBtn.setPadding(dp(activity, 10), dp(activity, 6), dp(activity, 10), dp(activity, 6));
+        reloadBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                // v4.21.10：在夸克/百度 App 里授权完成后回到本页，点刷新重新走登录态检测
+                if (sWeb != null) sWeb.loadUrl(cfg.url);
+            }
+        });
+        bar.addView(reloadBtn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         final TextView closeBtn = new TextView(activity);
         closeBtn.setText("✕ 关闭");
         closeBtn.setTextColor(Color.parseColor("#7FB3FF"));
@@ -136,7 +154,7 @@ public final class PanWebLogin {
         final WebSettings st = sWeb.getSettings();
         st.setJavaScriptEnabled(true);
         st.setDomStorageEnabled(true);
-        st.setUserAgentString(UA);
+        st.setUserAgentString("pan_tianyi".equals(pid) ? UA_MOBILE : UA);
         st.setSupportZoom(true);
         st.setBuiltInZoomControls(true);
         st.setDisplayZoomControls(false);
@@ -149,8 +167,41 @@ public final class PanWebLogin {
         try { cm.setAcceptThirdPartyCookies(sWeb, true); } catch (Throwable ignored) {}
 
         sWeb.setWebViewClient(new WebViewClient() {
+            /** v4.21.10：非 http(s) 的 scheme（quark:// / baiduboxapp:// / intent:// 等）
+             *  交给外部 App 处理——网盘登录页的「APP 授权」靠这个拉起自家 App，
+             *  授权完成回跳后页面继续登录流程，Cookie 轮询自然抓到。 */
+            private boolean launchExternal(WebView v, String url) {
+                if (url == null) return false;
+                final String low = url.toLowerCase();
+                final boolean httpish = low.startsWith("http://") || low.startsWith("https://")
+                        || low.startsWith("about:") || low.startsWith("javascript:")
+                        || low.startsWith("file:");
+                if (httpish) return false;
+                try {
+                    android.content.Intent it;
+                    if (low.startsWith("intent://")) {
+                        it = android.content.Intent.parseUri(url,
+                                android.content.Intent.URI_INTENT_SCHEME);
+                    } else {
+                        it = android.content.Intent.parseUri(url, 0);
+                    }
+                    it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try { activity.startActivity(it); return true; } catch (Throwable t) {
+                        // 没有 App 接这个协议：若有 fallback 落地页（intent://;...end;...）就用它
+                        String fb = it.getStringExtra("browser_fallback_url");
+                        if (fb != null && fb.length() > 0) { v.loadUrl(fb); return true; }
+                        return true; // 吞掉，不留在 WebView 里渲染乱码
+                    }
+                } catch (Throwable t2) {
+                    return true;
+                }
+            }
+
+            @Override public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                return launchExternal(v, url); // 兼容旧 API 的重载
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                return false; // 全部留在 WebView 里（含网盘自己的跳转/第三方登录回跳）
+                return launchExternal(v, r == null ? null : r.getUrl() == null ? null : r.getUrl().toString());
             }
             @Override public void onPageFinished(WebView v, String url) {
                 check(activity, pid, cfg, onSuccess);

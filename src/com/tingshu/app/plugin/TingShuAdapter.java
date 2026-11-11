@@ -81,9 +81,12 @@ public final class TingShuAdapter extends AbsSourceProxy {
 
     @Override
     public List<Book> search(String kw, int page) throws Exception {
+        clearErr();
         Object pair = invoke(tingShu, "search",
                 new Class[]{String.class, int.class},
                 new Object[]{kw == null ? "" : kw, Integer.valueOf(page)});
+        // ★ v4.21.38：插件内部抛错不再吞掉 —— 抛给聚合层显示真实原因
+        if (pair == null) rethrowIfErr("插件源搜索失败");
         List<Book> out = new ArrayList<Book>();
         if (pair == null) return out;
 
@@ -122,6 +125,8 @@ public final class TingShuAdapter extends AbsSourceProxy {
         Object bd = invoke(tingShu, "getBookDetailInfo",
                 new Class[]{String.class, boolean.class, boolean.class},
                 new Object[]{bookUrl, Boolean.TRUE, Boolean.TRUE});
+        // ★ v4.21.38：详情加载失败不再吞成空详情
+        if (bd == null) rethrowIfErr("插件源详情加载失败");
         if (bd == null) return d;
 
         String intro = nz(str(invoke(bd, "getIntro", new Class[0], new Object[0])));
@@ -165,6 +170,7 @@ public final class TingShuAdapter extends AbsSourceProxy {
         if (empty(target)) return "";
 
         // 拿插件的取链器
+        clearErr();
         Object extractor = invoke(tingShu, "getAudioUrlExtractor", new Class[0], new Object[0]);
         if (extractor == null) return target;
 
@@ -172,8 +178,15 @@ public final class TingShuAdapter extends AbsSourceProxy {
         if (isCustomExtractor(extractor)) {
             Object parse = peekParse(extractor);
             if (parse != null) {
+                clearErr();
                 String r = setupAndExtract(parse, target);
-                return empty(r) ? target : r;
+                if (empty(r)) {
+                    // ★ v4.21.38：插件没解析出直链时抛错，而不是把章节页地址
+                    //   当音频链接甩给播放器（那只会得到一句莫名其妙的播放失败）
+                    rethrowIfErr("插件取链失败");
+                    throw new Exception("插件未返回音频直链（站点可能已改版、被拦截或需要验证）");
+                }
+                return r;
             }
         }
 
@@ -263,8 +276,10 @@ public final class TingShuAdapter extends AbsSourceProxy {
     public List<Book> browse(String catId, int page) throws Exception {
         List<Book> out = new ArrayList<Book>();
         if (empty(catId)) return out;
+        clearErr();
         Object cat = invoke(tingShu, "getCategoryList",
                 new Class[]{String.class}, new Object[]{catId});
+        if (cat == null) rethrowIfErr("插件源分类加载失败");
         if (cat == null) return out;
         Object list = invoke(cat, "getList", new Class[0], new Object[0]);
         if (!(list instanceof List)) return out;
@@ -320,7 +335,36 @@ public final class TingShuAdapter extends AbsSourceProxy {
 
     // ---- 反射工具 ----
 
-    /** 按名+参数类型找方法并调用；找不到/出错返回 null */
+    /**
+     * 最近一次反射调用失败的根因（线程局部，避免并发搜索时串源）。
+     * ★ v4.21.38：关键链路（搜索/详情/浏览/取链）不再把插件异常吞成「无结果」，
+     * 而是取这里记录的根因抛出去 —— 聚合层会把它标成「失败 + 原因」显示给用户，
+     * 否则插件任何内部错误（站点 404 / WAF 拦截 / 解析异常）看起来都像「没搜到」。
+     */
+    private static final ThreadLocal<Throwable> LAST_ERR = new ThreadLocal<Throwable>();
+
+    static void clearErr() {
+        LAST_ERR.remove();
+    }
+
+    /** 有记录的错误则原样抛出（解包 InvocationTargetException） */
+    static void rethrowIfErr(String what) throws Exception {
+        Throwable t = LAST_ERR.get();
+        if (t == null) return;
+        LAST_ERR.remove();
+        throw new Exception(what + "：" + rootMsg(t), t);
+    }
+
+    static String rootMsg(Throwable t) {
+        Throwable r = t;
+        while (r.getCause() != null && r.getCause() != r) r = r.getCause();
+        String m = r.getMessage();
+        String cls = r.getClass().getSimpleName();
+        if (m == null || m.length() == 0) return cls;
+        return cls + " " + m;
+    }
+
+    /** 按名+参数类型找方法并调用；找不到/出错返回 null（错误记入 LAST_ERR） */
     static Object invoke(Object target, String name, Class<?>[] types, Object[] args) {
         if (target == null) return null;
         try {
@@ -336,6 +380,7 @@ public final class TingShuAdapter extends AbsSourceProxy {
                 m.setAccessible(true);
                 return m.invoke(target, args);
             } catch (Throwable t2) {
+                LAST_ERR.set(t2);
                 return null;
             }
         }
@@ -418,6 +463,7 @@ public final class TingShuAdapter extends AbsSourceProxy {
                                 Object r = f1.invoke(s);
                                 return r == null ? "" : String.valueOf(r);
                             } catch (Throwable t) {
+                                LAST_ERR.set(t);
                                 return "";
                             }
                         }

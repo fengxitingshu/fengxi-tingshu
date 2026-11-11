@@ -1,5 +1,6 @@
 package com.tingshu.app.pan;
 
+import com.tingshu.app.core.DiagLog;
 import com.tingshu.app.core.Net;
 import com.tingshu.app.data.Settings;
 
@@ -55,6 +56,7 @@ public final class PanResolver {
         public String token;   // 阿里/夸克的 share_fid_token，下载时要带回
         public String path;    // ★ v4.10.0 父目录链（"鬼吹灯/第1卷"），根级 = ""
                                //   前端按它把「文件夹 → 书」分组，文件夹可点开成书
+        public String apiPath; // ★ v4.21.12 百度：wxlist 返回的绝对路径（/sharelink…/书名），列子目录要用它
     }
 
     // ==================== 平台元信息 ====================
@@ -138,8 +140,11 @@ public final class PanResolver {
             h.put("Referer", hostOf(pid) + "/");
             h.put("User-Agent", Net.UA);
         } else if (BAIDU.equals(pid)) {
-            h.put("Referer", hostOf(pid) + "/");
-            h.put("User-Agent", Net.UA_DESKTOP);
+            // ★ v4.21.22：对照 baiduwp-php —— dlink 下载只带 User-Agent（netdisk），
+            //   把整套网页 Cookie/Referer 一起发给百度 CDN 反而 403
+            //   （v4.21.21 用户实测：AudioProbe 直链 HTTP 403 text/plain）。
+            //   Cookie 留给 LocalProxy 的 403 自愈第三梯队用。
+            h.put("User-Agent", "netdisk");
         } else if (TIANYI.equals(pid)) {
             h.put("Referer", hostOf(pid) + "/");
         }
@@ -720,22 +725,46 @@ public final class PanResolver {
     // ==================== 百度网盘 ====================
 
     /**
-     * ★ v4.18.1：百度分享解析上下文。
+     * ★ v4.21.12：百度 wxlist 解析上下文。
      *
-     * <p>一次解析内复用分享页参数（shareid / uk / sign / timestamp），
-     * 避免「列表一次 + 直链一次」把分享页重复拉两遍；
-     * {@link #extraCookie} 存提取码验证后必须回带的 BDCLND。
+     * <p>列表/下载各现拉一遍 wxlist（shareid / uk / seckey 有时效，不复用）；
+     * {@link #randsk} 是 seckey 解码产物，sharedownload 必带。
      */
     private static final class BaiduShare {
         String surl = "", pwd = "", shareid = "", uk = "", sign = "", timestamp = "";
-        String extraCookie = "";
+        String randsk = ""; // v4.21.12：wxlist 返回的 seckey 解码而来，取直链必带
     }
 
-    private static Map<String, String> baiduHeaders(BaiduShare bs) {
+    /**
+     * v4.21.11：调 /share/tplconfig 拿现行有效的 sign/timestamp。
+     * 百度网页版现在的流程是「页面加载 → JS 调 tplconfig 取限时签名（约 5 分钟有效）」，
+     * 页面 HTML 里的 sign 经常为空或已过期——用过期签名调 share/list 会被报成
+     * errno=-7「分享已取消/文件已删除」。UA 必须 netdisk 开头，否则 errno=2。
+     */
+    private static void baiduSign(BaiduShare bs) {
+        try {
+            Map<String, String> h = baiduHeaders();
+            h.put("User-Agent", "netdisk;pan.baidu.com");
+            String url = "https://pan.baidu.com/share/tplconfig?surl=" + bs.surl
+                    + "&fields=sign,timestamp&channel=chunlei&web=1&app_id=250528&clienttype=0";
+            Net.Resp r = Net.request(url, null,
+                    "https://pan.baidu.com/s/" + bs.surl, h, false);
+            if (r == null || r.body == null) return;
+            JSONObject o = new JSONObject(r.body);
+            if (o.optInt("errno", -1) != 0) return;
+            JSONObject d = o.optJSONObject("data");
+            if (d == null) return;
+            String s = d.optString("sign", "");
+            String t = d.optString("timestamp", "");
+            if (s.length() > 0) bs.sign = s;
+            if (t.length() > 0) bs.timestamp = t;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Map<String, String> baiduHeaders() {
         Map<String, String> h = new HashMap<String, String>();
-        String ck = cookie(BAIDU);
-        if (bs != null && bs.extraCookie.length() > 0) ck = ck + "; " + bs.extraCookie;
-        h.put("Cookie", ck);
+        h.put("Cookie", cookie(BAIDU));
         h.put("User-Agent", Net.UA_DESKTOP);
         h.put("Referer", "https://pan.baidu.com/");
         return h;
@@ -749,135 +778,196 @@ public final class PanResolver {
         else if (errno == 105) t = "这个分享需要提取码（请在链接末尾加 ?pwd=xxxx）或需要验证码";
         else if (errno == -130) t = "分享链接已失效，或百度接口要求验证（可换公开分享 / 重新复制链接）";
         else if (errno == 2) t = "百度接口参数被拒绝（接口可能已改版）";
-        else if (errno == 12 || errno == -6) t = "登录状态失效，请重新粘贴百度 Cookie";
+        else if (errno == 12 || errno == -6) t = "百度登录状态已失效（百度接口拒绝当前 Cookie），"
+                + "请到「源管理 → 百度网盘」重新登录/粘贴 Cookie 后重试";
         else t = "百度网盘 errno=" + errno;
         return t + "（" + brief(body) + "）";
     }
 
     /**
-     * ★ v4.18.1：百度分享页解析 —— 重写。
-     *
-     * <h3>为什么重写</h3>
-     * 旧实现调 {@code /share/wxlist}（早已下线的老接口）且完全没处理提取码，
-     * 真机表现为「errno=-130 / -7」一步都走不下去。现在改走百度现行流程：
-     * <pre>
-     *   ① GET /s/{surl}?pwd=xxx  → 从 window.yunData（老版 locals.mset）
-     *      取 shareid / uk / sign / timestamp
-     *   ② 有提取码 → POST /share/verify 换 BDCLND（必须回带到后续请求）
-     *   ③ /share/list + sign/timestamp 列目录
-     *   ④ /api/sharedownload + sign/timestamp 取直链
-     * </pre>
+     * v4.21.12：只拆链接拿 surl/pwd + 检查登录态（列表/下载共用）。
+     * wxlist 的 shorturl 必须带 1 前缀，链接里天然带着。
      */
     private static BaiduShare baiduShare(String shareUrl) throws Exception {
+        String u = shareUrl == null ? "" : shareUrl;
+        BaiduShare bs = new BaiduShare();
+        // ★ v4.21.28：支持三种分享链接形态——
+        //   ① pan.baidu.com/s/1xxxx        （网页版，surl 天然带 1 前缀）
+        //   ② pan.baidu.com/share/init?surl=xxxx （网页初始化页，surl 不带 1）
+        //   ③ pan.baidu.com/wap/init?surl=xxxx   （手机 WAP 版，微信点开常见，surl 不带 1）
         java.util.regex.Matcher m = java.util.regex.Pattern
                 .compile("pan\\.baidu\\.com/s/([a-zA-Z0-9_-]+)")
-                .matcher(shareUrl == null ? "" : shareUrl);
-        if (!m.find()) throw new Exception("链接不像百度网盘分享（应为 pan.baidu.com/s/ 开头）");
-        BaiduShare bs = new BaiduShare();
-        bs.surl = m.group(1);
-        bs.pwd = pwdOf(shareUrl);
-        if (!configured(BAIDU)) throw new Exception("百度网盘解析需要登录 Cookie，请先在上方粘贴");
-
-        String pageUrl = "https://pan.baidu.com/s/" + bs.surl
-                + (bs.pwd.length() > 0 ? "?pwd=" + bs.pwd : "");
-        Net.Resp r = Net.request(pageUrl, null, "https://pan.baidu.com/", baiduHeaders(bs), false);
-        if (r == null || r.body == null) throw new Exception("百度网盘无响应（网络不通？）");
-        String html = r.body;
-
-        // ① 新版：window.yunData = {...}
-        String yun = grab(html, "window\\.yunData\\s*=\\s*(\\{[\\s\\S]{0,30000}?\\})\\s*;");
-        String shareid = "", uk = "", sign = "", ts = "";
-        if (yun.length() > 0) {
-            shareid = grab(yun, "\"SHAREID\"\\s*:\\s*\"?(\\d+)");
-            if (shareid.length() == 0) shareid = grab(yun, "\"shareid\"\\s*:\\s*\"?(\\d+)");
-            uk = grab(yun, "\"SHARE_UK\"\\s*:\\s*\"?(\\d+)");
-            if (uk.length() == 0) uk = grab(yun, "\"uk\"\\s*:\\s*\"?(\\d+)");
-            sign = grab(yun, "\"sign\"\\s*:\\s*\"([^\"]*)\"");
-            ts = grab(yun, "\"timestamp\"\\s*:\\s*\"?(\\d+)");
-        }
-        // ② 老版：locals.mset({...})
-        if (shareid.length() == 0 || uk.length() == 0) {
-            String blob = grab(html, "locals\\.mset\\(([\\s\\S]{0,12000}?)\\)");
-            if (shareid.length() == 0) shareid = grab(blob, "shareid\\s*:\\s*\"?(\\d+)");
-            if (uk.length() == 0) uk = grab(blob, "uk\\s*:\\s*\"?(\\d+)");
-            if (sign.length() == 0) sign = grab(blob, "sign\\s*:\\s*\"([^\"]*)\"");
-            if (ts.length() == 0) ts = grab(blob, "timestamp\\s*:\\s*\"?(\\d+)");
-        }
-        // ③ 兜底：整页里找 sign
-        if (sign.length() == 0) sign = grab(html, "\"sign\"\\s*:\\s*\"([^\"]+)\"");
-        if (shareid.length() == 0 || uk.length() == 0) {
-            if (bs.pwd.length() == 0 && (html.indexOf("提取码") >= 0 || html.indexOf("verify") >= 0)) {
-                throw new Exception("这个分享需要提取码：请在链接末尾加上 ?pwd=xxxx 再解析");
+                .matcher(u);
+        if (m.find()) {
+            bs.surl = m.group(1);
+        } else {
+            m = java.util.regex.Pattern
+                    .compile("pan\\.baidu\\.com/(?:share/init|wap/init)\\?surl=([a-zA-Z0-9_-]+)")
+                    .matcher(u);
+            if (!m.find()) {
+                throw new Exception("链接不像百度网盘分享（支持 pan.baidu.com/s/… 、"
+                        + "share/init?surl=… 和 wap/init?surl=… 三种）");
             }
-            throw new Exception("没解析到 shareid/uk（页面结构可能已改版）："
-                    + brief(html) + "（Cookie 失效？）");
+            // wxlist 的 shorturl 必须带 1 前缀；surl= 参数里没有，补上
+            bs.surl = m.group(1).startsWith("1") ? m.group(1) : "1" + m.group(1);
         }
-        if (ts.length() == 0) ts = String.valueOf(System.currentTimeMillis() / 1000L);
-        bs.shareid = shareid;
-        bs.uk = uk;
-        bs.sign = sign;
-        bs.timestamp = ts;
-
-        // ④ 有提取码 → verify，拿 BDCLND 回带（公开分享跳过，直接列）
-        if (bs.pwd.length() > 0) {
-            String body = "pwd=" + java.net.URLEncoder.encode(bs.pwd, "UTF-8") + "&vcode=&vcode_str=";
-            String vu = "https://pan.baidu.com/share/verify?surl=" + bs.surl
-                    + "&t=" + ts + "&channel=chunlei&web=1&app_id=250528&clienttype=0";
-            Net.Resp vr = Net.request(vu, body,
-                    "https://pan.baidu.com/share/init?surl=" + bs.surl, baiduHeaders(bs), false);
-            String vb = (vr == null || vr.body == null) ? "" : vr.body;
-            int verr = -1;
-            try { verr = new JSONObject(vb).optInt("errno", -1); } catch (Throwable ignored) {}
-            if (verr == -9 || verr == 105 || verr == -12) {
-                throw new Exception("提取码错误或需要验证码（百度 errno=" + verr + "）");
-            }
-            // 其余错误不阻断：验证码已在上一步 URL 里带着，部分分享会直接放行
-            String sc = vr == null ? "" : vr.headers.get("Set-Cookie");
-            String bd = grab(sc == null ? "" : sc, "(BDCLND=[^;\\s]+)");
-            if (bd.length() == 0) {
-                // 响应 Cookie 罐里可能已经累积（Net.captureCookies 自动落罐）
-                String jar = Net.cookieForHost("pan.baidu.com");
-                bd = grab(jar == null ? "" : jar, "(BDCLND=[^;\\s]+)");
-            }
-            bs.extraCookie = bd;
-        }
+        bs.pwd = pwdOf(u);
+        if (!configured(BAIDU)) throw new Exception("百度网盘解析需要登录，请先点「网页登录」");
         return bs;
+    }
+
+    /**
+     * v4.21.12：现行列表接口 POST /share/wxlist（现行网页版/开源实现同款）。
+     * 表单：shorturl（带 1 前缀）/ dir / root（1=根目录）/ pwd / page / num / order。
+     * 只带 BDUSS，UA 用 netdisk，Referer 用盘内首页。返回 data
+     * （list + shareid + uk + seckey），完全不再依赖分享页 HTML——
+     * 旧流程依赖页面 yunData，百度对未登录直接 302 错误页、sign 又常过期，
+     * 列目录报 errno=-7「分享已取消」的假报。提取码也不再走 verify/BDCLND。
+     */
+    private static JSONObject baiduWxlist(BaiduShare bs, String dir, boolean root) throws Exception {
+        String url = "https://pan.baidu.com/share/wxlist?channel=weixin&version=2.2.2&clienttype=25&web=1";
+        String body = "&shorturl=" + bs.surl
+                + "&dir=" + java.net.URLEncoder.encode(dir == null ? "" : dir, "UTF-8")
+                + "&root=" + (root ? "1" : "0")
+                + "&pwd=" + java.net.URLEncoder.encode(bs.pwd, "UTF-8")
+                + "&page=1&num=1000&order=name";
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("User-Agent", "netdisk");
+        h.put("Referer", "https://pan.baidu.com/disk/home");
+        String bd = grab(cookie(BAIDU), "(BDUSS=[^;\\s]+)");
+        h.put("Cookie", bd.length() > 0 ? bd : cookie(BAIDU));
+        // ★ v4.21.19：传输层失败（无响应/非 JSON）自动重试 3 次——播放每次都
+        //   要现取 wxlist，偶发超时就「拉文件列表无响应」太伤；服务端有应答
+        //   的业务错误（提取码错等）不重试，直接抛
+        Net.Resp r = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            r = Net.request(url, body, "https://pan.baidu.com/disk/home", h, false);
+            boolean ok = r != null && r.body != null && r.body.trim().startsWith("{");
+            if (ok) break;
+            if (attempt < 2) {
+                try { Thread.sleep(1000L * (attempt + 1)); } catch (InterruptedException ie) {}
+            }
+        }
+        if (r == null || r.body == null) {
+            throw new Exception("百度网盘拉文件列表无响应（已重试 3 次）：请检查网络后重试");
+        }
+        JSONObject o;
+        try {
+            o = new JSONObject(r.body);
+        } catch (Throwable t) {
+            throw new Exception("百度返回了非 JSON（可能被风控）：" + brief(r.body));
+        }
+        int errno = o.optInt("errno", -1);
+        if (errno != 0) throw new Exception(baiduListErr(errno, r.body) + "（errno=" + errno + "）");
+        JSONObject data = o.optJSONObject("data");
+        if (data == null) throw new Exception("百度列表返回缺 data：" + brief(r.body));
+        // ★ v4.21.20：功能诊断插桩——每次列目录都留痕，诊断页可回放全过程
+        JSONArray _lst = data.optJSONArray("list");
+        DiagLog.add("[baidu] wxlist OK " + (root ? "根目录" : dir)
+                + " → " + (_lst == null ? 0 : _lst.length()) + " 项");
+        return data;
+    }
+
+    /** wxlist 错误码 → 人话（errtype 的 mispw_* 是提取码错误） */
+    private static String baiduListErr(int errno, String body) {
+        if (body != null && body.contains("mispw")) return "提取码错误，请检查链接末尾的 ?pwd=xxxx";
+        switch (errno) {
+            case 5: return "链接不存在或提取码错误（带提取码的分享请在链接末尾加 ?pwd=xxxx）";
+            case 3: return "分享内容因违规无法访问";
+            case 9: return "提取码错误";
+            case 10: return "分享已过期";
+            case 2: return "参数被拒绝（短链格式或请求头问题）";
+            case 8001:
+            case 9013: return "该百度账号被限制，请换账号或检查账号状态";
+            case 9019: return "账号 Cookie 状态异常（被限制或已过期），请重新「网页登录」。另：普通账号无法直接取分享直链（仅 SVIP），App 会自动转存到自己网盘后取链";
+            default: return "百度接口错误";
+        }
+    }
+
+    /** seckey → randsk：base64url 变体字符还原（-→+ ~→= _→/） */
+    private static String decodeSceKey(String seckey) {
+        if (seckey == null) return "";
+        return seckey.replace("-", "+").replace("~", "=").replace("_", "/");
+    }
+
+    /** v4.21.14：自然排序比较（数字段按数值比，"第2章" < "第10章"） */
+    private static int natCmp(String a, String b) {
+        int i = 0, j = 0;
+        while (i < a.length() && j < b.length()) {
+            char ca = a.charAt(i), cb = b.charAt(j);
+            if (Character.isDigit(ca) && Character.isDigit(cb)) {
+                int si = i, sj = j;
+                while (i < a.length() && Character.isDigit(a.charAt(i))) i++;
+                while (j < b.length() && Character.isDigit(b.charAt(j))) j++;
+                String ta = a.substring(si, i).replaceFirst("^0+", "");
+                String tb = b.substring(sj, j).replaceFirst("^0+", "");
+                int c;
+                if (ta.length() != tb.length()) c = Integer.compare(ta.length(), tb.length());
+                else c = ta.compareTo(tb);
+                if (c != 0) return c;
+            } else {
+                if (ca != cb) return ca - cb;
+                i++;
+                j++;
+            }
+        }
+        return a.length() - b.length();
     }
 
     private static List<PanFile> baiduList(String shareUrl) throws Exception {
         BaiduShare bs = baiduShare(shareUrl);
         List<PanFile> out = new ArrayList<PanFile>();
-        // 根目录 + 一层子目录展平（有声书常见「书名/章节」两层结构）
-        baiduPage(bs, "/", "", out);
-        List<PanFile> dirs = new ArrayList<PanFile>();
-        for (PanFile f : out) if (f.dir) dirs.add(f);
-        for (PanFile d : dirs) {
-            try {
-                baiduPage(bs, (d.path.length() == 0 ? "" : "/" + d.path) + "/" + d.name,
-                        (d.path.length() == 0 ? "" : d.path + "/") + d.name, out);
-            } catch (Throwable ignored) {}
-        }
+        // v4.21.12：递归展平到第 3 层（书 → 卷/季 → 集）。有声书常见三层结构，
+        // 旧实现只展开一层，「卷」里没有直接音频文件时前端只能报
+        // 「下没有音频文件（嵌套超过 3 层？）」。请求预算 40 次，防超深目录刷爆。
+        int[] budget = {40};
+        baiduExpand(bs, "", true, "", 0, out, budget);
         if (out.isEmpty()) throw new Exception("分享里没有文件（或链接失效）");
         return out;
     }
 
-    /** 百度列一页目录（dir 为绝对路径，path 为给前端的分组链） */
-    private static void baiduPage(BaiduShare bs, String dir, String path,
-                                  List<PanFile> out) throws Exception {
-        String url = "https://pan.baidu.com/share/list?uk=" + bs.uk
-                + "&shareid=" + bs.shareid
-                + "&order=other&desc=1&showempty=0&web=1&page=1&num=100"
-                + "&dir=" + java.net.URLEncoder.encode(dir, "UTF-8")
-                + "&t=" + bs.timestamp + "&channel=chunlei&app_id=250528&bdstoken="
-                + "&sign=" + java.net.URLEncoder.encode(bs.sign, "UTF-8")
-                + "&timestamp=" + bs.timestamp;
-        Net.Resp r = Net.request(url, null, "https://pan.baidu.com/s/" + bs.surl,
-                baiduHeaders(bs), false);
-        if (r == null || r.body == null) throw new Exception("百度网盘拉文件列表无响应");
-        JSONObject o = new JSONObject(r.body);
-        int errno = o.optInt("errno", -1);
-        if (errno != 0) throw new Exception(baiduErr(errno, r.body));
-        JSONArray items = o.optJSONArray("list");
+    /**
+     * 递归列目录：depth 0=根 → 1=书 → 2=卷（再往下一般是纯文件，不再展开）。
+     * dir 为 wxlist 的绝对路径（根传 ""，root=1）；displayPath 是给前端的分组链。
+     */
+    private static void baiduExpand(BaiduShare bs, String dir, boolean root,
+                                    String displayPath, int depth,
+                                    List<PanFile> out, int[] budget) {
+        if (depth > 2 || budget[0] <= 0) return;
+        budget[0]--;
+        try {
+            JSONObject data = baiduWxlist(bs, dir, root);
+            if (depth == 0) {
+                // shareid / uk / seckey 只在根列表里有，顺路存下（下载时还会现取）
+                bs.shareid = data.optString("shareid", "");
+                bs.uk = data.optString("uk", "");
+                bs.randsk = decodeSceKey(data.optString("seckey", ""));
+            }
+            List<PanFile> level = new ArrayList<PanFile>();
+            baiduItems(data, displayPath, level);
+            // v4.21.14：每层目录内自然排序（数字按数值比，1.mp3 < 2.mp3 < 10.mp3），
+            // 目录排前面。旧版用 order=time 直接是修改时间倒序（999.mp3 在最前）。
+            java.util.Collections.sort(level, new java.util.Comparator<PanFile>() {
+                @Override public int compare(PanFile a, PanFile b) {
+                    if (a.dir != b.dir) return a.dir ? -1 : 1;
+                    return natCmp(a.name == null ? "" : a.name, b.name == null ? "" : b.name);
+                }
+            });
+            out.addAll(level);
+            for (PanFile f : level) {
+                if (!f.dir || f.apiPath == null || f.apiPath.length() == 0) continue;
+                baiduExpand(bs, f.apiPath, false,
+                        (displayPath.length() == 0 ? "" : displayPath + "/") + f.name,
+                        depth + 1, out, budget);
+            }
+        } catch (Throwable ignored) {
+            // 单个目录失败不拖垮整体（与旧版一层展平的行为一致）
+        }
+    }
+
+    /** wxlist 的 data.list → PanFile（path 为给前端的分组链） */
+    private static void baiduItems(JSONObject data, String path, List<PanFile> out) {
+        JSONArray items = data.optJSONArray("list");
         if (items == null) return;
         for (int i = 0; i < items.length(); i++) {
             JSONObject it = items.optJSONObject(i);
@@ -888,27 +978,43 @@ public final class PanResolver {
             f.size = it.optLong("size", 0);
             f.dir = it.optInt("isdir", 0) == 1;
             f.path = path;
+            f.apiPath = it.optString("path", "");
             out.add(f);
         }
     }
 
     private static String baiduDownload(String shareUrl, PanFile f) throws Exception {
         BaiduShare bs = baiduShare(shareUrl);
-        // 百度公开接口：sharedownload 需要 sign + timestamp + fid_list(JSON)
-        String body = "encrypt=0&product=share&type=dlink"
-                + "&uk=" + bs.uk
+        // ① 现取现用：wxlist 根目录（shareid/uk/seckey 都有时效，不能存着复用）
+        JSONObject root = baiduWxlist(bs, "", true);
+        bs.shareid = root.optString("shareid", "");
+        bs.uk = root.optString("uk", "");
+        bs.randsk = decodeSceKey(root.optString("seckey", ""));
+        // ② tplconfig 取现行限时签名（约 5 分钟有效；UA 必须 netdisk 开头）
+        baiduSign(bs);
+        if (bs.sign.length() == 0) throw new Exception("取百度签名失败（tplconfig），请稍后重试");
+        // ③ sharedownload：randsk 放 extra.sekey，缺了会报 118/-20 验证码
+        String extra = "{\"sekey\":\"" + bs.randsk + "\"}";
+        String body = "encrypt=0&extra=" + java.net.URLEncoder.encode(extra, "UTF-8")
+                + "&fid_list=" + java.net.URLEncoder.encode("[" + f.id + "]", "UTF-8")
                 + "&primaryid=" + bs.shareid
-                + "&fid_list=" + java.net.URLEncoder.encode("[" + f.id + "]", "UTF-8");
-        String url = "https://pan.baidu.com/api/sharedownload?sign="
-                + java.net.URLEncoder.encode(bs.sign, "UTF-8")
-                + "&timestamp=" + bs.timestamp
-                + "&channel=chunlei&web=1&app_id=250528&clienttype=0";
-        Net.Resp r = Net.request(url, body, "https://pan.baidu.com/s/" + bs.surl,
-                baiduHeaders(bs), false);
+                + "&uk=" + bs.uk
+                + "&product=share&type=nolimit";
+        String url = "https://pan.baidu.com/api/sharedownload?app_id=250528&channel=chunlei"
+                + "&clienttype=12&sign=" + java.net.URLEncoder.encode(bs.sign, "UTF-8")
+                + "&timestamp=" + bs.timestamp + "&web=1";
+        Map<String, String> h = baiduHeaders();
+        h.put("Referer", "https://pan.baidu.com/disk/home");
+        Net.Resp r = Net.request(url, body, "https://pan.baidu.com/disk/home", h, false);
         if (r == null || r.body == null) throw new Exception("百度网盘取直链无响应");
         JSONObject o = new JSONObject(r.body);
         int errno = o.optInt("errno", -1);
-        if (errno != 0) throw new Exception(baiduErr(errno, r.body));
+        if (errno != 0) {
+            // v4.21.14：普通账号百度只放行 SVIP 走分享直链（9019 needverify）。
+            // 兜底：转存到自己网盘 → 盘内 filemetas 取链（普通账号可用）。
+            if (errno == 9019) return baiduSaveAndLink(bs, f);
+            throw new Exception(baiduErr(errno, r.body));
+        }
         JSONArray arr = o.optJSONArray("dlink");
         if (arr != null && arr.length() > 0) {
             JSONObject it = arr.optJSONObject(0);
@@ -1142,20 +1248,34 @@ public final class PanResolver {
 
     private static List<PanFile> baiduDir(String path) throws Exception {
         if (!configured(BAIDU)) throw new Exception("百度网盘需要登录，请先「网页登录」");
-        Map<String, String> h = new HashMap<String, String>();
-        h.put("Cookie", cookie(BAIDU));
-        h.put("User-Agent", Net.UA_DESKTOP);
-        String url = "https://pan.baidu.com/api/list?dir=" + urlEnc(path)
-                + "&order=name&desc=0&web=1&clienttype=0&app_id=250528&num=200&page=1";
-        Net.Resp r = Net.request(url, null, "https://pan.baidu.com/", h, false);
-        if (r == null || r.body == null) throw new Exception("百度网盘拉目录无响应");
-        JSONObject o = new JSONObject(r.body);
-        if (o.optInt("errno", -1) != 0) {
-            throw new Exception("百度网盘 errno=" + o.optInt("errno", -1) + "：" + brief(r.body));
-        }
-        JSONArray items = o.optJSONArray("list");
         List<PanFile> out = new ArrayList<PanFile>();
-        if (items != null) {
+        // ★ v4.19.0：分页拉全（原 num=200&page=1 只能拿前 200 个，大目录会漏）
+        for (int page = 1; page <= 20; page++) {
+            Map<String, String> h = new HashMap<String, String>();
+            h.put("Cookie", cookie(BAIDU));
+            h.put("User-Agent", Net.UA_DESKTOP);
+            String q = "dir=" + urlEnc(path)
+                    + "&order=name&desc=0&web=1&clienttype=0&num=500&page=" + page;
+            Net.Resp r = Net.request("https://pan.baidu.com/api/list?" + q + "&app_id=250528",
+                    null, "https://pan.baidu.com/", h, false);
+            if (r == null || r.body == null) throw new Exception("百度网盘拉目录无响应");
+            JSONObject o = new JSONObject(r.body);
+            int errno = o.optInt("errno", -1);
+            if (errno != 0) {
+                // ★ v4.19.0：-7（目录不存在）/ 2（参数被拒）时去掉 app_id 降级重试一次
+                //   —— 部分账号登录态与固定 app_id 不匹配，去掉反而能列
+                if (errno == -7 || errno == 2) {
+                    r = Net.request("https://pan.baidu.com/api/list?" + q,
+                            null, "https://pan.baidu.com/", h, false);
+                    if (r != null && r.body != null) {
+                        o = new JSONObject(r.body);
+                        errno = o.optInt("errno", -1);
+                    }
+                }
+                if (errno != 0) throw new Exception("百度网盘 errno=" + errno + "：" + brief(r.body));
+            }
+            JSONArray items = o.optJSONArray("list");
+            if (items == null || items.length() == 0) break;
             for (int i = 0; i < items.length(); i++) {
                 JSONObject it = items.optJSONObject(i);
                 if (it == null) continue;
@@ -1167,8 +1287,218 @@ public final class PanResolver {
                 f.token = it.optString("path", ""); // 百度目录用路径做 folderId
                 out.add(f);
             }
+            if (items.length() < 500) break;
         }
         return out;
+    }
+
+    /**
+     * ★ v4.21.15：滚动缓存——已转存到自己网盘的文件路径。
+     * 播新一集时把上一批删掉，网盘里始终只留当前 1 集，不占用户容量。
+     */
+    private static final List<String> PENDING_BAIDU_DEL = new ArrayList<String>();
+
+    /** 取 bdstoken（转存/删除参数完整性；拿不到就空着，多数情况仍可用） */
+    private static String baiduBdstoken(Map<String, String> h) {
+        try {
+            Net.Resp r = Net.request("https://pan.baidu.com/api/gettemplatevariable"
+                            + "?app_id=250528&web=1&clienttype=0&fields=%5B%22bdstoken%22%5D",
+                    null, "https://pan.baidu.com/disk/home", h, false);
+            if (r != null && r.body != null)
+                return grab(r.body, "\"bdstoken\"\\s*:\\s*\"([0-9a-f]+)\"");
+        } catch (Throwable ignored) {}
+        return "";
+    }
+
+    /**
+     * v4.21.14：9019 兜底——把分享文件转存到自己网盘（/apps/枫兮听书），
+     * 再走盘内 filemetas 取直链。普通账号 sharedownload 被百度拒之门外
+     * （needverify，仅 SVIP），但转存和自己盘内取链都正常可用。
+     * <p>v4.21.15：① 修 errno=2——转存表单参数名必须是 fsidlist（此前误写
+     * fid_list）；② errno=4（网盘里已有）视为就绪；③ 滚动缓存——转存新集前
+     * 把上一集从网盘删掉，用户网盘不因自动转存而堆文件。
+     */
+    private static String baiduSaveAndLink(BaiduShare bs, PanFile f) throws Exception {
+        Map<String, String> h = baiduHeaders();
+        h.put("Referer", "https://pan.baidu.com/disk/home");
+        String dir = "/apps/枫兮听书";
+        String curPath = dir + "/" + f.name;
+        String bdst = baiduBdstoken(h);
+        // ① 滚动清理：删掉上一集（保留当前这集，防止正在播的流被删断）
+        baiduFlushPending(h, bdst, curPath);
+        // ② 先查自己盘：同名文件已在 → 直接复用（重播秒出，且不依赖转存响应格式）
+        String reuseId = baiduFindInDir(dir, f.name, h);
+        if (reuseId.length() > 0 && !"0".equals(reuseId)) {
+            PanFile rf = new PanFile();
+            rf.id = reuseId;
+            return baiduDiskDownload(rf);
+        }
+        // ③ 目标目录（已存在时 create 报错，忽略）
+        try {
+            Net.request("https://pan.baidu.com/api/create?a=commit&channel=chunlei"
+                            + "&web=1&app_id=250528&clienttype=0"
+                            + (bdst.length() > 0 ? "&bdstoken=" + bdst : ""),
+                    "path=" + urlEnc(dir) + "&isdir=1&block_list=%5B%5D",
+                    "https://pan.baidu.com/disk/home", h, false);
+        } catch (Throwable ignored) {}
+        // ③ 转存：from=分享者的 uk；sekey 必带；ondup=skip（重播时网盘已有，跳过）
+        String turl = "https://pan.baidu.com/share/transfer?shareid=" + bs.shareid
+                + "&from=" + bs.uk + "&sekey=" + urlEnc(bs.randsk)
+                + "&ondup=skip&channel=chunlei&web=1&app_id=250528&clienttype=0"
+                + (bdst.length() > 0 ? "&bdstoken=" + bdst : "");
+        Net.Resp tr = Net.request(turl,
+                "fsidlist=" + urlEnc("[" + f.id + "]") + "&path=" + urlEnc(dir),
+                "https://pan.baidu.com/disk/home", h, false);
+        if (tr == null || tr.body == null) throw new Exception("转存到自己网盘无响应");
+        JSONObject to;
+        try {
+            to = new JSONObject(tr.body);
+        } catch (Throwable t) {
+            throw new Exception("转存返回了非 JSON（可能被风控）：" + brief(tr.body));
+        }
+        int terr = to.optInt("errno", -1);
+        // errno 0=成功 4=网盘里已存在（重播场景）12=文件已存在（带 duplicated 明细），
+        // 都算就绪 —— ★ v4.21.20 补 12：ondup=skip 时百度用它报「已有同文件」，
+        // 明细在 duplicated.list 里，下面照常提取
+        if (terr != 0 && terr != 4 && terr != 12) {
+            DiagLog.add("[baidu] 转存被拒 errno=" + terr);
+            throw new Exception("自动转存失败（errno=" + terr + "）："
+                    + (terr == 12 ? "网盘剩余空间不足或单次转存数量超限，清一点网盘空间再试"
+                       : terr == 255 ? "转存数量太多（当天转存次数用完），明天再试"
+                       : terr == 2 ? "账号被百度风控、需要验证，或本设备的百度登录态不完整/过期——"
+                           + "先在 设置→自定义源→网盘接口 重新「网页登录」；"
+                           + "还不行就换一个百度账号，或在该账号的百度网盘 App 里手动保存该分享后用「扫描盘内书」播放"
+                       : "账号被百度风控或需要验证；可在百度网盘 App 里手动保存该分享后用「扫描盘内书」播放"));
+        }
+        DiagLog.add("[baidu] 转存受理 errno=" + terr + "（0/4/12 均视为就绪）");
+        // ★ v4.21.20：id 提取不再猜字段名 —— 用户 v4.21.19 截图实证：
+        //   duplicated.list 条目只有 path/file_key/size 这套字段，
+        //   v4.21.18 只扫 from_fs_id 必然落空。现在 JSON 逐项取
+        //   from_fs_id / fs_id / id 三种键名（优先 path 匹配目标文件的条目），
+        //   全文正则兜底，见 baiduPickNewId。
+        String newId = baiduPickNewId(tr.body, curPath);
+        if (newId.length() > 0) {
+            DiagLog.add("[baidu] 转存响应提取到新文件 fs_id=" + newId);
+        }
+        if (newId.length() == 0 || "0".equals(newId)) {
+            // ★ v4.21.20：转存刚落盘，盘内目录列表可能还没刷出该文件（最终一致），
+            //   旧版查一次不到就放弃 → 「转存响应里没有新文件 id」。
+            //   现在隔 1.5 秒回查一次，最多 5 次（约 8 秒窗口）。
+            for (int i = 0; i < 5 && (newId.length() == 0 || "0".equals(newId)); i++) {
+                try { Thread.sleep(1500); } catch (InterruptedException ie) {}
+                newId = baiduFindInDir(dir, f.name, h);
+                DiagLog.add("[baidu] 盘内回查第 " + (i + 1) + " 次："
+                        + (newId.length() > 0 && !"0".equals(newId)
+                           ? "命中 fs_id=" + newId : "未刷出，继续等"));
+            }
+        }
+        if (newId.length() == 0 || "0".equals(newId)) {
+            // 仍拿不到：把响应头 700 字符打出来（诊断页也能看到全过程）
+            String dump = tr.body.length() > 700 ? tr.body.substring(0, 700) + "…" : tr.body;
+            DiagLog.add("[baidu] 转存 id 提取失败，响应片段：" + dump);
+            throw new Exception("转存响应里没有新文件 id（转存本身可能已成功，重试一次通常可恢复）：" + dump);
+        }
+        // ④ 盘内取链（普通账号可用）；当前集已登记在 PENDING（flush 时 keep）
+        PanFile nf = new PanFile();
+        nf.id = newId;
+        return baiduDiskDownload(nf);
+    }
+
+    /** 把上一批转存文件从网盘删掉（keep 之外全删；删除失败静默，下次再清） */
+    private static void baiduFlushPending(Map<String, String> h, String bdst, String keep) {
+        StringBuilder sb = new StringBuilder("[");
+        int n = 0;
+        for (String p : PENDING_BAIDU_DEL) {
+            if (p.equals(keep)) continue;
+            if (n++ > 0) sb.append(",");
+            sb.append("\"").append(p.replace("\\", "\\\\").replace("\"", "\\\"")).append("\"");
+        }
+        sb.append("]");
+        List<String> old = new ArrayList<String>(PENDING_BAIDU_DEL);
+        PENDING_BAIDU_DEL.clear();
+        if (keep != null && keep.length() > 0) PENDING_BAIDU_DEL.add(keep);
+        if (n == 0) return;
+        try {
+            Net.request("https://pan.baidu.com/api/filemanager?opera=delete&async=1"
+                            + "&web=1&app_id=250528&clienttype=0"
+                            + (bdst.length() > 0 ? "&bdstoken=" + bdst : ""),
+                    "filelist=" + urlEnc(sb.toString()),
+                    "https://pan.baidu.com/disk/home", h, false);
+        } catch (Throwable ignored) {
+            PENDING_BAIDU_DEL.addAll(old); // 删失败，下次再试
+        }
+    }
+
+    /**
+     * ★ v4.21.20：从转存响应里提取「新落盘文件」的 fs_id。
+     *
+     * <p>百度转存响应不同分支字段不同：info 数组里是 from_fs_id；
+     * duplicated.list（文件已在盘里）条目是 path/file_key/size 那套，
+     * id 在 fs_id。这里三路并取：
+     * ① JSON 逐项取 from_fs_id / fs_id / id（优先 path 与目标一致的条目）；
+     * ② 全文正则兜底 {@code "(?:from_)?fs_id"}（数字/字符串两种形态都认，
+     *    一个正则同时覆盖两种键名，不会互相误匹配）。
+     */
+    private static String baiduPickNewId(String body, String wantPath) {
+        if (body == null || body.length() == 0) return "";
+        String best = "", any = "";
+        try {
+            JSONObject root = new JSONObject(body);
+            java.util.List<JSONArray> arrs = new ArrayList<JSONArray>();
+            JSONArray info = root.optJSONArray("info");
+            if (info != null) arrs.add(info);
+            JSONObject dup = root.optJSONObject("duplicated");
+            if (dup != null) {
+                JSONArray dl = dup.optJSONArray("list");
+                if (dl != null) arrs.add(dl);
+            }
+            for (JSONArray arr : arrs) {
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject it = arr.optJSONObject(i);
+                    if (it == null) continue;
+                    String id = String.valueOf(it.optLong("from_fs_id",
+                            it.optLong("fs_id", it.optLong("id", 0))));
+                    if ("0".equals(id)) continue;
+                    if (any.length() == 0) any = id;
+                    String p = it.optString("path", "");
+                    if (wantPath != null && wantPath.length() > 0 && wantPath.equals(p)) {
+                        best = id;
+                        break;
+                    }
+                }
+                if (best.length() > 0) break;
+            }
+        } catch (Throwable ignored) {}
+        if (best.length() > 0) return best;
+        if (any.length() > 0) return any;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\"(?:from_)?fs_id\"\\s*:\\s*\"?(\\d+)").matcher(body);
+        return m.find() ? m.group(1) : "";
+    }
+
+    /** 在自己网盘目录里按文件名回查 fs_id（对齐 baiduDir 的已验证参数与降级逻辑） */
+    private static String baiduFindInDir(String dir, String name, Map<String, String> h) {
+        String q = "dir=" + urlEnc(dir) + "&order=name&desc=0&web=1&clienttype=0&num=500&page=1";
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                String url = "https://pan.baidu.com/api/list?" + q
+                        + (attempt == 0 ? "&app_id=250528" : "");
+                Net.Resp r = Net.request(url, null, "https://pan.baidu.com/", h, false);
+                if (r == null || r.body == null) continue;
+                JSONObject o = new JSONObject(r.body);
+                if (o.optInt("errno", -1) != 0) continue; // 第二次去掉 app_id 再试
+                JSONArray list = o.optJSONArray("list");
+                if (list != null) {
+                    for (int i = 0; i < list.length(); i++) {
+                        JSONObject it = list.optJSONObject(i);
+                        if (it != null && name.equals(it.optString("server_filename", "")))
+                            return String.valueOf(it.optLong("fs_id", 0));
+                    }
+                }
+                return ""; // 目录列到了但没有同名文件（转存可能还没落盘）
+            } catch (Throwable ignored) {}
+        }
+        return "";
     }
 
     private static String baiduDiskDownload(PanFile f) throws Exception {
@@ -1177,18 +1507,303 @@ public final class PanResolver {
         h.put("User-Agent", Net.UA_DESKTOP);
         String url = "https://pan.baidu.com/api/filemetas?fsids=%5B" + f.id + "%5D"
                 + "&dlink=1&web=1&clienttype=0&app_id=250528";
-        Net.Resp r = Net.request(url, null, "https://pan.baidu.com/", h, false);
-        if (r == null || r.body == null) throw new Exception("百度网盘取直链无响应");
+        // ★ v4.21.19：传输层失败重试（同 wxlist）
+        Net.Resp r = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            r = Net.request(url, null, "https://pan.baidu.com/", h, false);
+            boolean ok = r != null && r.body != null && r.body.trim().startsWith("{");
+            if (ok) break;
+            if (attempt < 2) {
+                try { Thread.sleep(1000L * (attempt + 1)); } catch (InterruptedException ie) {}
+            }
+        }
+        if (r == null || r.body == null) throw new Exception("百度网盘取直链无响应（已重试 3 次）");
         JSONObject o = new JSONObject(r.body);
         if (o.optInt("errno", -1) != 0) {
-            throw new Exception("百度网盘取直链失败 errno=" + o.optInt("errno", -1) + "：" + brief(r.body));
+            // v4.21.35：走 baiduErr 人话映射 —— errno=-6（身份验证失败）是百度
+            // 接口拒绝了当前 Cookie（登录态过期），不是 App 的链路问题
+            int en = o.optInt("errno", -1);
+            throw new Exception(baiduErr(en, r.body) + "（errno=" + en + "）");
+        }
+        // ★ v4.21.21：响应数组键名是 info 不是 list！此前读 "list" 永远为空，
+        //   导致「errno=0 却报未返回直链」（功能诊断实测锁定的真凶）。
+        //   两个键名都认，防百度换版。
+        JSONArray list = o.optJSONArray("info");
+        if (list == null) list = o.optJSONArray("list");
+        if (list != null && list.length() > 0 && list.optJSONObject(0) != null) {
+            JSONObject it = list.optJSONObject(0);
+            String d = it.optString("dlink", "");
+            String path = it.optString("path", "");
+            if (d.length() > 0) {
+                // ★ v4.21.27：姿势梯队升级（对照 OpenList/aria2 生态的成熟做法）。
+                //   dlink 有时效（几分钟~几十分钟），所以每次播放都现取；
+                //   CDN 的拒法各有含义，全部试完给「人话结论」：
+                String[] body = new String[1];
+                Map<String, String> ph = new HashMap<String, String>();
+                ph.put("User-Agent", "netdisk");
+
+                // ① dlink + UA netdisk（baiduwp/OpenList 官方姿势）
+                body[0] = null;
+                int c1 = probeLink(d, ph, body);
+                DiagLog.add("[baidu] 姿势① dlink+netdisk → " + probeVerdict(c1, body[0]));
+                if (c1 >= 200 && c1 < 400) return d;
+
+                // ② dlink + UA netdisk;pan.baidu.com
+                Map<String, String> ph2 = new HashMap<String, String>();
+                ph2.put("User-Agent", "netdisk;pan.baidu.com");
+                body[0] = null;
+                int c2 = probeLink(d, ph2, body);
+                DiagLog.add("[baidu] 姿势② dlink+netdisk;pan.baidu.com → " + probeVerdict(c2, body[0]));
+                if (c2 >= 200 && c2 < 400) return d;
+
+                // ③ filemetas 用 origin=dlna 现取一条 dlna 版 dlink
+                try {
+                    Map<String, String> h2 = new HashMap<String, String>();
+                    h2.put("Cookie", cookie(BAIDU));
+                    h2.put("User-Agent", Net.UA_DESKTOP);
+                    String u2 = "https://pan.baidu.com/api/filemetas?fsids=%5B" + f.id + "%5D"
+                            + "&dlink=1&origin=dlna&web=1&clienttype=0&app_id=250528";
+                    Net.Resp r2 = Net.request(u2, null, "https://pan.baidu.com/", h2, false);
+                    if (r2 != null && r2.body != null && r2.body.trim().startsWith("{")) {
+                        JSONObject o2 = new JSONObject(r2.body);
+                        JSONArray l2 = o2.optJSONArray("info");
+                        String dd = l2 != null && l2.length() > 0
+                                && l2.optJSONObject(0) != null
+                                ? l2.optJSONObject(0).optString("dlink", "") : "";
+                        if (dd.length() > 0) {
+                            body[0] = null;
+                            int c3 = probeLink(dd, ph, body);
+                            DiagLog.add("[baidu] 姿势③ dlna版dlink → " + probeVerdict(c3, body[0]));
+                            if (c3 >= 200 && c3 < 400) return dd;
+                        } else {
+                            DiagLog.add("[baidu] 姿势③ dlna版dlink → filemetas 未给 dlink："
+                                    + brief(r2.body));
+                        }
+                    }
+                } catch (Throwable t2) {
+                    DiagLog.add("[baidu] 姿势③ dlna版dlink → 请求异常：" + t2);
+                }
+
+                // ④ dlink + origin=dlna 参数（电视盒生态老姿势）
+                String d4 = d + (d.contains("?") ? "&" : "?") + "origin=dlna";
+                body[0] = null;
+                int c4 = probeLink(d4, ph, body);
+                DiagLog.add("[baidu] 姿势④ dlink+origin=dlna → " + probeVerdict(c4, body[0]));
+                if (c4 >= 200 && c4 < 400) return d4;
+
+                // ⑤ PCS 按 path 直下（自有文件老接口，BDUSS 即可）
+                if (path.length() > 0 && configured(BAIDU)) {
+                    Map<String, String> ph5 = new HashMap<String, String>();
+                    ph5.put("User-Agent", "netdisk");
+                    ph5.put("Cookie", cookie(BAIDU));
+                    String purl = "https://d.pcs.baidu.com/rest/2.0/pcs/file"
+                            + "?app_id=250528&method=download&path=" + urlEnc(path);
+                    body[0] = null;
+                    int c5 = probeLink(purl, ph5, body);
+                    DiagLog.add("[baidu] 姿势⑤ PCS按path直下 → " + probeVerdict(c5, body[0]));
+                    if (c5 >= 200 && c5 < 400) return purl;
+                }
+                throw new Exception(probeSummary(c1, c2, c4, body[0]));
+            }
+            // dlink 字段缺失时把条目打出来看实际键名
+            DiagLog.add("[baidu] filemetas 条目无 dlink：" + brief(it.toString()));
+        }
+        DiagLog.add("[baidu] filemetas 未返回 dlink：" + brief(r.body));
+        throw new Exception("百度网盘未返回直链：" + brief(r.body));
+    }
+
+    /**
+     * ★ v4.21.23：直链可用性探测（GET Range: bytes=0-1，只拉 2 字节）。
+     * 返回 HTTP 状态码（-1=连不上）；响应/错误体前 240 字符经 bodyOut[0] 带回，
+     * 留给诊断日志 —— 31326/31329/112 各代表不同的拒因，一眼定位。
+     */
+    private static int probeLink(String url, Map<String, String> headers, String[] bodyOut) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Range", "bytes=0-1");
+            conn.setRequestProperty("Accept", "*/*");
+            if (headers != null) {
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    if (e.getKey() == null || e.getValue() == null || e.getValue().length() == 0) continue;
+                    try { conn.setRequestProperty(e.getKey(), e.getValue()); } catch (Throwable ignored) {}
+                }
+            }
+            int code = conn.getResponseCode();
+            if (bodyOut != null && bodyOut.length > 0) {
+                java.io.InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                if (in != null) {
+                    byte[] b = new byte[240];
+                    int n = in.read(b);
+                    if (n > 0) bodyOut[0] = new String(b, 0, n, "UTF-8");
+                    try { in.close(); } catch (Throwable ignored) {}
+                }
+            }
+            return code;
+        } catch (Throwable t) {
+            // 连接被掐/超时：把异常类型带回（Connection reset / timeout / EOF）
+            if (bodyOut != null && bodyOut.length > 0) {
+                bodyOut[0] = "异常:" + t.getClass().getSimpleName();
+            }
+            return -1;
+        } finally {
+            try { if (conn != null) conn.disconnect(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /** 探测结果翻译成一行人话（诊断日志用） */
+    private static String probeVerdict(int code, String body) {
+        if (code >= 200 && code < 400) return "HTTP " + code + " ✓ 可用";
+        String b = body == null ? "" : body;
+        String why = baiduCdnErr(b);
+        if (code == -1) return "被掐断（" + b + "）——百度 CDN 连响应都不给，典型风控";
+        return "HTTP " + code + (why.length() > 0 ? "（" + why + "）" : "") + " " + b;
+    }
+
+    /** 百度 CDN 错误码翻译 */
+    private static String baiduCdnErr(String body) {
+        if (body == null) return "";
+        if (body.contains("31329") || body.contains("31119"))
+            return "31329/31119 账号命中黑名单（illeage dlna），换网络无用，等几小时或换账号";
+        if (body.contains("31326")) return "31326 非法链接（签名/UA 不对）";
+        if (body.contains("112")) return "112 链接过期";
+        if (body.contains("-6")) return "-6 身份验证失败";
+        return "";
+    }
+
+    /** 全姿势失败后的结论 */
+    private static String probeSummary(int c1, int c2, int c4, String lastBody) {
+        String s = "百度直链五种姿势均被拒（" + c1 + "/" + c2 + "/" + c4 + "）。";
+        String why = baiduCdnErr(lastBody);
+        if (why.length() > 0) s += why + "。";
+        else if (c1 == -1 || c2 == -1 || c4 == -1)
+            s += "CDN 直接掐断 TCP（下载太频繁触发风控）。";
+        s += "建议：隔几小时再试、换网络环境，或在百度网盘 App 里手动下载验证账号状态";
+        return s;
+    }
+
+    // ==================== 功能诊断（★ v4.21.20） ====================
+
+    /**
+     * 功能诊断：各网盘登录态。
+     * 百度做在线校验（gettemplatevariable 的 bdstoken 接口，登录态有效才有值）；
+     * 其余平台只报配置状态，用到时再补各自的轻量校验。
+     * 行首 ✓ / ✗ 供前端判定该块整体通过与否。
+     */
+    public static java.util.List<String> diagPanLogin() {
+        java.util.List<String> out = new ArrayList<String>();
+        for (String pid : ALL) {
+            String tag = nameOf(pid);
+            if (!configured(pid)) {
+                out.add("· " + tag + "：未配置（用到时在 设置→自定义源→网盘接口 网页登录）");
+                continue;
+            }
+            if (BAIDU.equals(pid)) {
+                String ck = cookie(BAIDU);
+                String bduss = grab(ck, "(BDUSS=[^;\\s]+)");
+                out.add("· 百度网盘 Cookie " + ck.length() + " 字符"
+                        + (bduss.length() > 0 ? "（含 BDUSS）" : "（⚠ 不含 BDUSS，登录不完整）"));
+                String bdst = baiduBdstoken(baiduHeaders());
+                if (bdst.length() > 0) {
+                    out.add("✓ 百度网盘登录态有效（bdstoken 在线校验通过）");
+                } else {
+                    out.add("✗ 百度网盘登录态校验失败（Cookie 失效或被风控，请重新「网页登录」）");
+                }
+            } else {
+                out.add("· " + tag + "：已配置 Cookie（" + cookie(pid).length()
+                        + " 字符，未做在线校验）");
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 功能诊断：自动转存目录（/apps/枫兮听书）体检。
+     * 列目录看残留文件（滚动缓存正常只留 1 集），再拿目录里第一个文件
+     * 实测 filemetas 取链接口（普通账号播放的关键一环）。
+     */
+    public static java.util.List<String> diagBaiduSave() {
+        java.util.List<String> out = new ArrayList<String>();
+        if (!configured(BAIDU)) {
+            out.add("✗ 百度网盘未登录，转存链路不可用（先「网页登录」）");
+            return out;
+        }
+        String dir = "/apps/枫兮听书";
+        Map<String, String> h = baiduHeaders();
+        h.put("Referer", "https://pan.baidu.com/disk/home");
+        String q = "dir=" + urlEnc(dir) + "&order=name&desc=0&web=1&clienttype=0&num=100&page=1";
+        Net.Resp r = null;
+        try {
+            r = Net.request("https://pan.baidu.com/api/list?" + q + "&app_id=250528",
+                    null, "https://pan.baidu.com/", h, false);
+        } catch (Throwable t) {
+            out.add("✗ 目录请求异常：" + t);
+            return out;
+        }
+        if (r == null || r.body == null) {
+            out.add("✗ 转存目录拉取无响应（网络问题）");
+            return out;
+        }
+        JSONObject o;
+        try {
+            o = new JSONObject(r.body);
+        } catch (Throwable t) {
+            out.add("✗ 转存目录返回非 JSON：" + brief(r.body));
+            return out;
+        }
+        int errno = o.optInt("errno", -1);
+        if (errno != 0) {
+            // -7/2 时去掉 app_id 降级再试一次（与 baiduDir 同款逻辑）
+            if (errno == -7 || errno == 2) {
+                try {
+                    r = Net.request("https://pan.baidu.com/api/list?" + q,
+                            null, "https://pan.baidu.com/", h, false);
+                    if (r != null && r.body != null) {
+                        o = new JSONObject(r.body);
+                        errno = o.optInt("errno", -1);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        }
+        if (errno == -7 || errno == -9) {
+            out.add("· 转存目录（" + dir + "）还不存在——首次播放转存时会自动创建，属正常");
+            return out;
+        }
+        if (errno != 0) {
+            out.add("✗ 转存目录拉取失败 errno=" + errno + "：" + brief(r.body));
+            return out;
         }
         JSONArray list = o.optJSONArray("list");
-        if (list != null && list.length() > 0 && list.optJSONObject(0) != null) {
-            String d = list.optJSONObject(0).optString("dlink", "");
-            if (d.length() > 0) return d;
+        int n = list == null ? 0 : list.length();
+        out.add("✓ 转存目录可访问（" + dir + "）");
+        if (n == 0) {
+            out.add("· 目录里没有残留文件（滚动缓存干净）");
+        } else {
+            out.add("· 目录里有 " + n + " 个文件（滚动缓存会自动清理，只留当前播放的 1 集）");
+            for (int i = 0; i < n && i < 5; i++) {
+                JSONObject it = list.optJSONObject(i);
+                if (it != null) out.add("    - " + it.optString("server_filename", ""));
+            }
+            JSONObject first = list.optJSONObject(0);
+            if (first != null) {
+                // 实测 filemetas 取链（普通账号播放的关键一环）
+                PanFile pf = new PanFile();
+                pf.id = String.valueOf(first.optLong("fs_id", 0));
+                try {
+                    String dlink = baiduDiskDownload(pf);
+                    out.add(dlink.length() > 0
+                            ? "✓ 盘内取链接口（filemetas）实测可用，普通账号可播"
+                            : "✗ 盘内取链接口未返回 dlink");
+                } catch (Throwable t) {
+                    out.add("✗ 盘内取链接口实测失败：" + t.getMessage());
+                }
+            }
         }
-        throw new Exception("百度网盘未返回直链：" + brief(r.body));
+        return out;
     }
 
     // ---- 天翼盘内 ----
@@ -1276,7 +1891,13 @@ public final class PanResolver {
             if (f.dir) {
                 counters[1]++;
                 synchronized (DIR_NAME_CACHE) { DIR_NAME_CACHE.put(f.id, f.name); }
-                scanRec(pid, f.id, depth + 1, byName, order, counters);
+                try {
+                    scanRec(pid, f.id, depth + 1, byName, order, counters);
+                } catch (Throwable t) {
+                    // ★ v4.19.0：单个子目录拉不动（路径含特殊字符 / 接口风控 / 临时失败）
+                    //   → 跳过这个目录继续扫，不再让整盘扫描直接失败。
+                    //   根目录（depth==0）本身拉不动仍会抛 —— 那是登录态问题，必须报给用户。
+                }
             } else if (isAudio(f.name)) {
                 counters[0]++;
                 // 父文件夹名 = 书名；folderId 就是当前目录
@@ -1308,7 +1929,10 @@ public final class PanResolver {
     private static String urlEnc(String s) {
         if (s == null) return "";
         try {
-            return java.net.URLEncoder.encode(s, "UTF-8");
+            // ★ v4.19.0：URLEncoder.encode 是 HTML form 编码，空格会变成 "+"，
+            //   百度把 query 里的 "+" 当字面加号 → 目录名带空格时 api/list 报 errno=-7
+            //   （文件或目录不存在）。改为标准 query 编码：空格 = %20。
+            return java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20");
         } catch (Throwable t) {
             return s;
         }

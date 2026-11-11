@@ -114,6 +114,7 @@
         settings: 'pageSettings', about: 'pageAbout',
         changelog: 'pageChangelog',   // ★ v3.7.3 更新公告
         diag: 'pageDiag',             // ★ v3.7.15-fix 源加载诊断
+        fdiag: 'pageFdiag',           // ★ v4.21.20 功能诊断（可勾选功能块）
         crash: 'pageCrash',           // ★ v3.7.15-fix 崩溃日志
         plog: 'pagePlog',             // ★ v4.10.10 播放诊断日志
         wgdiag: 'pageWgDiag',         // ★ v3.8.4 小组件诊断日志
@@ -471,9 +472,17 @@
             }
         }
 
-        var cached = browseLoad(cfg.id, App.home.cat, App.home.page, force);
+        // ★ v4.19.1：首页缓存直读 —— 过期缓存也先用（秒开不转圈），
+        //   渲染后立即静默发一次 browse，回包经 onBrowse 无感替换新数据。
+        //   内存命中（本会话刚拉过）则不再发请求。
+        var cached = browseLoad(cfg.id, App.home.cat, App.home.page, force, true);
         if (cached) {
+            var mk = bkey(cfg.id, App.home.cat, App.home.page);
             renderHomeList(cached, cfg.id, App.home.cat, App.home.page);
+            if (browseMem[mk] && browseMem[mk].fresh === false) {
+                App._silentSig = homeSig(cached);   // 记录指纹：回包相同就不重绘
+                TS.call('browse', cfg.id, App.home.cat, App.home.page);
+            }
             return;
         }
         cl.innerHTML = '<div class="loading"><span class="spinner"></span>加载中…</div>';
@@ -1973,7 +1982,10 @@
         App.searchExpanded = false;
         App.searchRunning = true;
         App.books = [];   // ★ v2.2：清空，增量渲染从空列表往上长
-        $('searchChips').classList.add('hide');
+        if ($('searchChips')) $('searchChips').classList.add('hide');
+        // ★ v4.21.19：新一轮搜索先收起左侧源列表和状态条，等首批结果再展开
+        if ($('searchSide')) $('searchSide').classList.add('hide');
+        if ($('searchStatus')) $('searchStatus').classList.add('hide');
         // 有搜索动作就收起历史/空态，让结果区独占
         if ($('searchHist')) $('searchHist').innerHTML = '';
         if ($('searchEmpty')) $('searchEmpty').style.display = 'none';
@@ -2101,6 +2113,9 @@
         if (n > 1) h += '<span class="tag">' + n + ' 源</span>';
         if (b.source) h += '<span class="tag src">' + TS.esc(sourceName(b.source)) + '</span>';
         if (b.category) h += '<span class="tag src">' + TS.esc(b.category) + '</span>';
+        h += '</div>';
+        // ★ v4.21.19：有简介就带一行（参考成熟 App 搜索结果卡）
+        if (b.intro) h += '<div class="d sintro">' + TS.esc(b.intro) + '</div>';
         h += '</div></div>';
         // ★ v3.9.3：收藏也走索引快照（不再把整本书 JSON 塞进 onclick ——
         //   每张卡片几百字节的属性串，几百张卡片时明显拖慢首绘）
@@ -2157,12 +2172,12 @@
         paintSearchChips();
     };
 
-    /** 来源筛选条：全部 + 各源（带命中数，0 条的源不显示）+ 诊断行 */
-    var _lastChipsHtml = null;
+    /** 来源筛选：左侧竖排源列表（★ v4.21.19 双栏版）+ 底部「已找到 X 个源」状态条 */
+    var _lastSideHtml = null;
 
     function paintSearchChips() {
-        var el = $('searchChips');
-        if (!el) return;
+        var side = $('searchSide'), st = $('searchStatus');
+        if (!side || !st) return;
         // ★ v3.9.41：从首页源列表点「仅搜索」源进来 → 结果一到就自动筛选到该源
         if (App._searchFocusSrc) {
             var foc = App._searchFocusSrc, fg = App.searchBySource || {};
@@ -2178,53 +2193,50 @@
         for (var k in grp) if (grp[k] && grp[k].length) ids.push(k);
         var sum = diagSummary();
         if (!App.books.length && !ids.length && !sum) {
-            el.classList.add('hide');
-            _lastChipsHtml = null;
+            side.classList.add('hide');
+            st.classList.add('hide');
+            _lastSideHtml = null;
             return;
         }
-        el.classList.remove('hide');
-        var h = '<div class="chiprow">';
-        h += '<div class="chip' + (App.searchFilter === 'all' ? ' on' : '') +
-                '" onclick="App.ui.filterSearch(\'all\')">全部 ' + App.books.length + '</div>';
+        side.classList.remove('hide');
+        var h = '<div class="sitem' + (App.searchFilter === 'all' ? ' on' : '')
+                + '" onclick="App.ui.filterSearch(\'all\')">全部<span class="cnt">'
+                + App.books.length + ' 条</span></div>';
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
-            h += '<div class="chip' + (App.searchFilter === id ? ' on' : '') +
-                 '" onclick="App.ui.filterSearch(\'' + id + '\')">' +
-                 TS.esc(sourceName(id)) + ' ' + grp[id].length + '</div>';
+            h += '<div class="sitem' + (App.searchFilter === id ? ' on' : '')
+                 + '" onclick="App.ui.filterSearch(\'' + id + '\')">'
+                 + TS.esc(sourceName(id))
+                 + '<span class="cnt">' + grp[id].length + '</span></div>';
         }
-        h += '</div>';
+        if (h !== _lastSideHtml) { side.innerHTML = h; _lastSideHtml = h; }
 
-        if (sum) {
-            h += '<div class="diagline" onclick="App.ui.toggleDiag()">' +
-                 '<span class="dtxt">' + TS.esc(sum) + '</span>' +
-                 '<span class="darr">' + (App.searchExpanded ? '⌃' : '⌄') + '</span></div>';
-            if (App.searchExpanded) {
-                h += '<div class="diaglist">';
-                var d = App.searchDiag || [];
-                for (var j = 0; j < d.length; j++) {
-                    var it = d[j];
-                    var cls = it.status === 0 ? 'ok'
-                            : (it.status === 1 ? 'mut' : 'bad');
-                    var right = it.status === 0 ? (it.count + ' 条')
-                            : DIAG_TEXT[it.status];
-                    h += '<div class="diagrow">' +
-                         '<span class="dn">' + TS.esc(it.name || it.id) + '</span>' +
-                         '<span class="ds ' + cls + '">' + TS.esc(right) +
-                         (it.error ? (' · ' + TS.esc(it.error)) : '') + '</span></div>';
-                }
-                h += '</div>';
-            }
+        // 底部状态条：已找到 X 个源 (合并数 / 原始命中数)，点开看逐源诊断
+        var raw = 0;
+        for (var k2 in grp) raw += grp[k2].length;
+        var sh = '已找到 <b>' + ids.length + '</b> 个源 (' + App.books.length + ' / ' + raw + ')';
+        if (sum) sh += ' · ' + TS.esc(sum);
+        var sh2 = (App.searchExpanded ? buildDiagList() : '')
+                + '<div class="sline"><span class="dtxt">' + sh + '</span>'
+                + '<span class="darr">' + (App.searchExpanded ? '⌃' : '⌄') + '</span></div>';
+        st.innerHTML = sh2;
+        st.classList.remove('hide');
+    }
+
+    /** 逐源诊断列表（展开时显示在状态条上方） */
+    function buildDiagList() {
+        var d = App.searchDiag || [];
+        var h = '<div class="diaglist">';
+        for (var j = 0; j < d.length; j++) {
+            var it = d[j];
+            var cls = it.status === 0 ? 'ok' : (it.status === 1 ? 'mut' : 'bad');
+            var right = it.status === 0 ? (it.count + ' 条') : DIAG_TEXT[it.status];
+            h += '<div class="diagrow">'
+                 + '<span class="dn">' + TS.esc(it.name || it.id) + '</span>'
+                 + '<span class="ds ' + cls + '">' + TS.esc(right)
+                 + (it.error ? (' · ' + TS.esc(it.error)) : '') + '</span></div>';
         }
-        // ★ v3.9.3：内容没变不重建（诊断行每秒都可能刷一次，重建会让
-        //   横向 chip 条闪烁、scrollLeft 归零 —— 用户点 chip 时像"乱跳"）
-        if (h === _lastChipsHtml) return;
-        // 重建时把横向滚动位置搬回来
-        var oldRow = el.querySelector('.chiprow');
-        var keepSL = oldRow ? oldRow.scrollLeft : 0;
-        el.innerHTML = h;
-        var newRow = el.querySelector('.chiprow');
-        if (newRow && keepSL > 0) newRow.scrollLeft = keepSL;
-        _lastChipsHtml = h;
+        return h + '</div>';
     }
 
     ui.filterSearch = function (id) {
@@ -2237,29 +2249,20 @@
     };
 
     /**
-     * 把指定 chip 滚动到横向容器正中。
-     * 首尾两端长度不够时自然贴边（scrollLeft 会被浏览器夹在 [0, max] 内），
-     * 这就是"前后长度不够按合理方式排布"的含义。
+     * 把指定源项滚到可视区（★ v4.21.19：左侧竖列表，纵向 nearest 即可）。
      */
     function centerSearchChip(id) {
-        var el = $('searchChips');
+        var el = $('searchSide');
         if (!el) return;
-        var row = el.querySelector('.chiprow');
-        if (!row) return;
-        var items = row.querySelectorAll('.chip');
+        var items = el.querySelectorAll('.sitem');
         var target = null;
-        // 约定：chip 的 onclick 里带 data-src 更稳，但为兼容旧结构用索引匹配
         for (var i = 0; i < items.length; i++) {
             var oc = items[i].getAttribute('onclick') || '';
             if (oc.indexOf("'" + id + "'") >= 0) { target = items[i]; break; }
         }
         if (!target) return;
         requestAnimationFrame(function () {
-            var rowW = row.clientWidth;
-            var max = row.scrollWidth - rowW;
-            if (max <= 0) return;
-            var want = target.offsetLeft - (rowW - target.offsetWidth) / 2;
-            row.scrollTo({ left: Math.max(0, Math.min(max, want)), behavior: 'smooth' });
+            target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         });
     }
 
@@ -3302,6 +3305,9 @@
             if (!App.buffering || App.playing) return;
             setBuffering(false);
             paintPlayIcon(false);
+            // ★ v4.21.34：playChapter 乐观置过 App.playing=true，超时必须归位，
+            //   否则播放按钮停在「暂停」语义，下一次点击会被当成暂停发出去。
+            App.playing = false;
             TS.toast('取直链超时，请再点一次播放重试');
         }, 18000);
     };
@@ -3333,9 +3339,20 @@
         return (sid || '') + '|' + (cat || '') + '|' + (page || 1);
     }
 
+    /** ★ v4.19.1：书单指纹 —— 快速比较两批首页数据是否一致（静默刷新用） */
+    function homeSig(books) {
+        if (!books || !books.length) return '';
+        var s = [];
+        for (var i = 0; i < books.length && i < 60; i++) {
+            var b = books[i];
+            s.push((b && (b.id || b.bookUrl || b.url || b.title)) || '');
+        }
+        return s.join('#');
+    }
+
     function browseSave(sid, cat, page, books) {
         var k = bkey(sid, cat, page);
-        browseMem[k] = { t: Date.now(), books: books };
+        browseMem[k] = { t: Date.now(), books: books, fresh: true };
         try {
             var all = JSON.parse(localStorage.getItem(BROWSE_KEY) || '{}');
             all[k] = { t: Date.now(), books: books };
@@ -3349,16 +3366,18 @@
         } catch (e) {}
     }
 
-    /** force=true 时忽略缓存强制走网络 */
-    function browseLoad(sid, cat, page, force) {
+    /** force=true 时忽略缓存强制走网络；★ v4.19.1 allowStale=true 时过期缓存也先用（首页直读，随后静默刷新） */
+    function browseLoad(sid, cat, page, force, allowStale) {
         if (force) return null;
         var k = bkey(sid, cat, page);
         var m = browseMem[k];
-        if (m && m.books) return m.books;
+        // 本会话内存命中 → 数据新鲜，无需再静默刷新
+        if (m && m.books) { m.fresh = true; return m.books; }
         try {
             var all = JSON.parse(localStorage.getItem(BROWSE_KEY) || '{}');
             var e = all[k];
-            if (e && e.books && (Date.now() - (e.t || 0)) < BROWSE_TTL) {
+            if (e && e.books && (allowStale || (Date.now() - (e.t || 0)) < BROWSE_TTL)) {
+                e.fresh = false;   // ★ 磁盘装入 → 标记待静默刷新
                 browseMem[k] = e;
                 return e.books;
             }
@@ -3544,6 +3563,14 @@
             App.book = o.book;
             App.chapIdx = idx;
             App.sessionResume = true;
+            // ★ v4.21.33：接住 native 回传的真实播放态 —— 方案 B 下服务暗核心
+            //   可能正被界面接管且在出声。不接住它，播放条会一直画成「▶ 播放」，
+            //   用户第一下点到的其实是暂停（于是「要点两次才播」）。
+            if (typeof o.playing === 'boolean') {
+                App.playing = o.playing;
+                setBuffering(false);
+                paintPlayIcon(App.playing);
+            }
             // ★ v2.6 关键：native 侧播放器里**还有活的这本书**（比如 Activity 重建、
             //   退到后台又回来），此时 player 非空、直链也在，resume 即可。
             //   反之（进程被杀、冷启动）native 只从历史里捞到书的元信息，
@@ -3905,6 +3932,79 @@
         if (TS && TS.toast) TS.toast('网络波动，正在自动重试…');
     };
 
+    /** ★ v4.20.3：通用日志弹窗（崩溃取证 / 诊断日志共用） */
+    function showLogModal(title, text, tint) {
+        var ov = document.createElement('div');
+        ov.id = 'logReportOv';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);' +
+            'display:flex;align-items:center;justify-content:center;padding:18px;';
+        var box = document.createElement('div');
+        box.style.cssText = 'background:var(--bg,#fff);color:var(--fg,#222);border-radius:14px;' +
+            'width:100%;max-width:420px;max-height:78vh;display:flex;flex-direction:column;overflow:hidden;';
+        var head = document.createElement('div');
+        head.style.cssText = 'padding:13px 16px 9px;font-weight:700;font-size:15px;color:' + (tint || '#e5484d') + ';';
+        head.textContent = title;
+        var pre = document.createElement('pre');
+        pre.style.cssText = 'margin:0;padding:0 16px;overflow:auto;font-size:11px;line-height:1.5;' +
+            'white-space:pre-wrap;word-break:break-all;flex:1;color:var(--fg,#333);';
+        pre.textContent = text;
+        var btns = document.createElement('div');
+        btns.style.cssText = 'display:flex;gap:10px;padding:12px 16px 15px;';
+        var mk = function (label, primary, fn) {
+            var b = document.createElement('button');
+            b.textContent = label;
+            b.style.cssText = 'flex:1;padding:10px 0;border-radius:9px;border:none;font-size:14px;' +
+                'font-weight:600;color:' + (primary ? '#fff' : 'var(--fg,#333)') + ';' +
+                'background:' + (primary ? 'var(--pri,#e5484d)' : 'var(--line,#eee)') + ';';
+            b.onclick = fn;
+            return b;
+        };
+        btns.appendChild(mk('复制日志', false, function () {
+            var ok = false;
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.cssText = 'position:fixed;opacity:0;';
+                document.body.appendChild(ta);
+                ta.select();
+                ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch (e) {}
+            if (TS && TS.call) TS.call('copyText', text);   // 兜底走原生剪贴板
+            TS.toast('日志已复制，发给开发者即可');
+        }));
+        btns.appendChild(mk('关闭', true, function () {
+            if (ov.parentNode) ov.parentNode.removeChild(ov);
+        }));
+        box.appendChild(head);
+        box.appendChild(pre);
+        box.appendChild(btns);
+        ov.appendChild(box);
+        document.body.appendChild(ov);
+    }
+
+    /**
+     * ★ v4.20.1 崩溃取证：上次会话崩溃过 → 全屏弹出崩溃日志（可复制）。
+     * 这是"用户侧拿不到 logcat"时的唯一可靠取证通道：堆栈直接铺在界面上。
+     */
+    window.onCrashLogs = function (o) {
+        try {
+            o = o || {};
+            if (!o.text) return;
+            showLogModal('⚠️ 检测到上次运行崩溃（' + (o.name || '') + '）', o.text, '#e5484d');
+        } catch (e) {}
+    };
+
+    /** ★ v4.20.3 诊断日志：播放/转码全过程的 PlayerLog（设置页入口） */
+    window.onDiagLog = function (o) {
+        try {
+            o = o || {};
+            var t = o.log || '';
+            if (!t) t = '(暂无日志 —— 播放一次目标内容后再来看，日志会记录取链/转码全过程)';
+            showLogModal('🩺 诊断日志', t, '#0a7d32');
+        } catch (e) {}
+    };
+
     /**
      * ★ v3.7.13 起源 / ★ v3.8.2 改版：播放失败 → 自动停止播放。
      *
@@ -4084,6 +4184,9 @@
      */
     window.onPlayNeedFetch = function () {
         if (!App.book || App.chapIdx < 0) return;
+        // ★ v4.21.34：已经在取链途中就别再发起一次 —— 用户等不及连点时，
+        //   第二次点击会走到这里造成重复取链，越点越慢。
+        if (App.buffering) return;
         App.needFetch = true;
         App.pendingAutoPlay = true;
         resumeAndPlay();
@@ -4131,9 +4234,35 @@
     /** 切页/回前台时主动拉一次真值，防止错过事件导致图标残留 */
     ui.syncPlayState = function () { TS.call('playState'); };
 
+    /**
+     * ★ v4.21.33：播放按钮改成「明确意图」，不再让 native 用 toggle 猜状态。
+     *
+     * 方案 B 之后，界面刚打开时网页的 App.playing 可能还没跟服务里那个正在
+     * 出声的暗核心同步（网页恒为 false、按钮画成「▶ 播放」）。此时点一下若走
+     * toggle，native 看到「正在播」就会执行**暂停** —— 用户听到的正是
+     * 「点第一下反而停了，得再点一下才响」，也就是「点两次才能播放」。
+     *
+     * 现在：UI 认为在播 → 明确 pause；UI 认为没播 → 走幂等 play：
+     *   · native 其实在播   → playIfPaused 返回 true，不打断、不误暂停
+     *   · native 只是暂停   → 直接 resume，一次点击就出声
+     *   · native 没有播放器 → 回 onPlayNeedFetch，自动重新取链播放
+     */
     ui.toggle = function () {
         if (App.chapIdx < 0) { TS.toast('还没有播放内容'); return; }
-        TS.call('toggle');
+        // ★ v4.21.34：取链在途时连点直接忽略 —— 转圈本身就是「点到了」的反馈，
+        //   再点只会重复发起取链，越点越慢。
+        if (App.buffering) return;
+        // 点击瞬间同步拿 native 真值再决定，不信缓存的 App.playing。
+        // 缓存状态与播放核心短暂不一致时，按缓存决定会「第一下没反应 / 点成暂停」，
+        // 也就是用户看到的「点两次才有反应」。顺手把图标校正到真值。
+        var real = false;
+        try { real = !!(window.Android && Android.isPlayingNow && Android.isPlayingNow()); } catch (e) {}
+        if (real !== App.playing) {
+            App.playing = real;
+            paintPlayIcon(real);
+        }
+        if (real) TS.call('pause');
+        else TS.call('play');
     };
 
     ui.next = function () {
@@ -6153,6 +6282,8 @@
     var SRC_GROUPS = [
         // ★ v3.9.0：自定义源置顶 —— 本地书源 + 网盘接口都从这里进
         { k: 'custom', t: '自定义源', sub: '本地书源 + 主流网盘接口' },
+        // ★ v4.21.40：重复源分组 —— 批量验证整理出来的「同站点且都能用」的源
+        { k: 'dupe', t: '重复源', sub: '同站点重复且都能用，确认后删掉多余的' },
         { k: 'builtin', t: '内置源', sub: '随 App 自带，可停用但不可删除' },
         { k: 'js', t: 'JS 插件源', sub: '由 JS 脚本插件包提供，一个包可含多个源' },
         { k: 'jar', t: 'jar 插件源', sub: '由 jar 插件提供，可整包卸载' },
@@ -6176,6 +6307,8 @@
         //   这两类源 native 标了 builtin=true 表示"不可删除"，但不是内置源组）
         var o0 = s.origin || '';
         if (o0 === 'local' || o0 === 'pan') return 'custom';
+        // ★ v4.21.40：被标记的重复源单独归一组（好源 ≥2 的同站点组才标）
+        if (s.dupe) return 'dupe';
         if (s.builtin) return 'builtin';
         var o = s.origin || '';
         if (o === 'eprendre') return 'url';
@@ -6260,7 +6393,7 @@
 
     function groupIcon(k) {
         var m = {
-            builtin: '&#127968;', url: '&#127760;', file: '&#128193;',
+            dupe: '&#128101;', builtin: '&#127968;', url: '&#127760;', file: '&#128193;',
             text: '&#128203;', jar: '&#129513;', js: '&#128220;',
             py: '&#128013;', other: '&#128230;'
         };
@@ -6459,6 +6592,9 @@
             // ★ v4.4.0：全部网盘支持「网页登录」——内嵌 WebView 打开官方登录页，
             //   登录成功自动抓 Cookie；115 扫码、天翼密码登录仍保留。
             h += '<button class="mini" onclick="App.ui.customPanWebLogin(\'' + pid + '\')">网页登录</button>';
+            // ★ v4.21.9：一步到位——登录成功后自动解析上面填的分享链接，
+            //   不用再「登录 → 回来 → 点解析」三步跑
+            h += '<button class="mini" onclick="App.ui.customPanLoginParse(\'' + pid + '\')">登录并解析</button>';
             if (pid === 'pan_115') {
                 h += '<button class="mini" onclick="App.ui.customPanQr(\'' + pid + '\')">扫码登录</button>';
             }
@@ -6948,6 +7084,7 @@
         var url = el ? (el.value || '').trim() : '';
         if (!url) { TS.toast('先粘贴分享链接'); return; }
         var st = panState(pid);
+        st._autoParse = 0;   // ★ v4.21.9：手动解析了就撤销挂起的自动解析标记
         st.shareUrl = url;
         st.files = [];
         st.picked = {};
@@ -6964,6 +7101,21 @@
             paintCustom();
             TS.toast('解析超时，请检查网络后重试');
         }, 45000);
+    };
+
+    /**
+     * ★ v4.21.9：网盘「登录并解析」——一步到位。
+     * 点一下：先弹内嵌网页登录（原生抓 Cookie），登录成功收到 onPanSaved
+     * 后自动对上面填的分享链接执行解析（复用 customPanParse 全套状态机，
+     * 含 45 秒超时兜底）。链接没填则只提示，不拉起登录。
+     */
+    ui.customPanLoginParse = function (pid) {
+        var el = $('panShare_' + pid);
+        var url = el ? (el.value || '').trim() : '';
+        if (!url) { TS.toast('先粘贴分享链接，再点「登录并解析」'); return; }
+        panState(pid)._autoParse = Date.now();
+        TS.toast('登录成功后将自动解析分享链接…');
+        TS.call('panWebLogin', pid);
     };
 
     ui.customPanPick = function (pid, fi, on) {
@@ -7111,6 +7263,16 @@
         }
         // panReady 变了 → 让 native 重推源列表，开关状态才准
         TS.call('listSources');
+        // ★ v4.21.9：「登录并解析」链路——登录成功后自动解析该网盘填的分享链接。
+        //   标记带 10 分钟时效，避免陈旧标记在之后某次无关登录里误触发。
+        var stLP = panState(o.platform);
+        var autoTs = stLP._autoParse || 0;
+        stLP._autoParse = 0;
+        if (o.ok && autoTs && Date.now() - autoTs < 10 * 60 * 1000) {
+            TS.toast('登录成功，开始解析分享链接…');
+            ui.customPanParse(o.platform);
+            return;
+        }
         paintCustom();
     };
 
@@ -7251,6 +7413,12 @@
                '<span class="srccount">' + countEnabled(list) + ' / ' + list.length + ' 启用</span>' +
              '</span>' +
              '</div>';
+        // ★ v4.21.40：重复源组的引导 —— 这里的源都是验证过「能用」的，只多不少
+        if (def.k === 'dupe') {
+            h += '<div class="tip">这些是同一个站点里<b>都能用</b>的重复书源（失效的已在批量验证时自动关闭）。' +
+                 '逐个试一下，留下搜索最快、结果最好的那个，其余的长按删除即可；' +
+                 '下次批量验证如果组里只剩一个好源，会自动退回原分组。</div>';
+        }
         h += '<div class="srcops" style="padding:0 0 8px">' +
              '<span class="srchint">' +
              (App.srcBatch ? '勾选要操作的书源，然后在下方工具条选择操作'
@@ -8230,6 +8398,8 @@
         h += '<div class="sheet-item" onclick="App.ui.importPaste()">粘贴 JSON 文本</div>';
         h += '<div class="sheet-item" onclick="App.ui.importFile()">选择本地文件</div>' +
              '<div class="impsub">支持 .json 源配置、.jar 插件、.zip JS 插件包、.py / 含 .py 的 .zip Python 源</div>';
+        h += '<div class="sheet-item" onclick="App.ui.autoGenSource()">输入网址自动生成书源</div>' +
+             '<div class="impsub">★ 新功能：直接给一个听书网站地址，自动分析成源</div>';
         h += '<div class="sheet-item" onclick="App.ui.importUrl()">从网络订阅链接导入</div>';
         h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
         h += '</div></div>';
@@ -8265,7 +8435,20 @@
     };
 
     /** 文件选择结果：按类型分派（zip/js → JS 插件包；jar → jar 插件；py → Python 源；json → 文本导入） */
-    window.onSourceFilePicked = function (o) {
+    window.onSourceFilePicked = function (o) { importOne(o); };
+
+    // ★ v4.21.19：多选导入——native 一次回传多个文件的结果，逐个装载
+    window.onSourceFilesPicked = function (o) {
+        if (!o || !o.items || !o.items.length) { importOne(o); return; }
+        var okN = 0, badN = 0;
+        for (var i = 0; i < o.items.length; i++) {
+            var it = o.items[i];
+            if (it && it.ok) { okN++; importOne(it); } else badN++;
+        }
+        if (badN) TS.toast(okN + ' 个文件开始导入，' + badN + ' 个读取失败');
+    };
+
+    function importOne(o) {
         if (!o || !o.ok) {
             if (o && o.cancel) return;
             TS.toast((o && o.error) || '读取文件失败');
@@ -8320,6 +8503,89 @@
         TS.toast('正在下载…');
         TS.call('importSourceUrl', u.trim(), over);
     };
+
+    // ★ v4.21.39 输入网址 → 自动生成书源
+    ui.autoGenSource = function () {
+        ui.closeSheet();
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">网址生成书源</div>';
+        h += '<div class="impsub">输入一个听书网站的首页地址，App 会自动分析它的' +
+             '搜索接口、章节列表和音频直链，生成一个可用的自定义源。' +
+             '整个过程约半分钟，对结构规整的网站效果好。</div>';
+        h += '<input id="genUrl" class="ta one" placeholder="https://www.example.com">';
+        h += '<div class="sheet-item" onclick="App.ui.doGenSource()">开始分析</div>';
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">取消</div>';
+        h += '</div></div>';
+        sheet(h);
+        setTimeout(function () { var el = $('genUrl'); if (el) el.focus(); }, 100);
+    };
+
+    ui.doGenSource = function () {
+        var el = $('genUrl');
+        var u = el ? el.value : '';
+        if (!u || !u.trim()) { TS.toast('请先填写网址'); return; }
+        u = u.trim();
+        ui.closeSheet();
+        App.genDiag = [];
+        // 进度面板（onGenProgress 持续往里追加）
+        var h = '<div class="sheet-mask" onclick="event.stopPropagation()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += '<div class="sheet-hd">正在分析站点…</div>';
+        h += '<div class="cf-msg" id="genMsg">准备中…</div>';
+        h += '<div id="genLog" style="max-height:38vh;overflow-y:auto;font-size:12px;' +
+             'line-height:1.7;color:var(--text2)"></div>';
+        h += '</div></div>';
+        sheet(h);
+        TS.call('autoGenSource', u);
+    };
+
+    window.onGenProgress = function (o) {
+        if (!o) return;
+        var msg = $('genMsg');
+        if (msg) msg.innerHTML = TS.esc((o.stage || '') + ' · ' + (o.msg || ''));
+        var log = $('genLog');
+        if (log && App.genDiag) {
+            App.genDiag.push((o.msg || ''));
+            var line = document.createElement('div');
+            line.className = 'vfline ok';
+            line.innerHTML = '&#10003; ' + TS.esc(o.msg || '');
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+        }
+    };
+
+    window.onGenDone = function (r) {
+        if (!r) return;
+        var ok = !!r.ok;
+        var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
+        h += '<div class="sheet" onclick="event.stopPropagation()">';
+        h += ok ? '<div class="sheet-hd">生成成功</div>' : '<div class="sheet-hd">生成失败</div>';
+        if (ok) {
+            var t = r.test || {};
+            var tMsg = t.msg ? TS.esc(t.msg) : '未测试';
+            h += '<div class="cf-msg">已生成自定义源「' + TS.esc(r.name || r.id || '') + '」并导入。' +
+                 '导入后自动测试：' + (t.ok ? '<b style="color:#4caf50">通过</b> — ' + tMsg
+                     : '<b style="color:#e0a030">未通过</b> — ' + tMsg) + '</div>';
+        } else {
+            h += '<div class="cf-msg">' + TS.esc(r.error || '分析失败') + '</div>';
+        }
+        // 诊断明细（每一步的成功/失败/降级）
+        if (r.diag && r.diag.length) {
+            h += '<div class="vfres"><div class="vfres-hd">分析过程</div>';
+            for (var i = 0; i < r.diag.length; i++) {
+                h += '<div class="vfres-row">' + TS.esc(r.diag[i]) + '</div>';
+            }
+            h += '</div>';
+        }
+        if (ok) {
+            h += '<div class="sheet-item" onclick="App.ui.closeSheet();App.ui.goSub(\'sources\')">查看源列表</div>';
+        }
+        h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
+        h += '</div></div>';
+        sheet(h);
+    };
+
 
     /** 导入结果：把 added/updated/skipped/failed 讲清楚，别只报"成功" */
     window.onSourceImported = function (r) {
@@ -8479,7 +8745,7 @@
 
         h += '<label class="impchk"><input type="checkbox" id="vfDedup"' +
              (App.verifyDedup ? ' checked' : '') +
-             ' onchange="App.verifyDedup=this.checked"> 删除重复源（同域名保留优先级高的）</label>';
+             ' onchange="App.verifyDedup=this.checked"> 自动整理重复源（失效的关闭留好源，都能用的归入重复源分组）</label>';
         h += '<label class="impchk"><input type="checkbox" id="vfClose"' +
              (App.verifyAutoClose ? ' checked' : '') +
              ' onchange="App.verifyAutoClose=this.checked"> 自动停用失效的源</label>';
@@ -8605,7 +8871,7 @@
     window.onVerifyDone = function (r) {
         hideVerifyBar();
         // ★ 结果面板不能只报个数 —— 用户真正想知道的是"哪几个废了""哪几个被删了"。
-        //   所以把 deadList / removedList / verifyList 原样列出来。
+        //   所以把 deadList / closedList / dupeList / verifyList 原样列出来。
         var h = '<div class="sheet-mask" onclick="App.ui.closeSheet()">';
         h += '<div class="sheet" onclick="event.stopPropagation()">';
         h += '<div class="sheet-hd">验证完成</div>';
@@ -8613,10 +8879,12 @@
 
         h += verifyResultBlock('失效的源（' + ((r && r.dead) || 0) + '）',
                                r && r.deadList, 'dead');
+        h += verifyResultBlock('已关闭的失效源（' + ((r && r.closed) || 0) + '）',
+                               r && r.closedList, 'gone');
         h += verifyResultBlock('需验证的源（' + ((r && r.verify) || 0) + '）',
                                r && r.verifyList, 'warn');
-        h += verifyResultBlock('删除的重复源（' + ((r && r.deduped) || 0) + '）',
-                               r && r.removedList, 'gone');
+        h += verifyResultBlock('归入重复源分组的（' + ((r && r.duped) || 0) + '）',
+                               r && r.dupeList, 'warn');
 
         h += '<div class="sheet-item cancel" onclick="App.ui.closeSheet()">关闭</div>';
         h += '</div></div>';
@@ -9013,6 +9281,12 @@
                 consumed = true;
                 delete App.homePending[o.path];
                 if (o.error) { $('homeContent').innerHTML = errBlock(o.error); return; }
+                // ★ v4.19.1：静默刷新回包 —— 和缓存一致就不重绘（避免闪屏/丢滚动位置）
+                if (App._silentSig != null && (o.page || 1) === (App.home.page || 1)) {
+                    var same = homeSig(o.books) === App._silentSig;
+                    App._silentSig = null;
+                    if (same) return;
+                }
                 renderHomeList(o.books, o.source, o.path, o.page);
                 return;
             }
@@ -9436,6 +9710,10 @@
         TS.call('floatBallState');
         // ★ v2.9：下载目录状态也从原生拉一次（设置页要显示当前目录）
         TS.call('downloadDirState');
+        // ★ v4.19.0：下载格式
+        App.dlFormat = o.dlFormat || 'orig';
+        App.ffLib = (o.ffLib === true);
+        setVal('setDlFormat', App.dlFormat);
         // ★ v3.7.18：顺带统计一次存储占用（进设置页就能看到，不用手动点刷新）
         ui.storageRefresh();
     };
@@ -9585,6 +9863,20 @@
 
     ui.pickDlDir = function () { TS.call('pickDownloadDir'); };
     ui.clearDlDir = function () { TS.call('clearDownloadDir'); };
+
+    // ★ v4.19.0：下载格式（orig=原始 / mp3=统一转 MP3）
+    ui.setDlFormat = function (v) {
+        if (v === 'mp3' && App.ffLib === false) {
+            TS.toast('当前是标准版（无转码组件），将保持原始格式下载');
+        }
+        TS.call('setSetting', 'dl_format', v);
+        App.dlFormat = v;
+    };
+
+    // ★ v4.20.3：诊断日志（设置页）
+    ui.diagLog = function () {
+        TS.call('diagLog');
+    };
 
     /** 原生：下载目录状态（选完 / 清空 / 初始化都会回调到这里） */
     window.onDownloadDir = function (o) {
@@ -9874,6 +10166,93 @@
         if (logEl) {
             logEl.textContent = runtime ? runtime : '（本次启动暂无可记录的异常）';
         }
+    };
+
+    // ==================== ★ v4.21.20 功能诊断（可勾选功能块） ====================
+
+    var FDIAG_MODS = [
+        { id: 'net',      name: '网络连通',     desc: '公网/百度请求测试与耗时' },
+        { id: 'engine',   name: '书源与引擎',   desc: 'JS 插件包与源加载状态' },
+        { id: 'panlogin', name: '网盘登录态',   desc: '百度等已配置平台的登录在线校验' },
+        { id: 'pansave',  name: '网盘自动转存', desc: '转存目录检查 + 盘内取链接口实测' },
+        { id: 'player',   name: '播放链路',     desc: '最近的取链/转码/播放记录' },
+        { id: 'storage',  name: '存储空间',     desc: '缓存目录可写与剩余空间' }
+    ];
+    var _fdiagCache = '';
+
+    ui.openFdiag = function () {
+        goSub('fdiag');
+        var box = $('fdiagMods');
+        if (box && !box._built) {
+            var h = '';
+            for (var i = 0; i < FDIAG_MODS.length; i++) {
+                var m = FDIAG_MODS[i];
+                h += '<div class="setrow"><div class="setlabel">' + m.name +
+                     '<span class="setdesc">' + TS.esc(m.desc) + '</span></div>' +
+                     '<label class="sw"><input type="checkbox" class="fdiagck" id="fdiag_' +
+                     m.id + '" checked><i></i></label></div>';
+            }
+            box.innerHTML = h;
+            box._built = true;
+        }
+        var out = $('fdiagOut');
+        if (out) out.textContent = '（尚未运行）';
+        _fdiagCache = '';
+    };
+
+    ui.fdiagAll = function (on) {
+        var cks = document.querySelectorAll('.fdiagck');
+        for (var i = 0; i < cks.length; i++) cks[i].checked = !!on;
+    };
+
+    ui.fdiagRun = function () {
+        var ids = [];
+        for (var i = 0; i < FDIAG_MODS.length; i++) {
+            var ck = $('fdiag_' + FDIAG_MODS[i].id);
+            if (ck && ck.checked) ids.push(FDIAG_MODS[i].id);
+        }
+        if (!ids.length) { TS.toast('先勾选至少一个功能块'); return; }
+        var out = $('fdiagOut');
+        if (out) out.textContent = '诊断中…（共 ' + ids.length + ' 个功能块）';
+        _fdiagCache = '';
+        var btn = $('fdiagRunBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '诊断中…'; }
+        TS.call('featDiag', ids.join(','));
+    };
+
+    function _fdiagName(id) {
+        for (var i = 0; i < FDIAG_MODS.length; i++) {
+            if (FDIAG_MODS[i].id === id) return FDIAG_MODS[i].name;
+        }
+        return id;
+    }
+
+    /** 原生回调：单个功能块结果（流式，跑完一块显示一块） */
+    window.onFdiagModule = function (o) {
+        o = o || {};
+        var out = $('fdiagOut');
+        var lines = [];
+        lines.push('【' + _fdiagName(o.id) + '】' + (o.ok ? '✓ 通过' : '✗ 有问题')
+            + '（' + (o.ms || 0) + 'ms）');
+        var ls = o.lines || [];
+        for (var i = 0; i < ls.length; i++) lines.push('  ' + ls[i]);
+        lines.push('');
+        _fdiagCache += lines.join('\n');
+        if (out) out.textContent = _fdiagCache + '\n（继续诊断中…）';
+    };
+
+    /** 原生回调：全部功能块跑完 */
+    window.onFdiagDone = function () {
+        var btn = $('fdiagRunBtn');
+        if (btn) { btn.disabled = false; btn.textContent = '开始诊断'; }
+        var out = $('fdiagOut');
+        if (out) out.textContent = _fdiagCache || '（无结果）';
+    };
+
+    ui.fdiagCopy = function () {
+        if (!_fdiagCache) { TS.toast('暂无内容'); return; }
+        try { TS.call('copyText', _fdiagCache); TS.toast('诊断结果已复制'); }
+        catch (e) { TS.toast('复制失败'); }
     };
 
     /** 崩溃日志页 */
@@ -10575,31 +10954,17 @@
         });
     }
 
-    // ==================== ★ v3.7.9 关于页：更新检查 / 开源链接 ====================
-
-    /** 仓库地址（与原生 checkUpdate 里查的仓库保持一致） */
-    var GH_REPO = 'https://github.com/fengxitingshu/fengxi-tingshu';
-    var GH_ISSUES = GH_REPO + '/issues';
-
-    /** 交给系统浏览器打开仓库主页 */
-    ui.openGitHub = function () {
-        TS.call('openUrl', GH_REPO);
-    };
-
-    /** 打开 issue 列表 */
-    ui.openGitHubIssues = function () {
-        TS.call('openUrl', GH_ISSUES);
-    };
+    // ==================== ★ 关于页：更新检查（v4.21.35 官方下载站） ====================
 
     /**
-     * 检查更新：问原生要 GitHub 最新 release，再按结果刷新卡片。
+     * 检查更新：问原生要官方下载站的最新版本，再按结果刷新卡片。
      * 原生那头已经做了超时与失败兜底，这里只管把结果画出来。
      */
     ui.checkUpdate = function () {
         var btn = $('updCheckBtn');
         var msg = $('updMsg');
         if (btn) { btn.disabled = true; btn.textContent = '检查中…'; }
-        if (msg) msg.innerHTML = '正在向 GitHub 查询最新版本…';
+        if (msg) msg.innerHTML = '正在检查最新版本…';
         TS.call('checkUpdate');
     };
 
@@ -10616,28 +10981,76 @@
         if (!o.ok) {
             if (msg) msg.innerHTML = '检查失败：' + TS.esc(o.error || '网络不可用') +
                 '<br><span style="opacity:.7">' + TS.esc(cur ? '当前版本 ' + cur : '') +
-                '，可稍后重试，或直接去仓库看最新发布。</span>';
+                '，可稍后重试。</span>';
             return;
         }
 
         if (o.hasNew) {
             if (msg) msg.innerHTML = '发现新版本 <b>' + TS.esc(o.latest) + '</b>' +
                 '（当前 ' + TS.esc(cur) + '）<br>' +
-                '<span style="opacity:.75">去 GitHub Releases 下载最新安装包。</span>';
-            // 有新版时把按钮换成"去下载"，直接开 release 页
-            if (acts && !$('updGoBtn')) {
-                var b = document.createElement('button');
-                b.className = 'mini';
-                b.id = 'updGoBtn';
-                b.textContent = '去下载';
-                b.onclick = function () {
-                    TS.call('openUrl', o.url || (GH_REPO + '/releases'));
-                };
-                acts.appendChild(b);
+                '<span style="opacity:.75">正在自动下载并安装，请保持网络畅通…</span>';
+            // ★ v4.21.36：自动更新 —— 发现新版直接下载并拉起安装，
+            // 不再跳浏览器；「立即下载」按钮保留作手动重试入口。
+            if (o.url) {
+                var dl = function () { TS.call('downloadAndInstall', o.url, o.md5 || ''); };
+                dl();
+                if (acts && !$('updGoBtn')) {
+                    var b = document.createElement('button');
+                    b.className = 'mini';
+                    b.id = 'updGoBtn';
+                    b.textContent = '立即下载';
+                    b.onclick = dl;
+                    acts.appendChild(b);
+                } else if (acts && $('updGoBtn')) {
+                    $('updGoBtn').onclick = dl;
+                }
+            } else if (msg) {
+                msg.innerHTML = '发现新版本 <b>' + TS.esc(o.latest) + '</b>' +
+                    '，但下载地址未就绪，请稍后再试。';
             }
         } else {
             if (msg) msg.innerHTML = '已是最新版本 <b>' + TS.esc(o.latest || cur) +
                 '</b>，无需更新。';
+        }
+    };
+
+    /**
+     * 自动更新进度回调（原生 onUpdateProgress，★ v4.21.36）。
+     * download（带百分比）→ verify → install 一条龙；error / permission 分支兜底。
+     */
+    window.onUpdateProgress = function (o) {
+        o = o || {};
+        var msg = $('updMsg');
+        var btn = $('updCheckBtn');
+        function resetBtn() {
+            if (btn) { btn.disabled = false; btn.textContent = '检查更新'; }
+        }
+        if (o.phase === 'download') {
+            if (msg) msg.innerHTML = '正在下载新版本… <b>' + (o.percent || 0) + '%</b>' +
+                (o.mb ? '（' + TS.esc(o.mb) + '）' : '');
+        } else if (o.phase === 'verify') {
+            if (msg) msg.innerHTML = '下载完成，正在校验安装包…';
+        } else if (o.phase === 'install') {
+            resetBtn();
+            if (msg) msg.innerHTML = '校验通过，已拉起系统安装。按提示确认安装即可，' +
+                '装完打开就是新版本。';
+        } else if (o.phase === 'permission') {
+            resetBtn();
+            if (msg) msg.innerHTML = '需要「安装未知应用」授权（首次更新只弹一次）。' +
+                '<br><span style="opacity:.75">点下面「去授权」，允许枫兮听书安装后回到这里再点「检查更新」。</span>';
+            var acts = $('updActions');
+            if (acts && !$('updAuthBtn')) {
+                var b = document.createElement('button');
+                b.className = 'mini';
+                b.id = 'updAuthBtn';
+                b.textContent = '去授权';
+                b.onclick = function () { TS.call('openInstallSettings'); };
+                acts.appendChild(b);
+            }
+        } else if (o.phase === 'error') {
+            resetBtn();
+            if (msg) msg.innerHTML = '更新失败：' + TS.esc(o.error || '未知错误') +
+                '<br><span style="opacity:.7">可点「立即下载」重试，或稍后再试。</span>';
         }
     };
 
@@ -10647,6 +11060,229 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.21.42',
+            date: '2026-11-11',
+            items: [
+                '修复：发现页/分类翻页提示「后面几页都是重复内容」提前截断 —— JS 插件源的页码藏在分类地址尾部的 #N 里，翻页时宿主一直把第 1 页的地址原样传回去，插件每页都返回同一批书；现在按页号真正推进地址（优先续插件返回的下一页链接），番茄听书、喜马拉雅、懒人听书、B站等插件源翻页恢复正常'
+            ],
+        },
+        {
+            ver: '4.21.41',
+            date: '2026-11-11',
+            items: [
+                '修复：源管理「点删除删不掉源」—— 插件源（JS 包 / jar）删除后，重新加载源列表时插件文件里的源又被无条件装回来，删除等于白删；现在按插件记录的白名单过滤，删掉的源不再复活（老的没有删除记录的插件行为不变）',
+                '修复：预存 50 集没有真正预存 —— 三处根因一起修：超出总集数的预存号会「退到最后一集」把最后一集音频错标成第 N 集（假缓存）；50 集连发无间隔触发站点限流后集体失败；失败后还会反复撞同一批集号',
+                '预存现在带越界钳制 + 集间 1.2 秒间隔 + 连续 5 次失败自动暂停（5 分钟后自动恢复重试），长书预存稳定落盘'
+            ],
+        },
+        {
+            ver: '4.21.40',
+            date: '2026-11-11',
+            items: [
+                '新增：批量验证「自动整理重复源」—— 同站点导入多次的重复源不再一股脑堆在列表里：验证后失效的直接关闭留下好源，都能用的自动归入新的「重复源」分组，由你自己决定删哪个',
+                '重复源分组展示在源管理页，组内附使用引导；组里只剩一个好源时下次验证会自动退回原分组',
+                '行为调整：重复源不再被自动删除（旧版是直接删除保留优先级高的），避免误删找不回来'
+            ],
+        },
+        {
+            ver: '4.21.39',
+            date: '2026-11-10',
+            items: [
+                '新增：源管理支持「输入网址自动生成书源」—— 直接给一个听书网站首页地址，App 自动分析它的搜索接口、章节列表、音频直链，生成可直接使用的自定义源',
+                '自动分析带完整过程展示：站点类型判别（含 JS 渲染站无头加载）、搜索表单/常见路径模板探测、章节目录聚类、音频直链三种抓取模式，每一步成败都有人话说明',
+                '生成的源立即做一次真实搜索测试，结果直接展示；分析失败也会给出具体原因而不是笼统报错'
+            ],
+        },
+        {
+            ver: '4.21.38',
+            date: '2026-11-10',
+            items: [
+                '修复：jar 插件源「能导入不能用」的黑盒 —— 插件内部出错（站点 404 / 被拦截 / 解析异常）之前被静默吞掉，搜索只会显示「无结果」；现在会把真实失败原因透传到搜索诊断里',
+                '修复：插件解析不出音频直链时，把章节网页地址当播放链接甩给播放器导致莫名其妙的播放失败；现在直接提示「插件未返回音频直链」',
+                '兼容性验证：对 sources_by_fmfm 这类原版「我的听书」jar 插件做了全链路对齐测试（源枚举 / 搜索 / 详情 / 章节 / 取链注册），宿主协议无缺口'
+            ],
+        },
+        {
+            ver: '4.21.37',
+            date: '2026-11-10',
+            items: [
+                '更新更稳：主站连不上时自动切换公共镜像兜底（家宽入站端口被运营商封锁、反代未监听 IPv6 等场景也能完成更新）',
+                '隐私加固：检查更新的提示与关于页不再显示任何服务器地址，域名只存在于程序内部',
+                '下载失败提示更准确（区分网络不可达与安装包校验失败）'
+            ],
+        },
+        {
+            ver: '4.21.36',
+            date: '2026-11-10',
+            items: [
+                '自动更新一条龙：关于页点「检查更新」后自动比对更新服务器的最新版本，发现新版自动下载（带进度与 MD5 校验）、校验通过自动拉起系统安装，全程不用跳浏览器',
+                '更新源加固：主站连不上时自动切换公共镜像兜底，保证一定能完成更新',
+                '安装授权兜底：Android 8+ 首次更新会引导到「安装未知应用」授权页，允许后回来自动继续',
+                '安装包完整性：下载完成后按下载站 manifest 的 MD5 校验，不符自动删除重试，杜绝装到截断包'
+            ],
+        },
+        {
+            ver: '4.21.34',
+            date: '2026-11-08',
+            items: [
+                '修复：点播放第一下还是没反应（先冒出通知/播放条，第二下才出声）——播放按钮现在在点击的一瞬间直接向播放核心查询真实状态再决定暂停还是播放，不再依赖网页缓存的旧状态，缓存状态对不上时第一下也不会落空',
+                '连点保护：取直链途中再点播放直接忽略（转圈就是「点到了」的反馈），避免重复取链越点越慢；取直链超时后按钮状态自动归位',
+                '界面接管后台核心后图标与实际声音对不上的问题在 v4.21.33 已修，本版把「点一下必生效」做死'
+            ],
+        },
+        {
+            ver: '4.21.33',
+            date: '2026-11-07',
+            items: [
+                '修复：点播放要连点两下才出声 —— 方案 B 接管后台播放核心后，网页没同步「其实正在播」的状态，按钮仍显示「▶ 播放」，第一下点下去反而执行了暂停，第二下才恢复',
+                '播放按钮改成明确意图：显示「暂停」时点 = 暂停；显示「播放」时点 = 确保播放（已在播不打断、暂停直接恢复、没有播放器自动重新取链），不再靠猜状态',
+                '界面接管后台核心后立刻把真实播放态推给页面，冷启动再自动校正两次，图标不会再和实际声音对不上',
+                '顺带修掉两个连点场景：小组件起播取链途中进 App，取链结果不再被丢弃；取链等待期间再点一次播放不会被吞掉',
+                '前台播放链路、百度网盘「转存 → 取链 → 缓存中继」依旧一行未改'
+            ],
+        },
+        {
+            ver: '4.21.32',
+            date: '2026-11-07',
+            items: [
+                '★ 重磅：播放引擎搬进后台服务（方案 B）——App 彻底退出/被清理后，点桌面小组件的播放键即可直接出声，不再先弹界面、也不用再点一次',
+                '原理：服务自持一个独立播放核心，从落盘的「可恢复会话」找回上次在听的书/集/进度，用纯 Java 重新取链（不依赖网页界面），直接起播；通知栏、锁屏、蓝牙按键、小组件全部照常控制',
+                '无缝接管：小组件先起播后你再点封面进 App，界面会接管这个正在播的核心，不中断、不重新取链、不会两个声音叠在一起',
+                '退出界面但还在听：播放核心自动交回服务继续后台播放；只有主动点「停止」才会清掉会话，避免被小组件意外续上',
+                '保护既有链路：App 在前台时的播放路径完全未改动，百度网盘那套「转存→取链→缓存中继」一行没碰'
+            ],
+        },
+        {
+            ver: '4.21.31',
+            date: '2026-11-07',
+            items: [
+                '修复：能播但 10~20 秒就停——这是百度对非会员下载的经典套路（先冲一波流量再长时间暂停/掐线）。现在百度网盘音频一律先经本地代理，代理支持断流自动续传（最多 3 次，读超时放宽到 60 秒），播放器完全无感',
+                '承接 v4.21.23：PCS 按路径直下姿势已实测能出声，本轮解决的是「中途断」'
+            ],
+        },
+        {
+            ver: '4.21.23',
+            date: '2026-11-07',
+            items: [
+                '修复：dlink 直链仍被 CDN 403——现在取链后 App 内先探测（只拉 2 字节），被拒就按梯队自动换姿势：① dlink+netdisk UA ② dlink+origin=dlna（电视盒生态通用姿势）③ PCS 按文件路径直下（自有文件老接口，BDUSS 即可），选中能通的再交给播放器',
+                '每次被拒的 HTTP 状态码与 CDN 错误体（31326 非法链接 / 31329 dlna 黑名单 / 112 过期等）全部记进诊断日志，一眼定位拒因',
+                '若三种姿势均被拒会明确提示「账号疑似被百度风控」，不再笼统报播放失败'
+            ],
+        },
+        {
+            ver: '4.21.22',
+            date: '2026-11-07',
+            items: [
+                '修复：取链成功但播放报「直链 HTTP 403（返回的不是音频）」——对照 baiduwp-php：百度 dlink 下载只应带 User-Agent（netdisk），把整套网页 Cookie/Referer 一起发给百度 CDN 反而 403；播放头已改为只带 UA',
+                '本地代理新增 403 自愈：百度 CDN 直链被拒时自动按三个梯队换姿势重试（netdisk;pan.baidu.com → LogStatistic → netdisk+完整Cookie），哪个通用哪个，过程记进播放日志',
+                '功能诊断实测反馈：filemetas 修复后「盘内取链」已实测通过 ✓'
+            ],
+        },
+        {
+            ver: '4.21.21',
+            date: '2026-11-07',
+            items: [
+                '修复：百度播放「百度网盘未返回直链」——接口响应的数组键名是 info 而非 list，旧版读错键名导致 errno=0 却拿不到 dlink；此问题由新版「功能诊断」页实测锁定（网络/登录态/转存目录全通过，唯独取链失败且日志里能看到原始响应）',
+                '盘内取链条目缺 dlink 时，会把该条目完整记进诊断日志，字段名再变也能看到'
+            ],
+        },
+        {
+            ver: '4.21.20',
+            date: '2026-11-07',
+            items: [
+                '修复：百度播放报「转存响应里没有新文件 id」——实测转存响应里已存在文件的明细（duplicated.list）只有 path/size 等字段、没有 from_fs_id，新版改为 JSON 逐项认 from_fs_id / fs_id / id 三种键名（优先匹配目标路径）+ 全文正则双兜底；errno=12（文件已存在）也正确视为就绪',
+                '修复：转存刚落盘时盘内目录列表可能延迟刷出——现在自动等待回查最多 5 次（约 8 秒），不再一次查不到就报错',
+                '新增：功能诊断（关于→问题诊断）——可勾选功能块（网络连通/书源引擎/网盘登录态/网盘自动转存/播放链路/存储空间）逐块体检，每块给出通过/失败与具体日志，截图即可反馈',
+                '网盘解析→转存→取链全过程插桩诊断日志，功能诊断里可回放每个环节的请求结果',
+                '此前几版（4.21.16~19）一并包含：多选导入源、双栏搜索页、列表请求重试、转存参数修正（fsidlist）等'
+            ],
+        },
+        {
+            ver: '4.21.15',
+            date: '2026-11-07',
+            items: [
+                '修复：普通账号播放百度分享报 9019（needverify）——百度只让 SVIP 会员走分享直链，现在 App 会自动把文件转存到自己网盘（/apps/枫兮听书）再从盘内取直链，普通账号可用；转存失败时会给出明确指引',
+                '修复：章节排序乱/倒序——列表请求改为按文件名排序并做自然排序（999.mp3 不再排最前，1.mp3 → 999.mp3 正序），数字按数值比（第2章 < 第10章）'
+            ],
+        },
+        {
+            ver: '4.21.13',
+            date: '2026-11-07',
+            items: [
+                '百度分享支持三层目录：书 → 卷/季 → 集递归展开（旧版只展开一层，卷里没有直接音频文件时提示「下没有音频文件（嵌套超过 3 层？）」），单次解析最多 40 次目录请求防刷爆'
+            ],
+        },
+        {
+            ver: '4.21.12',
+            date: '2026-11-07',
+            items: [
+                '百度解析链路整体重写为现行 wxlist 流程：列表改用 POST /share/wxlist（现行网页版同款接口，只需要登录态，不再依赖分享页 HTML），彻底解决「分享的文件已被删除或分享已取消」（errno=-7）的假报',
+                '带提取码的分享不用再拼 ?pwd= 到链接也行：提取码直接随列表请求提交（之前走 verify+BDCLND 的老流程已废弃）',
+                '取直链补上了缺失的 sekey 凭证（之前没传，即使列表成功、下载也会报 118/验证码）'
+            ],
+        },
+        {
+            ver: '4.21.11',
+            date: '2026-11-06',
+            items: [
+                '修复：百度分享解析报「分享的文件已被删除或分享已取消」（errno=-7）但分享实际有效的问题——现在改走 tplconfig 接口获取现行限时签名（页面里嵌的 sign 经常为空/过期，百度会把签名无效误报成「分享已取消」），列目录遇 -7 还会自动刷新签名重试一次',
+                '带提取码的百度分享：verify 返回的 randsk 现在会正确回填成 BDCLND Cookie（之前 Set-Cookie 不带时拿不到凭证，列表必挂）'
+            ],
+        },
+        {
+            ver: '4.21.10',
+            date: '2026-11-06',
+            items: [
+                '网盘「网页登录」支持拉起官方 App 授权：夸克/百度登录页里的「APP 授权」现在会直接跳转夸克/百度 App 完成授权，授权完回到 App 点「刷新」即可自动抓取登录状态——不用再对着手机屏幕扫二维码了（对应的就是「登录并解析」弹出的那种扫码页没用的场景）',
+                '百度解析失败提示更明确：百度对未登录/Cookie 失效的请求直接返回错误页，现在会提示「请重新网页登录」而不是莫名其妙的「没解析到 shareid/uk」',
+                '修复：带提取码的百度分享 verify 接口 surl 参数多传了链接开头那位"1"，导致带密码的分享必解析失败',
+                '百度分享页兜底解析加宽（shareid/uk 整页查找），兼容新版页面结构'
+            ],
+        },
+        {
+            ver: '4.21.9',
+            date: '2026-11-06',
+            items: [
+                '新增：网盘卡片「登录并解析」按钮 —— 点一下先弹网页登录，登录成功后自动解析已粘贴的分享链接，不用再「登录 → 回来 → 点解析」三步跑；全部网盘（百度/夸克/阿里/天翼/115/UC）通用，手动点「解析」不受影响',
+            ],
+        },
+        {
+            ver: '4.21.8',
+            date: '2026-11-04',
+            items: [
+                '回退：按反馈移除全部视频/短剧功能（红果短剧源、视频画面层、横屏全屏等），听书功能回到 v4.19.x 的稳定形态',
+                '新增：单 .js 音源文件直导 —— 墨澜等洛雪（LX）格式音源脚本可原样导入执行，不改源文件一个字节；内置 lx 运行时与语法适配',
+                '修复：JS 插件报 MissingResourceException —— Rhino 本地化资源（Messages*.properties）此前没打进安装包，脚本一出错就取不到错误文案直接崩；现已随包内置，导入失败时能看到真实原因',
+                '保留：崩溃取证与诊断日志（设置页可复制日志反馈）；下载格式选择、下载取消、网盘修复等 v4.19.x 全部功能不受影响',
+            ],
+        },
+        {
+            ver: '4.19.2',
+            date: '2026-11-02',
+            items: [
+                '修复：下载转 MP3「看起来没生效」—— 根因是导出文件名按文件名而非实际内容判断格式：私有文件统一叫 cXXXXX.m4a，源本身是 MP3 时导出仍是 .m4a；现在外部文件夹/网盘转存的扩展名按文件实际内容判断',
+                '改进：转 MP3 未生效时下载完成会弹提示说明具体原因（无转码库 / FFmpeg 报错），不再默默保留原格式让人以为设置没生效',
+            ],
+        },
+        {
+            ver: '4.19.1',
+            date: '2026-11-01',
+            items: [
+                '优化：首页秒开 —— 首页书单缓存到本地，重新打开直接读取不再转圈，随后后台静默刷新（数据一致不重绘，无感更新）',
+                '修复：下载转 MP3 不生效 —— 根因是格式探测误判（带标签的 m4a 被当成已是 MP3 而跳过转码）；重写文件头判断并加入转码失败日志，未生效时可在诊断页查到原因',
+                '修复：天翼网盘登录页二维码只显示一半 —— 登录页改用手机版布局（移动 UA），二维码完整显示',
+            ],
+        },
+        {
+            ver: '4.19.0',
+            date: '2026-10-31',
+            items: [
+                '修复：下载管理「取消」点了没反应 —— 以前取消只是做个标记，要等当前这一集完整下完才停；现在取消立即生效（正在下的集秒级中止、任务马上从列表消失），已下好的集不受影响',
+                '修复：百度网盘「扫描盘内书」报 errno=-7（目录不存在）—— 根因是路径编码：目录名带空格时被编码成「+」，百度当成了字面加号；现在用标准编码（%20），单个目录拉不动时跳过继续扫不再整盘失败，列表接口参数不兼容时自动降级重试，并支持大目录翻页拉全',
+                '新增：下载格式选择 —— 设置 → 下载 → 下载格式，可选「保持原始格式」或「统一转为 MP3」；选 MP3 时非 MP3 源（m4a / wma / flac 等）下载完自动转码为 128k MP3（完整版功能，转码失败自动保留原格式）',
+            ],
+        },
         {
             ver: '4.18.1',
             date: '2026-10-29',
@@ -12245,10 +12881,17 @@
         initBallDrag();
         // 恢复上次播放会话：有记录就把球点亮，等用户点
         TS.call('resumeSession');
+        // ★ v4.21.33：冷启动 / 接管服务暗核心后，网页的 App.playing 是初始值 false，
+        //   而播放核心可能已经在出声。主动拉两次真值把播放条图标校正过来
+        //   （一次防 resumeSession 异步迟到，一次防页面刚就绪状态还没稳定）。
+        setTimeout(ui.syncPlayState, 300);
+        setTimeout(ui.syncPlayState, 1400);
         // 主页下拉刷新（替代原来的右上角刷新按钮）
         bindPullRefresh();
         // 账号卡片状态（预留接口，未接入服务时显示"未登录"）
         TS.call('accountInfo');
+        // ★ v4.20.1：崩溃取证 —— 上次会话若崩溃过，把堆栈铺出来给用户复制上报
+        try { TS.call('crashCheck'); } catch (e) {}
 
         // 从后台切回来时校正一次图标：可能在后台播完/被暂停，本地状态是旧的
         document.addEventListener('visibilitychange', function () {

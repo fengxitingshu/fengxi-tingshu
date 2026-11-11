@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>枫兮影视</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="car.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="nav">
+    <!-- v2.20：源选择靠左（含返回键位），标题居中，搜索/历史靠右 -->
+    <button id="navBack" class="navback">‹</button>
+    <!-- v2.16：源 / 直播源选择放顶栏，滚动时不消失；按当前页只显示对应一个。
+         两个默认 display:none，由 show() 显式切换，避免 JS 执行前同时挤出标题。 -->
+    <div class="srcsel navsrc" id="homeSrcsel" style="display:none">
+      <div class="srcsel-btn" id="homeSrcBtn">
+        <span class="dot"></span><span id="homeSrcName">选择源</span><i>▾</i>
+      </div>
+    </div>
+    <div class="srcsel navsrc livesel" style="display:none">
+      <div class="srcsel-btn" id="liveSrcBtn">
+        <span class="dot"></span><span id="liveSrcName">选择直播源</span><i>▾</i>
+      </div>
+    </div>
+    <div class="navtitle" id="navTitle">枫兮</div>
+    <!-- v2.19：搜索 / 观看历史 入口，v2.20 归到最右侧 -->
+    <div class="navright">
+      <button id="navSearch" class="navico" title="搜索">🔍</button>
+      <button id="navHist" class="navico" title="观看历史">🕘</button>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <!-- 首页：海报墙 -->
+    <section id="pageHome" class="page">
+      <div class="hi">
+        <div class="hi-t">我的影视库</div>
+        <div class="hi-s" id="homeHint">正在连接…</div>
+      </div>
+      <div class="chips" id="mdbChips"></div>
+      <div class="hisw" id="hisw"></div>
+      <div class="shelf" id="shelf"></div>
+      <div class="empty hide" id="homeEmpty">
+        <div class="empty-ico">▦</div>
+        <div id="emptyText">还没有内容</div>
+        <button class="btn primary" onclick="App.go('pageSettings')">去设置 → 源管理</button>
+        <button class="btn" onclick="App.openWeb()">改用网页浏览</button>
+      </div>
+    </section>
+
+    <!-- 详情 / 选集（参考主流影视 App：信息区 + 操作行 + 选集网格） -->
+    <section id="pageDetail" class="page hide">
+      <div class="dt2">
+        <img id="dtPoster" class="dt2-poster" src="" alt="">
+        <div class="dt2-info">
+          <div class="dt2-title" id="dtTitle">—</div>
+          <div class="dt2-meta" id="dtSub"></div>
+          <div class="dt2-desc" id="dtDesc"></div>
+        </div>
+      </div>
+      <div class="actrow">
+        <button class="btn primary wide" id="btnPlay" style="margin:0">▶ 立即播放</button>
+      </div>
+      <div class="actrow acts">
+        <div class="act" id="actShare"><span>⇪</span><i>分享</i></div>
+        <div class="act" id="actIntro"><span>☰</span><i>简介</i></div>
+      </div>
+      <div class="sec-row"><div class="sec-t">选集<span class="sec-n" id="epCount"></span></div></div>
+      <div class="epgrid" id="epList"></div>
+    </section>
+
+    <!-- 直播：源选择 + 频道列表 -->
+    <section id="pageLive" class="page hide">
+      <div class="chips" id="liveChips" style="margin-top:6px"></div>
+      <div class="card-s" id="liveHint" style="margin:2px 2px 10px">点顶部下拉选择直播源，点频道直接播放。支持 m3u/m3u8 与 txt 格式。</div>
+      <div id="liveChannels"></div>
+    </section>
+
+    <!-- 短剧（v2.4）：榜单 tab + 抖音式竖滑播放 -->
+    <section id="pageShort" class="page hide">
+      <div class="hi-s" id="shortHint" style="margin:2px 2px 10px">正在读取短剧源…</div>
+      <div class="chips" id="shortChips"></div>
+      <div class="shelf" id="shortShelf"></div>
+      <div class="empty hide" id="shortEmpty">
+        <div class="empty-ico">▷</div>
+        <div id="shortEmptyText">没有找到短剧内容</div>
+      </div>
+    </section>
+
+    <!-- v2.19：搜索 -->
+    <section id="pageSearch" class="page hide">
+      <div style="display:flex;gap:8px;margin:2px 0 10px">
+        <input id="searchInput" class="inp" placeholder="搜索片名（当前源内）" style="flex:1;margin:0">
+        <button class="btn primary" id="searchBtn" style="margin:0">搜索</button>
+      </div>
+      <div class="hi-s" id="searchHint">在当前数据源里搜索（资源站 / 爬虫源支持）</div>
+      <!-- v2.20.1：EasyBox 风格来源筛选（全部显示 + 各源） -->
+      <div class="chips" id="searchChips"></div>
+      <div class="shelf" id="searchShelf"></div>
+      <div class="empty hide" id="searchEmpty">
+        <div class="empty-ico">🔍</div>
+        <div id="searchEmptyText">没有搜到内容</div>
+      </div>
+    </section>
+
+    <!-- v2.19：观看历史 -->
+    <section id="pageHistory" class="page hide">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 2px 10px">
+        <div class="sec-t" style="margin:0">观看历史</div>
+        <button class="btn" id="histClear" style="margin:0">清空</button>
+      </div>
+      <div class="shelf" id="histShelf"></div>
+      <div class="empty hide" id="histEmpty">
+        <div class="empty-ico">🕘</div>
+        <div id="histEmptyText">还没有观看记录，去首页挑一部吧</div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section id="pageSettings" class="page hide">
+
+      <!-- 源管理（v2.4：分层 —— 第一层源管理 → 第二层源分类 → 第三层源设置） -->
+      <div class="sgroup">
+        <div class="sg-t">源管理</div>
+        <div class="srow" id="srSrcMgmt">
+          <div class="s-l"><div class="s-t">源管理</div><div class="s-d" id="svSource">NAS 源 / 资源站 / 短剧源</div></div>
+          <div class="s-v link">进入</div>
+        </div>
+        <div class="srow" id="srDiag">
+          <div class="s-l"><div class="s-t">内嵌网页浏览（降级模式）</div><div class="s-d">原生海报墙读不到数据时，直接浏览 NAS 影视网页</div></div>
+          <div class="s-v link">打开</div>
+        </div>
+      </div>
+
+      <div class="sgroup" style="margin-top:12px">
+        <div class="sg-t">播放器</div>
+        <div class="srow" id="srRender">
+          <div class="s-l"><div class="s-t">渲染方式</div><div class="s-d">TextureView 画质更细腻，SurfaceView 兼容性更好</div></div>
+          <div class="s-v" id="svRender">SurfaceView</div>
+        </div>
+        <div class="srow" id="srDecode">
+          <div class="s-l"><div class="s-t">解码方式</div><div class="s-d">优先硬解更省电；个别片源花屏时选软解码</div></div>
+          <div class="s-v" id="svDecode">优先硬解</div>
+        </div>
+        <div class="srow" id="srLpSpeed">
+          <div class="s-l"><div class="s-t">长按倍速</div><div class="s-d">播放页长按屏幕触发的倍速</div></div>
+          <div class="s-v" id="svLpSpeed">3.0x</div>
+        </div>
+        <div class="srow" id="srRatio">
+          <div class="s-l"><div class="s-t">默认画面缩放</div></div>
+          <div class="s-v" id="svRatio">适配</div>
+        </div>
+        <div class="srow" id="srAutoNext">
+          <div class="s-l"><div class="s-t">自动连播</div><div class="s-d">播放结束后自动播下一集</div></div>
+          <div class="tgl on" id="tvAutoNext"><i></i></div>
+        </div>
+        <div class="srow" id="srBgPlay">
+          <div class="s-l"><div class="s-t">后台播放</div><div class="s-d">切到后台或锁屏时不暂停</div></div>
+          <div class="tgl" id="tvBgPlay"><i></i></div>
+        </div>
+      </div>
+
+      <div class="sgroup">
+        <div class="sg-t">通用</div>
+        <div class="srow" id="srTheme">
+          <div class="s-l"><div class="s-t">主题模式</div><div class="s-d">点击切换：跟随系统 → 亮色 → 暗色</div></div>
+          <div class="s-v link" id="svTheme">跟随系统</div>
+        </div>
+        <div class="srow" id="srColumns">
+          <div class="s-l"><div class="s-t">海报墙列数</div></div>
+          <div class="s-v" id="svColumns">2 列</div>
+        </div>
+        <div class="srow" id="srHistory">
+          <div class="s-l"><div class="s-t">观看历史</div><div class="s-d">播放时自动记录，最多 50 条</div></div>
+          <div class="s-v link" id="svHistory">清空</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-t">关于</div>
+        <div class="card-s">枫兮影视 <span id="appVer">v2.13</span> · 多源影视播放器：NAS 源 / 资源站 / 爬虫源 / 短剧源，支持 TVBox 线路订阅、加密配置解码、关键词搜索与观看历史。<br>本 App 不内置任何影视资源，内容全部来自你自导入的源。</div>
+      </div>
+    </section>
+
+    <!-- 源管理（v2.4 第一层）：导入 + 源分类 -->
+    <section id="pageSrcMgmt" class="page hide">
+      <div class="sgroup">
+        <div class="sg-t">导入源</div>
+        <div style="padding:10px 14px 14px">
+          <button class="btn primary" id="btnImportLocal" style="margin:0 0 10px;width:100%">📁 从文件管理器导入（源包 / JS 脚本 / TVBox 配置）</button>
+          <input id="impUrl" class="inp" placeholder="源地址 URL（.js / .zip 源包）">
+          <textarea id="impText" class="inp" placeholder="或直接粘贴 JS 源脚本内容" style="margin-top:8px;height:64px"></textarea>
+          <button class="btn primary" id="btnImport" style="margin-top:10px">导入</button>
+          <div class="tip">支持「阅读 / prelude」式 JS 源脚本（zip 内含 manifest.json）。导入后自动归入分类并接入对应栏目（短剧源 → 短剧栏）。</div>
+          <label class="lb">TVBox 配置解析（只做解析，不内置任何源）</label>
+          <input id="tvboxUrl" class="inp" placeholder="TVBox 配置 / 仓库地址（http…）">
+          <button class="btn" id="btnTvbox" style="margin-top:8px">解析 TVBox 配置</button>
+          <div class="tip">仓库配置会存为「TVBox 源」并弹出「选择线路」；单配置直接解析入库。选定线路后：CMS 资源站进首页源列表（自动选中第一个站）、直播源进直播弹窗、爬虫源走内置 spider 运行时直接播放（重复解析自动去重）。解析失败会给出具体原因（地址被拦 / 编码不对 / 格式不支持）。</div>
+        </div>
+      </div>
+      <div class="sgroup">
+        <div class="sg-t">当前源</div>
+        <div style="padding:10px 14px 14px">
+          <div class="srcsel" style="margin:0">
+            <div class="srcsel-btn" id="mgrSrcBtn" style="width:100%;justify-content:space-between">
+              <span style="display:inline-flex;align-items:center;gap:7px"><span class="dot"></span><span id="mgrSrcName">选择源</span></span><i>▾</i>
+            </div>
+          </div>
+          <div class="tip">TVBox / 导入的影视接口都会出现在这个列表里，点选即切换，首页与直播页同步。</div>
+        </div>
+      </div>
+      <div class="sgroup">
+        <div class="sg-t">源分类</div>
+        <div id="srcCatList"></div>
+      </div>
+    </section>
+
+    <!-- 源管理（v2.4 第二层）：某分类下的源列表 / 第三层点开展开设置 -->
+    <section id="pageSrcCat" class="page hide">
+      <div class="hi">
+        <div class="hi-t" id="srcCatTitle">源</div>
+        <div class="hi-s" id="srcCatHint"></div>
+      </div>
+      <div id="srcList"></div>
+      <div class="card hide" id="srcAddCard">
+        <div class="card-t" id="srcAddTitle">添加源</div>
+        <div id="srcAddBody"></div>
+        <button class="btn primary" id="btnAddSource" style="margin-top:12px">添加</button>
+      </div>
+    </section>
+
+    <!-- 降级：内嵌飞牛影视网页 -->
+    <section id="pageWeb" class="page hide">
+      <iframe id="webFrame" class="webframe" src="about:blank"></iframe>
+    </section>
+
+  </main>
+
+  <!-- 数据源选择弹窗（v2.13：居中弹窗 + 搜索，参考成熟影视 App） -->
+  <div id="srcPickOvl" class="ovl hide">
+    <div class="ovl-card">
+      <div class="ovl-t" style="text-align:center" id="srcPickTitle">请选择首页数据源</div>
+      <input id="srcPickSearch" class="inp" placeholder="搜索源名称" style="margin-bottom:12px">
+      <div id="srcPickList" style="max-height:52vh;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <!-- 直播源选择弹窗（v2.13：列表 + 添加，管理收进弹窗） -->
+  <div id="livePickOvl" class="ovl hide">
+    <div class="ovl-card">
+      <div class="ovl-t" style="text-align:center">请选择直播源</div>
+      <div id="livePickList" style="max-height:46vh;overflow-y:auto"></div>
+      <div style="border-top:1px solid var(--line);margin-top:10px;padding-top:12px">
+        <input id="liveAddName" class="inp" placeholder="名称（如：央卫视）" style="margin-bottom:7px">
+        <input id="liveAddUrl" class="inp" placeholder="直播源地址（m3u/m3u8 或 txt 格式）" style="margin-bottom:7px">
+        <button class="btn primary" id="liveAddBtn2" style="margin:0;width:100%">添加直播源</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 选择线路弹层（v2.8：TVBox 源 / 仓库线路，参考 TVBox 订阅交互） -->
+  <div id="linePickOvl" class="ovl hide">
+    <div class="ovl-card">
+      <div class="ovl-t" style="text-align:center" id="linePickTitle">选择线路</div>
+      <div class="sm-d" style="text-align:center;margin:-6px 0 12px;word-break:break-all" id="linePickSub"></div>
+      <div id="linePickList" style="max-height:46vh;overflow-y:auto"></div>
+      <button class="btn" id="linePickClose" style="margin:12px 0 0;width:100%">关闭</button>
+    </div>
+  </div>
+
+  <!-- 悬浮小窗权限引导（v2.22） -->
+  <div id="floatPermOvl" class="ovl hide">
+    <div class="ovl-card">
+      <div class="ovl-t" style="text-align:center">需要悬浮窗权限</div>
+      <div class="sm-d" style="text-align:center;margin:-6px 0 12px">
+        悬浮小窗需要「显示在其他应用上层」权限，开启后即可在车机桌面上小窗追剧
+      </div>
+      <button class="btn primary" id="floatPermGo" style="margin:0;width:100%">去授权</button>
+      <button class="btn" id="floatPermClose" style="margin:8px 0 0;width:100%">取消</button>
+    </div>
+  </div>
+
+  <nav class="tabbar" id="tabbar">
+    <div class="tabitem on" data-tab="pageHome"><span>▦</span><i>首页</i></div>
+    <div class="tabitem" data-tab="pageLive"><span>▶</span><i>直播</i></div>
+    <div class="tabitem" data-tab="pageShort"><span>≋</span><i>短剧</i></div>
+    <div class="tabitem" data-tab="pageSettings"><span>⚙</span><i>设置</i></div>
+  </nav>
+</div>
+
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

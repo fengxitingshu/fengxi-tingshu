@@ -56,6 +56,16 @@ public class JsSourceAdapter implements BrowsableSource {
     /** 串行化同一源的调用 */
     private final Object lock = new Object();
 
+    /**
+     * ★ v4.21.42 分类翻页链修复。
+     * 插件契约：categoryPage(url) 只认 URL 尾部的 {@code #页码}，下一页靠返回值
+     * {@code nextUrl} 给出。宿主以前永远把首屏原始 URL（#1）原样回传，
+     * 翻页参数被丢弃 → 每页都返回第 1 页 → 前端判「整页重复」提前截断。
+     * 这里按 catId 记住上一页返回的 nextUrl，翻页时优先续链；
+     * 没有链（如刚换回分类）就重写 URL 尾部 {@code #N}。
+     */
+    private final Map<String, String> nextUrlCache = new java.util.HashMap<String, String>();
+
     public JsSourceAdapter(String pluginId, JsEngine.Scope scope, Scriptable src,
                            JsHostApi.Callback cb) {
         this.scope = scope;
@@ -217,8 +227,23 @@ public class JsSourceAdapter implements BrowsableSource {
     public List<Book> browse(String catId, int page) throws Exception {
         if (catId == null || catId.length() == 0) return new ArrayList<Book>();
         synchronized (lock) {
-            Object r = scope.call(src, "categoryPage", new Object[]{catId});
+            // ★ v4.21.42：把页号真正传给插件 —— 优先续 nextUrl 链，其次重写 #N。
+            //   注意 page==1 时必须用原始 catId 起链（换分类回访/刷新场景，
+            //   缓存里的旧链要被本次返回的 nextUrl 覆盖）。
+            String url = catId;
+            if (page > 1) {
+                String nx = nextUrlCache.get(catId);
+                if (nx != null && nx.length() > 0) {
+                    url = nx;
+                } else {
+                    url = catId.replaceAll("#\\d+$", "#" + page);
+                }
+            }
+            Object r = scope.call(src, "categoryPage", new Object[]{url});
             if (!(r instanceof Scriptable)) return new ArrayList<Book>();
+            String next = JsBridge.str((Scriptable) r, "nextUrl");
+            if (next.length() > 0) nextUrlCache.put(catId, next);
+            else nextUrlCache.remove(catId);
             Object books = ScriptableObject.getProperty((Scriptable) r, "books");
             return JsBridge.toBooks(id, books);
         }

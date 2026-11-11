@@ -15,6 +15,9 @@ set -e
 
 PROJ=/workspace/fengxi-tingshu
 BT=/root/android/android-14
+# ★ v4.20.4：R8/d8 升级用 build-tools 35 的（旧 android-14 的 R8 8.2.2-dev
+#   对 Rhino 1.8.1 的 Java 11 字节码（invokedynamic 串拼接）会 NPE 崩溃）
+BT8=/tmp/bt35/android-15
 ANDROID_JAR=/root/android/android-35/android.jar
 TOOL=/root/toolchain
 JDK=/usr/lib/jvm/java-17-openjdk-amd64/bin
@@ -60,7 +63,7 @@ DEPS=(
   #   用的是「裁剪版」：删掉了 org.mozilla.javascript.tools.*（Swing/AWT 的控制台工具），
   #   那部分在 Android 上既用不到、d8 也会刷一堆无害警告。
   #   裁剪后 d8 零警告，dex 约 1.01MB。
-  "$TOOL/rhino-slim.jar"
+  "$TOOL/rhino-1.8.1.jar"
   # ★ v3.4：Chaquopy Java API（Python / PyObject / AndroidPlatform）
   "$PROJ/java-lib/chaquopy_java.jar"
   # ★ v4.9.0：ijkplayer Java API —— FFmpeg 软解内核（WMA/ape/ac3/dts 等系统解不了的格式）
@@ -79,7 +82,7 @@ fi
 #   - chaquopy_java：v3.4 起 app/python/* 引用了 com.chaquo.python.*
 #   - okhttp/okio  ：v3.9.9 起 Fuel 兼容层（FuelJsonKt.responseJson）引用 okhttp3
 #   - ijkplayer    ：v4.9.0 起 PlayerCore/Engines 引用 tv.danmaku.ijk.media.player.*
-JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-slim.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar:$PROJ/java-lib/ijkplayer-java.jar:$PROJ/java-lib/mobile-ffmpeg.jar"
+JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-1.8.1.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar:$PROJ/java-lib/ijkplayer-java.jar:$PROJ/java-lib/mobile-ffmpeg.jar"
 
 # Kotlin 编译器自身运行时（跑 K2JVMCompiler 用）
 KCP="$TOOL/kotlin-compiler-embeddable-1.8.22.jar:$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/kotlin-reflect-1.8.22.jar:$TOOL/trove4j-1.0.20200330.jar:$TOOL/annotations-13.0.jar"
@@ -175,7 +178,7 @@ if [ "${OBFUSCATE:-1}" = "1" ]; then
   # R8 的目录输入不接受 META-INF/*.kotlin_module 等非 class 文件，
   # 先打成 jar（归档模式下非 class 条目会被忽略），再连同依赖 jar 一起喂给 R8。
   "$JDK/jar" cf "$OUT/host.jar" -C "$OUT/classes" .
-  "$JDK/java" -cp "$BT/lib/d8.jar" com.android.tools.r8.R8 \
+  "$JDK/java" -cp "$BT8/lib/d8.jar" com.android.tools.r8.R8 \
     --release --min-api 21 \
     --lib "$ANDROID_JAR" \
     --pg-conf "$PROJ/proguard-rules.pro" \
@@ -188,7 +191,7 @@ if [ "${OBFUSCATE:-1}" = "1" ]; then
   echo "    R8 混淆完成，mapping.txt：$(du -h "$OUT/mapping.txt" | cut -f1)"
 else
   find "$OUT/classes" -name '*.class' > "$OUT/classes.txt"
-  "$BT/d8" --min-api 21 --release --lib "$ANDROID_JAR" \
+  "$BT8/d8" --min-api 21 --release --lib "$ANDROID_JAR" \
     --output "$OUT/dex" \
     @"$OUT/classes.txt" "${DEPS[@]}"
 fi
@@ -210,6 +213,18 @@ if [ "$DEX_N" = "0" ]; then
   echo "!!! 没有产出任何 dex，中止构建"; exit 1
 fi
 echo "    dex 文件数：$DEX_N"
+
+# ★ v4.21.0：Rhino 本地化资源必须打进 APK —— d8 只转 class，
+#   .properties 不会自动带上。缺了它，脚本一抛错 DefaultMessageProvider
+#   就 MissingResourceException（Can't find bundle ... Messages, locale zh_CN），
+#   把真实错误吞掉，用户只看到莫名其妙的失败。
+RHRES="$OUT/rhres"
+rm -rf "$RHRES"; mkdir -p "$RHRES"
+unzip -o -q "$TOOL/rhino-1.8.1.jar" "org/mozilla/javascript/resources/*" -d "$RHRES"
+cd "$RHRES"
+zip -q -X "$OUT/unsigned.apk" org/mozilla/javascript/resources/Messages*.properties
+cd "$PROJ"
+echo "    + rhino Messages*.properties ×$(ls "$RHRES"/org/mozilla/javascript/resources | wc -l)"
 
 echo "==> [7/9] zipalign + 合并 Python assets/native 库"
 

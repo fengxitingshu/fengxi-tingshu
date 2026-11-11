@@ -48,6 +48,8 @@ public final class BridgeSource {
     /** 全部源状态（内置 + 自定义），一次性给前端渲染源管理页 */
     public static JSONArray allSourcesJson() {
         JSONArray arr = new JSONArray();
+        // ★ v4.21.40：「重复源」分组的标记集合（批量验证整理后写入）
+        final java.util.Set<String> dupes = com.tingshu.app.data.Settings.dupeIds();
         try {
             List<Source> all = SourceRegistry.all();
             for (Source s : all) {
@@ -58,6 +60,8 @@ public final class BridgeSource {
                 o.put("canSearch", s.canSearch());
                 o.put("enabled", SourceRepo.isEnabled(s.id()));
                 o.put("builtin", SourceRegistry.isBuiltin(s.id()));
+                // ★ v4.21.40：是否被标记为重复源（前端据此归入「重复源」分组）
+                o.put("dupe", dupes.contains(s.id()));
                 String alias = SourceRepo.alias(s.id());
                 o.put("alias", alias == null ? "" : alias);
                 // 导入方式（内置源为空），前端据此分组
@@ -1185,10 +1189,11 @@ public final class BridgeSource {
         SourceRegistry.reload();
     }
 
-    /** 删除自定义源（同时清掉它的启停记录，避免残留） */
+    /** 删除自定义源（同时清掉它的启停记录与重复源标记，避免残留） */
     public static boolean removeCustom(String id) {
         if (Utils.empty(id)) return false;
         if (SourceRegistry.isBuiltin(id)) return false;
+        com.tingshu.app.data.Settings.clearDupeId(id);
         boolean ok = SourceStore.remove(id);
         try {
             SourceRepo.forget(id);
@@ -1216,6 +1221,7 @@ public final class BridgeSource {
     public static boolean removeSourceById(String id) {
         if (Utils.empty(id)) return false;
         if (SourceRegistry.isBuiltin(id)) return false;
+        com.tingshu.app.data.Settings.clearDupeId(id);
 
         // ① Python 源：模块 + 磁盘文件都要清掉，否则下次冷启动又被扫回来
         if (id.startsWith("py_")) {
@@ -1251,7 +1257,9 @@ public final class BridgeSource {
             return ok;
         }
         if (s != null) {
-            return removeSourceCompletely(s);
+            boolean ok = removeSourceCompletely(s);
+            if (!ok) com.tingshu.app.data.Settings.clearDupeId(id);   // 兜底：即使删除失败也把标记摘掉
+            return ok;
         }
 
         // ③ 兜底：注册表里已经没有它了，清干净记录即可
@@ -1506,12 +1514,14 @@ public final class BridgeSource {
     }
 
     /**
-     * ★ v3.1 批量验证主流程。
+     * ★ v3.1 批量验证主流程；★ v4.21.40 去重策略改为「整理」而非删除。
      *
-     * <p>顺序很重要：**先去重 → 再验证 → 最后关停**。
+     * <p>顺序很重要：**先聚出重复组 → 再逐个验证 → 最后按结论整理**。
      * <ul>
-     *   <li>先去重：重复的源少验一个，省一次网络往返（19 个 JS 源里重复的不少）</li>
-     *   <li>后关停：只关真的验过且判死的，不误伤刚去重留下的那个</li>
+     *   <li>先聚组：只记录同域名的重复组，不再提前删源（删错了无法恢复）</li>
+     *   <li>后验证：拿到每个源的真实结论，关停只关验过且判死的</li>
+     *   <li>最后整理：重复组里失效的已被关停（留下好源）；
+     *       组内好源 ≥2 的整组标记进「重复源」分组，由用户自己决定删哪个</li>
      * </ul>
      *
      * <p>★ 串行执行：一个源一次。并发跑会把网络和 JS scope 同时打爆
@@ -1519,7 +1529,7 @@ public final class BridgeSource {
      *
      * @param scope         "all" / "enabled" / "group:xxx"
      * @param autoCloseDead 失效的自动停用
-     * @param dedup         同域名重复的自动删除（保留优先级高的）
+     * @param dedup         整理重复源：失效的关闭留好源，都能用的归入「重复源」分组
      * @param cb            进度回调，可为 null
      */
     public static JSONObject verifyAll(String scope, boolean autoCloseDead,
@@ -1527,7 +1537,6 @@ public final class BridgeSource {
         JSONObject r = importResult();
         put(r, "from", "verify");
         List<String> closed = new ArrayList<String>();
-        List<String> removed = new ArrayList<String>();
 
         List<Source> list;
         try {
@@ -1542,26 +1551,28 @@ public final class BridgeSource {
             return r;
         }
 
-        // ---- 1. 先去重 ----
-        int deduped = 0;
+        // ---- 1. 按域名聚出重复组（v4.21.40：不再直接删除） ----
+        // 旧行为是先把同域名的多余源直接删掉再验证——删错了无法恢复。
+        // 现在改为：先把重复组记下来，等验证完再整理：
+        //   · 组内失效的 → 停用，留下好源（下面第 2 步对 dead 的统一关停已覆盖）；
+        //   · 组内都能用（好源 ≥2 个）→ 归入「重复源」分组，由用户决定删哪个。
+        java.util.LinkedHashMap<String, List<Source>> hostGroups =
+                new java.util.LinkedHashMap<String, List<Source>>();
         if (dedup) {
-            try {
-                List<Source> dupes = findDuplicates(list);
-                for (Source d : dupes) {
-                    if (removeSourceCompletely(d)) {
-                        deduped++;
-                        removed.add(d.name() + "（" + SourceRegistry.hostOf(d) + "）");
-                        list.remove(d);
-                    }
-                }
-                if (deduped > 0) {
-                    addMsg(r, "发现 " + deduped + " 个重复源（同域名），已删除并保留优先级更高的");
-                }
-            } catch (Throwable t) {
-                addMsg(r, "去重失败：" + briefErr(t));
+            for (Source s : list) {
+                String host = SourceRegistry.hostOf(s);
+                if (Utils.empty(host)) continue;          // 拿不到域名的（如 "https://example.com"）不参与
+                if ("example.com".equals(host)) continue; // 反射兜底值，不是真域名
+                List<Source> g = hostGroups.get(host);
+                if (g == null) { g = new ArrayList<Source>(); hostGroups.put(host, g); }
+                g.add(s);
+            }
+            java.util.Iterator<java.util.Map.Entry<String, List<Source>>> git =
+                    hostGroups.entrySet().iterator();
+            while (git.hasNext()) {
+                if (git.next().getValue().size() < 2) git.remove();
             }
         }
-        put(r, "deduped", deduped);
 
         // ---- 2. 逐个验证 ----
         int total = list.size();
@@ -1569,6 +1580,9 @@ public final class BridgeSource {
         int ok = 0, browse = 0, verify = 0, dead = 0, skip = 0, closedN = 0;
         List<String> deadNames = new ArrayList<String>();
         List<String> verifyNames = new ArrayList<String>();
+        // 每个源的验证结论（整理重复源时按结论分流）
+        java.util.Map<String, String> levelById =
+                new java.util.HashMap<String, String>();
 
         for (int i = 0; i < list.size(); i++) {
             Source s = list.get(i);
@@ -1582,6 +1596,7 @@ public final class BridgeSource {
             }
             String lv = vr.optString("level", LV_DEAD);
             done++;
+            levelById.put(s.id(), lv);
 
             if (LV_OK.equals(lv)) ok++;
             else if (LV_BROWSE.equals(lv)) browse++;
@@ -1626,7 +1641,44 @@ public final class BridgeSource {
             }
         }
 
-        // ---- 3. 汇总 ----
+        // ---- 3. 整理重复源（v4.21.40）----
+        // 验证结论已出：组内失效的在第 2 步已被统一关停（留好源）；
+        // 这里只决定「归组」——好源 ≥2 的整组标记进「重复源」分组，
+        // 好源只剩 1 个（或全失效）的组取消标记，恢复常规分组展示。
+        int dupeGroupN = 0, dupeMarked = 0;
+        List<String> dupeNames = new ArrayList<String>();
+        if (dedup && !hostGroups.isEmpty()) {
+            try {
+                java.util.Set<String> marks = com.tingshu.app.data.Settings.dupeIds();
+                for (java.util.Map.Entry<String, List<Source>> e : hostGroups.entrySet()) {
+                    List<Source> g = e.getValue();
+                    List<Source> goods = new ArrayList<Source>();
+                    for (Source s : g) {
+                        String lv = levelById.get(s.id());
+                        if (LV_OK.equals(lv) || LV_BROWSE.equals(lv)) goods.add(s);
+                    }
+                    if (goods.size() >= 2) {
+                        dupeGroupN++;
+                        for (Source s : goods) {
+                            marks.add(s.id());
+                            dupeMarked++;
+                            dupeNames.add(s.name() + "（" + e.getKey() + "）");
+                        }
+                    } else {
+                        for (Source s : g) marks.remove(s.id());
+                    }
+                }
+                com.tingshu.app.data.Settings.setDupeIds(marks);
+                if (dupeGroupN > 0) {
+                    addMsg(r, "发现 " + dupeGroupN + " 组重复源：失效的已自动关闭留下好源，"
+                            + "都能用的 " + dupeMarked + " 个已归入「重复源」分组，由你决定删哪个");
+                }
+            } catch (Throwable t) {
+                addMsg(r, "整理重复源失败：" + briefErr(t));
+            }
+        }
+
+        // ---- 4. 汇总 ----
         put(r, "checked", done);
         put(r, "ok", ok);
         put(r, "browse", browse);
@@ -1634,7 +1686,10 @@ public final class BridgeSource {
         put(r, "dead", dead);
         put(r, "skip", skip);
         put(r, "closed", closedN);
-        put(r, "removedList", toArr(removed));
+        put(r, "closedList", toArr(closed));
+        put(r, "dupeGroups", dupeGroupN);
+        put(r, "duped", dupeMarked);
+        put(r, "dupeList", toArr(dupeNames));
         put(r, "deadList", toArr(deadNames));
         put(r, "verifyList", toArr(verifyNames));
 
@@ -1643,7 +1698,7 @@ public final class BridgeSource {
         if (verify > 0) sb.append("，需验证 ").append(verify);
         if (dead > 0) sb.append("，失效 ").append(dead);
         if (closedN > 0) sb.append("，已关闭 ").append(closedN);
-        if (deduped > 0) sb.append("，去重 ").append(deduped);
+        if (dupeGroupN > 0) sb.append("，重复源 ").append(dupeMarked).append(" 个已归组");
         addMsg(r, sb.toString());
         put(r, "summary", sb.toString());
 
@@ -1709,47 +1764,17 @@ public final class BridgeSource {
     }
 
     /**
-     * 找出「指向同一站点」的多余源。
-     *
-     * <p>保留优先级（高者留）：
-     * <pre>自定义 JSON 源 &gt; JS 插件源 &gt; jar 插件源</pre>
-     * 理由：JSON 源是用户手工加的、可控性最强；插件源整包更新时会覆盖掉用户的删除。
-     * 同级并列时保留「先注册的」那个（ALL 是 LinkedHashMap，顺序即装载顺序）。
-     *
-     * @return 应该被删掉的源（保留的那批不在里面）
+     * ★ v4.21.40：旧的「找重复→直接删」逻辑已移除（findDuplicates/priorityOf）。
+     * 现在的重复源策略是「整理不删除」：失效的关停留好源，都能用的标进
+     * 「重复源」分组（见 {@link #verifyAll} 第 1/3 步）。
      */
-    private static List<Source> findDuplicates(List<Source> list) {
-        List<Source> out = new ArrayList<Source>();
-        java.util.Map<String, Source> best = new java.util.HashMap<String, Source>();
-        for (int i = 0; i < list.size(); i++) {
-            Source s = list.get(i);
-            String host = SourceRegistry.hostOf(s);
-            if (Utils.empty(host)) continue;          // 拿不到域名的（如 "https://example.com"）不参与
-            if ("example.com".equals(host)) continue; // 反射兜底值，不是真域名
-            Source cur = best.get(host);
-            if (cur == null) {
-                best.put(host, s);
-            } else if (priorityOf(s) > priorityOf(cur)) {
-                out.add(cur);      // 原来那个降级为待删
-                best.put(host, s);
-            } else {
-                out.add(s);        // 新的这个不如已有的，删新的
-            }
-        }
-        return out;
-    }
-
-    /** 源优先级：越大越该保留 */
-    private static int priorityOf(Source s) {
-        if (s instanceof JsonSource) return 30;
-        if (s instanceof com.tingshu.app.source.JsSourceAdapter) return 20;
-        return 10;
-    }
 
     /** 彻底删掉一个源：JSON 源走 SourceStore，插件源走 PluginRepo 的源 id 摘除 */
     private static boolean removeSourceCompletely(Source s) {
         if (s == null || s.id() == null) return false;
         try {
+            // 顺手清掉重复源标记，避免「重复源」分组里残留已删的孤儿
+            com.tingshu.app.data.Settings.clearDupeId(s.id());
             if (s instanceof JsonSource) {
                 boolean ok = SourceStore.remove(s.id());
                 SourceRepo.forget(s.id());
@@ -1774,11 +1799,17 @@ public final class BridgeSource {
             for (int i = 0; i < ps.size(); i++) {
                 com.tingshu.app.data.PluginRepo.Plugin p = ps.get(i);
                 String ids = p.sourceIds == null ? "" : p.sourceIds;
-                if (ids.indexOf(id) < 0) continue;
+                // ★ v4.21.41：精确匹配（旧版 indexOf 子串判断会把 "js_a"
+                //   误判进 "js_ab" 的记录里，白摘一通）
+                boolean hit = false;
+                String[] parts0 = ids.split(",");
+                for (int k = 0; k < parts0.length; k++) {
+                    if (parts0[k].trim().equals(id)) { hit = true; break; }
+                }
+                if (!hit) continue;
                 List<String> keep = new ArrayList<String>();
-                String[] parts = ids.split(",");
-                for (int k = 0; k < parts.length; k++) {
-                    String t = parts[k].trim();
+                for (int k = 0; k < parts0.length; k++) {
+                    String t = parts0[k].trim();
                     if (t.length() > 0 && !t.equals(id)) keep.add(t);
                 }
                 com.tingshu.app.data.PluginRepo.setSourceIds(p.filePath, keep);

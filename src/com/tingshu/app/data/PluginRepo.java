@@ -98,6 +98,57 @@ public final class PluginRepo {
         }
     }
 
+    /**
+     * ★ v4.21.7：按「归一化文件名」清理重复的 JS 插件记录。
+     *
+     * <p>背景：v4.21.6 及之前，单 .js 源文件每次导入都落一个带时间戳的新路径，
+     * PluginRepo.add 按 file_path 去重不命中 → 重导 N 次堆 N 条记录 →
+     * 启动重建时同一个音源被加载 N 份，搜索/取链全部多路并发。
+     * 这里按去掉时间戳后缀的文件名分组，同组只保留最新一条（其余仅删记录，
+     * 不动插件目录，避免误伤）。
+     */
+    public static void dedupeJs() {
+        Cursor c = null;
+        try {
+            c = Db.get().rawQuery(
+                    "SELECT file_path, file_name, added_at FROM plugin_jar WHERE kind=?"
+                            + " ORDER BY added_at DESC",
+                    new String[]{KIND_JS});
+            java.util.LinkedHashMap<String, String> keep = new java.util.LinkedHashMap<String, String>();
+            java.util.List<String> kill = new java.util.ArrayList<String>();
+            while (c != null && c.moveToNext()) {
+                String path = Db.str(c, "file_path");
+                String name = Db.str(c, "file_name");
+                String key = normStem(name);
+                if (key.length() == 0) key = normStem(path);
+                if (key.length() == 0) continue;          // 归一不出 key 的不碰
+                if (keep.containsKey(key)) kill.add(path); // 旧的（倒序遍历，先到的是最新）
+                else keep.put(key, path);
+            }
+            Db.close(c);
+            c = null;
+            for (String path : kill) {
+                try {
+                    Db.get().delete("plugin_jar", "file_path=?", new String[]{path});
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            Db.close(c);
+        }
+    }
+
+    /** 「墨澜音乐源v2.3.5.js」/「…_v2_3_5-1793785487355.js」→ 去扩展名、去 -时间戳 */
+    private static String normStem(String s) {
+        if (s == null) return "";
+        String t = s.replace('\\', '/');
+        int slash = t.lastIndexOf('/');
+        if (slash >= 0) t = t.substring(slash + 1);
+        t = t.replaceAll("\\.(js|zip|jsplugin)$", "");
+        t = t.replaceAll("-\\d{10,}$", "");
+        return t.trim();
+    }
+
     /** 新增（存在则忽略），返回是否已存在。kind 见 {@link #KIND_JAR} / {@link #KIND_JS} */
     public static boolean add(String filePath, String fileName, String kind) {
         if (Utils.empty(filePath)) return false;

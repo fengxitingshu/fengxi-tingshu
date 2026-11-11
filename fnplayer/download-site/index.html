@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>枫兮影视 v2.13 · 下载安装</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #0e1116; color: #e8ecf2; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 18px calc(24px + env(safe-area-inset-bottom));
+  }
+  .card {
+    width: 100%; max-width: 460px; background: #171c24;
+    border: 1px solid #262e3a; border-radius: 20px;
+    padding: 30px 24px 26px; box-shadow: 0 12px 40px rgba(0,0,0,.45);
+  }
+  .icon {
+    width: 66px; height: 66px; margin: 0 auto 18px; border-radius: 17px;
+    background: linear-gradient(140deg,#3b82f6,#7c3aed);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; box-shadow: 0 6px 18px rgba(80,110,255,.35);
+  }
+  h1 { font-size: 21px; margin: 0 0 6px; text-align: center; letter-spacing: .5px; }
+  .ver { text-align: center; color: #8b96a8; font-size: 13px; margin-bottom: 22px; }
+  .meta {
+    background: #10151c; border: 1px solid #232b37; border-radius: 12px;
+    padding: 13px 15px; margin-bottom: 22px; font-size: 13px; line-height: 1.9;
+  }
+  .meta .row { display: flex; justify-content: space-between; }
+  .meta .k { color: #8792a4; }
+  .meta .v { color: #dbe3ee; font-weight: 500; }
+  .btn {
+    display: block; width: 100%; text-align: center; text-decoration: none;
+    background: linear-gradient(135deg,#3b82f6,#6366f1); color: #fff;
+    font-size: 17px; font-weight: 600; padding: 16px; border-radius: 13px;
+    box-shadow: 0 6px 20px rgba(59,130,246,.35); margin-bottom: 14px;
+  }
+  .btn:active { transform: translateY(1px); opacity: .92; }
+  .tips { font-size: 12.5px; color: #8b96a8; line-height: 1.85; }
+  .tips b { color: #c3ccda; font-weight: 600; }
+  .tips ol { padding-left: 19px; margin: 8px 0 0; }
+  .tips li { margin-bottom: 5px; }
+  .foot { text-align: center; color: #5c6675; font-size: 11.5px; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">▶</div>
+    <h1>枫兮影视</h1>
+    <div class="ver">v2.13 · 飞牛 NAS / TVBox 多源影视播放器（IPv6 / 自动选路 / 原生登录）</div>
+
+    <div class="meta">
+      <div class="row"><span class="k">文件</span><span class="v">fengxi-video-v2.13.apk</span></div>
+      <div class="row"><span class="k">大小</span><span class="v">4.9 MB</span></div>
+      <div class="row"><span class="k">适用</span><span class="v">Android 5.0+ · arm64</span></div>
+    </div>
+
+    <a id="dl" class="btn" href="fengxi-video-v2.13.apk" download="fengxi-video-v2.13.apk">⬇ 下载安装包</a>
+
+    <div class="tips">
+      <b>安装步骤（vivo 等手机）：</b>
+      <ol>
+        <li>点上面按钮，浏览器开始下载（若提示「该安装包可能有风险」，选「仍要下载 / 继续」）</li>
+        <li>下载完成后，点浏览器的「下载完成」提示，或到「文件管理 → 下载」里找到 apk 点开</li>
+        <li>弹出「未知来源应用」时，允许本浏览器安装应用，然后点「安装」</li>
+        <li>装好后打开 App → 「设置」填飞牛地址 → 跑一次「连接诊断」</li>
+      </ol>
+      <div style="margin-top:12px;padding:11px 13px;background:#10201a;border:1px solid #1e4033;border-radius:10px;color:#a7d8c0">
+        <b>v2.13 更新：</b>① 源选择全面改版（参考成熟影视 App）：首页左上角与源管理点开的是<b>居中弹窗</b>「请选择首页数据源」，带搜索框与全宽按钮列表，当前源高亮；直播页源选择同样改居中弹窗（列表 + 图标 + 删除 + 添加都在弹窗内）。② <b>内置 TVBox spider 运行时</b>：爬虫源（csp_ 类名 + jar）可直接播放——自动下载配置里的爬虫 jar 并加载，首页分类/影片列表/详情/选集/播放全链路打通；需解析的集自动请求解析页嗅探直链；源管理与首页弹窗里的爬虫源都能选为当前源。③ 配置解析容错加强：多 UA 依次重试（部分配置站按 UA 拦截）、GBK 编码自动嗅探、自动截取 JSON 本体（配置页前后带广告文本也能解析）、type=1 站点的相对接口地址自动按配置地址补全（不再报「无效源」）。<br>
+<b>v2.12 更新：</b>① 首页源选择器从顶栏移到内容区左上角独占一行（不再和居中标题挤压）；② TVBox 接口源全格式收录：csp_ 类名爬虫站、jar/js 接口站全部列出（存「爬虫源」分类+首页下拉灰显，点击明确提示暂不支持），不再报「无效源」；③ 名称带「短剧」的资源站自动对接短剧页（读取其「短剧」分类，支持翻页）；④ 直播页下拉里的源只显示名称（隐藏地址），有 logo 显示图标、无 logo 显示首字徽标；频道列表同样支持 tvg-logo 图标。<br>
+        <b>v2.11 更新：</b>① 顶栏源选择器固定到左上角（贴边、限宽省略，不再挤在标题旁）；② TVBox 线路里的爬虫源不再直接跳过：收进源管理「爬虫源」分类并在首页下拉里灰显列出（需 spider 运行时暂不支持播放，点击有明确提示），重复解析自动去重；③ 修复直播页下拉不显示直播源（下拉被误绑成影视源列表）；④ 设置 → 通用 新增「主题模式」：跟随系统 / 亮色 / 暗色手动切换；⑤ 直播源无可播频道时提示具体原因（如全部是网页链接）。<br>
+        <b>v2.10 更新：</b>① 下拉菜单修复（v2.9 样式规则被截断导致无底色）：加不透明底色/边框/圆角，菜单与按钮左对齐并限宽，长名称/长地址单行省略不再撑爆；② TVBox 选线路改异步：原来在 WebView 线程同步下载解析，网络慢时整个界面假死（多次操作卡死根因），现在后台解析+自动刷新首页/直播下拉，选线路后自动选中第一个资源站、直播页自动加载新直播源；③ 修复 v2.9 短剧页闪退（进度条计时器在初始化前启动）。<br>
+        <b>v2.9 更新：</b>① TVBox 线路解析修复：线路配置常用中文域名（饭太硬.net 等），Java 不支持需转 punycode，现已自动转换（含中文路径）；② 短剧竖滑修复（手势不响应根因）+ 画面比例适配（不再拉伸变形）+ 新增可拖动播放进度条与时间显示；③ 短剧列表下滑自动加载更多（配套新版红果源脚本 v2，分类页每页 24 部可翻 30+ 页，<a href="hongguo-v2.js" download>下载新脚本 hongguo-v2.js 重新导入</a> 生效）；④ 播放集数限制说明：红果官网仅免费试看集提供直链，付费集 App 端会明确提示（第 X 集起无地址）；⑤ 移除已失效的连接诊断功能（内嵌网页浏览入口移至设置页）；⑥ 主页下拉菜单限高防溢出（超高自动滚动）；⑦ 减小播放器左右刘海/R角避让宽度。<br>
+        <b>v2.8 更新：</b>① TVBox 仓库改「选择线路」交互：解析后存为「TVBox 源」并弹出线路选择（同 TVBox 订阅管理），选定线路后资源站自动进首页源下拉（选中第一个站）、直播源进直播下拉；② 直播播放修复：直链模式缺影片 ID 的问题修复，播放器新增直播低延迟模式；③ 直播源管理（选择/删除/添加）全部收进直播页顶部下拉菜单，页面更干净；④ 修复 https 流播放失败（播放内核缺 TLS 支持，现在 https 直链与 m3u8 全部经本地代理转发，红果短剧/资源站/直播全部适用）；⑤ 短剧播放出错自动切软解重试一次；⑥ 直播频道里指向网页的非流地址（video:// 等）自动过滤并提示。<br>
+        <b>v2.7 更新：</b>① 去掉顶栏「未连接」字样；② 下拉菜单统一改为顶栏下方弹层，不再溢出屏幕，点击空白处/返回键收起；③ 修复资源站（box）源无法读取：接口地址不再丢失 /api.php/provide/vod 路径（已添加过的资源站请到源设置里重贴一次接口地址）；④ 直播页新增源下拉，支持 m3u 与 txt 双格式（含全角逗号/BOM 兼容）；⑤ 源加载大幅提速（连接实例缓存，不再每次都重新探测）；⑥ 源管理新增「当前源」下拉，TVBox 解析出的影视接口直接可选，选择后首页/直播下拉同步；⑦ 取消内置短剧源，短剧内容来自你导入的 JS 源。<br>
+        <b>更快的办法：</b>在手机浏览器里打开飞牛登录页，长按地址栏复制完整网址，直接粘贴到 App 的「服务器地址」里。
+      </div>
+    </div>
+    <div class="foot">仅供个人使用 · 枫兮影视</div>
+  </div>
+  <script>
+    // 把当前页的访问凭据（sharecode）附加到下载链接，否则 APK 直链会被访问控制拦截（403）
+    (function () {
+      var q = window.location.search;
+      if (q) document.getElementById('dl').href = 'fengxi-video-v2.13.apk' + q;
+    })();
+  </script>
+</body>
+</html>

@@ -215,6 +215,78 @@ public final class WebViewRenderer {
         }
     }
 
+    /**
+     * ★ v4.21.39：Java 侧薄封装 —— 渲染页面直接拿完整 HTML。
+     *
+     * <p>原 {@link #render} 是 Rhino 宿主签名（要 Context/Scriptable），
+     * Java 代码（如 SourceProbe 网站分析器）没法直接调；这里复用同一套
+     * acquire/newWebView/evalJs/latch 主体，只是不要 script/parse，
+     * onPageFinished 后取 {@code document.documentElement.outerHTML}。
+     */
+    public static String renderUrl(final String url, final int timeout, final boolean desktop) {
+        acquire();
+        final CountDownLatch latch = new CountDownLatch(1);
+        final AtomicReference<String> htmlRef = new AtomicReference<String>(null);
+        final AtomicBoolean destroyed = new AtomicBoolean(false);
+        final AtomicReference<WebView> wvRef = new AtomicReference<WebView>(null);
+        try {
+            UI.post(new Runnable() {
+                public void run() {
+                    final WebView wv = newWebView(desktop);
+                    wvRef.set(wv);
+                    final AtomicBoolean done = new AtomicBoolean(false);
+
+                    wv.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public void onPageFinished(final WebView view, String u) {
+                            if (done.get()) return;
+                            evalJs(view, "document.documentElement.outerHTML",
+                                    new JsResult() {
+                                public void onResult(String v) {
+                                    if (done.compareAndSet(false, true)) {
+                                        htmlRef.set(v);
+                                        latch.countDown();
+                                        destroyOnMain(view, destroyed);
+                                    }
+                                }
+                            });
+                        }
+                    });
+
+                    try {
+                        wv.loadUrl(url);
+                    } catch (Throwable t) {
+                        done.set(true);
+                        latch.countDown();
+                        destroyOnMain(wv, destroyed);
+                    }
+
+                    UI.postDelayed(new Runnable() {
+                        public void run() {
+                            if (done.compareAndSet(false, true)) {
+                                latch.countDown();
+                                destroyOnMain(wv, destroyed);
+                            }
+                        }
+                    }, timeout);
+                }
+            });
+
+            try {
+                latch.await(timeout + 5000, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "";
+            } finally {
+                WebView opened = wvRef.get();
+                if (opened != null) destroyOnMain(opened, destroyed);
+            }
+            return htmlRef.get() == null ? "" : htmlRef.get();
+        } finally {
+            release();
+        }
+    }
+
     // ==================== sniff ====================
 
     /**

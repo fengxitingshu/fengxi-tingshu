@@ -135,6 +135,15 @@ public class MainActivity extends Activity
             @Override
             public void onPageFinished(WebView v, String url) {
                 applyTheme();
+                // ★ v4.21.33：页面就绪即把播放核心的真实状态推给前端一次。
+                //   方案 B 里服务暗核心可能已在出声，而网页刚加载完时
+                //   App.playing 还是初始值 false —— 不校正就会把「播放」按钮
+                //   画成三角，用户第一下点到的是暂停（再点一次才响）。
+                //   这里只推状态、不碰播放器，不中断、不重取链。
+                try {
+                    final boolean p = core != null && core.isPlaying();
+                    callJs("window.onPlayState && window.onPlayState(" + p + ")");
+                } catch (Throwable ignored) {}
             }
         });
 
@@ -149,7 +158,11 @@ public class MainActivity extends Activity
 
         web.addJavascriptInterface(new Bridge(web, this), "Android");
 
-        core = new PlayerCore(this);
+        // ★ v4.21.32 方案 B：进程被杀后，服务里的「暗核心」可能正在独立播放。
+        //   优先接管它（只换绑回调，不重取链、不中断、不产生第二个播放器）；
+        //   没有才新建一个。这样点小组件先出声、之后点封面进 App 完全无缝。
+        core = PlayerService.takeHeadless(this);
+        if (core == null) core = new PlayerCore(this);
         core.setCallback(this);
         // ★ P0-1/P0-2：播放失败自动换源/重试时，给前端书源标签与轻提示
         core.setHealListener(new PlayerCore.HealListener() {
@@ -440,7 +453,12 @@ public class MainActivity extends Activity
     @Override public void svcToggle() { core.toggle(); }
     @Override public void svcNext() { next(); }
     @Override public void svcPrev() { prev(); }
-    @Override public void svcStop() { core.stop(); refreshNotification(); }
+    @Override public void svcStop() {
+        core.stop();
+        // ★ v4.21.32：从通知栏/小组件停止也要清掉可恢复会话
+        try { com.tingshu.app.player.ResumeSession.clear(this); } catch (Throwable ignored) {}
+        refreshNotification();
+    }
 
     /** ★ v3.7.15：崩溃日志用的本地版本号（拿不到就退化为清单里的版本名） */
     private String cnversionName() {
@@ -478,6 +496,8 @@ public class MainActivity extends Activity
         long start = pendingStartMs;
         pendingStartMs = 0;
         core.playUrl(source, chapterUrl, directUrl, start, headers);
+        // ★ v4.21.32 方案 B：把队列 + 进度落盘，供进程被杀后服务冷恢复
+        saveResume(source, chapterUrl, start);
     }
 
     @Override
@@ -490,6 +510,21 @@ public class MainActivity extends Activity
             }
         } catch (Throwable ignored) {}
         core.setQueue(b, chs, idx);
+        // ★ v4.21.32：队列本身也落一份（用户可能 setQueue 后还没 play 就被杀）
+        saveResume(b == null ? "" : b.source, "", pendingStartMs);
+    }
+
+    /** ★ v4.21.32：写一份可恢复会话（取不到实时进度时用传入的起始偏移） */
+    private void saveResume(String source, String chapterUrl, long posMs) {
+        try {
+            Book b = core.book();
+            if (b == null) return;
+            String src = (source == null || source.length() == 0) ? b.source : source;
+            String cu = (chapterUrl == null || chapterUrl.length() == 0)
+                    ? core.chapterUrl() : chapterUrl;
+            com.tingshu.app.player.ResumeSession.save(
+                    this, b, core.chapters(), core.index(), posMs, src, cu);
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -585,6 +620,8 @@ public class MainActivity extends Activity
     @Override
     public void stop() {
         core.stop();
+        // ★ v4.21.32：用户主动停止 → 清掉可恢复会话，不该被小组件再续上
+        try { com.tingshu.app.player.ResumeSession.clear(this); } catch (Throwable ignored) {}
         // ★ v2.2：停止播放时清掉预加载标记，避免下次播别的书被旧标记挡住
         try { Aggregator.resetPreload(); } catch (Throwable ignored) {}
     }
@@ -649,6 +686,8 @@ public class MainActivity extends Activity
                         // 续播：集内偏移 < 正片时长 90% 才跳，否则从头（防"听完又倒回"）
                         pendingStartMs = saved;
                         core.playUrl(src, ch.url, url, saved, headers);
+                        // ★ v4.21.32：切集后同步落盘会话（下标变了要更新）
+                        saveResume(src, ch.url, saved);
                         JSONObject o = new JSONObject();
                         try {
                             o.put("url", url);
@@ -681,10 +720,18 @@ public class MainActivity extends Activity
     public void onStarted(Book book, int chapterIdx) {
         // PlayerCore 已在 saveRecord 里写历史，这里只推 UI
         refreshNotification();
-        // 自动缓存后续 N 集（受设置开关控制，内部还会判断 WiFi）
+        // 自动缓存后续 N 集（受设置开关控制，内部还会判断 WiFi）。
+        // ★ v4.21.41：把总集数传进去钳制——以前不查总集数，超出末集的号
+        //   在取链时「退到最后一集」，把最后一集音频错标成第 N 集，
+        //   50 集预存的后半段全是这种假缓存，看起来就是「没真正预存」。
         try {
+            int total = 0;
+            try {
+                java.util.List<com.tingshu.app.data.Models.Chapter> chs = core.chapters();
+                total = chs == null ? 0 : chs.size();
+            } catch (Throwable ignored) {}
             com.tingshu.app.core.CacheManager.autoCacheAhead(
-                    book, chapterIdx, com.tingshu.app.data.Settings.autoCacheCount());
+                    book, chapterIdx, com.tingshu.app.data.Settings.autoCacheCount(), total);
         } catch (Throwable ignored) {}
         // ★ v2.2 播放提速：预解析"下一集"的直链。
         //   只解析 URL（几 KB 字符串）落进缓存 + 热连接，不下载音频文件本身。
@@ -854,6 +901,13 @@ public class MainActivity extends Activity
 
     @Override
     public void onProgress(final int cur, final int dur) {
+        // ★ v4.21.32：每 5 秒把进度写回会话进程（进程被杀后能续上正确位置）
+        if (cur % 5 == 0) {
+            try {
+                com.tingshu.app.player.ResumeSession.touch(
+                        this, (long) cur * 1000, core.index());
+            } catch (Throwable ignored) {}
+        }
         callJs("window.onProgress(" + cur + "," + dur + ")");
         // ★ v2.4 修复「通知栏没有进度条」：
         //   原实现走 refreshNotification() → svc.update()，那条路会重建整个通知
@@ -1064,6 +1118,8 @@ public class MainActivity extends Activity
                     "application/java-archive", "application/x-java-archive",
                     "application/json", "text/json", "text/plain",
                     "application/octet-stream", "*/*"});
+            // ★ v4.21.19：多选导入——一次可勾选多个源文件同时导入
+            it.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
             startActivityForResult(it, REQ_PICK_SOURCE);
         } catch (Throwable t) {
             // 极少数 ROM 没有文件选择器，降级用文本导入
@@ -1287,45 +1343,92 @@ public class MainActivity extends Activity
         }
 
         if (requestCode != REQ_PICK_SOURCE) return;
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+        if (resultCode != RESULT_OK || data == null) {
             callJs("window.onSourceFilePicked({ok:false,cancel:true})");
             return;
         }
-        android.net.Uri uri = data.getData();
-        String name = fileNameOf(uri);
+        // ★ v4.21.19：多选导入——系统选择器允许多勾，ClipData 里逐个取；
+        //   单选老路径（getData）继续兼容。每个文件仍走原分发通道，
+        //   结果一次性打包给前端（onSourceFilesPicked）逐个装载。
+        java.util.ArrayList<android.net.Uri> uris = new java.util.ArrayList<android.net.Uri>();
+        android.content.ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                android.net.Uri u = clip.getItemAt(i).getUri();
+                if (u != null) uris.add(u);
+            }
+        }
+        if (uris.isEmpty() && data.getData() != null) uris.add(data.getData());
+        if (uris.isEmpty()) {
+            callJs("window.onSourceFilePicked({ok:false,cancel:true})");
+            return;
+        }
+        org.json.JSONArray items = new org.json.JSONArray();
+        for (android.net.Uri u : uris) {
+            try {
+                items.put(dispatchPickedUri(u));
+            } catch (Throwable t) {
+                JSONObject eo = new JSONObject();
+                try {
+                    eo.put("ok", false);
+                    eo.put("cancel", false);
+                    eo.put("error", "读取失败：" + t.getMessage());
+                } catch (Throwable ignored) {}
+                items.put(eo);
+            }
+        }
+        if (items.length() == 1) {
+            callJs("window.onSourceFilePicked(" + items.optJSONObject(0).toString() + ")");
+        } else {
+            JSONObject batch = new JSONObject();
+            try {
+                batch.put("ok", true);
+                batch.put("batch", true);
+                batch.put("items", items);
+            } catch (Throwable ignored) {}
+            callJs("window.onSourceFilesPicked(" + batch.toString() + ")");
+        }
+    }
+
+    /** ★ v4.21.19：单个选中文件 → 按扩展名分发到对应导入通道，返回结果对象 */
+    private JSONObject dispatchPickedUri(android.net.Uri uri) {
+        android.net.Uri uri2 = uri;
+        String name = fileNameOf(uri2);
         String lower = name == null ? "" : name.toLowerCase();
 
         if (lower.endsWith(".py")) {
             // ★ v3.4：单个 Python 源文件，直接交给 Python 通道
-            importPyFile(uri, name);
+            return importPyFile(uri2, name);
+        } else if (lower.endsWith(".js")) {
+            // ★ v4.21.1：单个 .js 源文件（如「墨澜音乐源v2.3.5.js」这种 LX 音乐源）。
+            //   必须在 .json 兜底之前拦下来——它不是 JSON，按 JSON 解析必报
+            //   「没有解析到任何源定义」。落盘时保留 .js 后缀，
+            //   JsPluginLoader.load 会按 .js 自动包装 manifest + LX 检测。
+            return importRawJsFile(uri2, name);
         } else if (lower.endsWith(".zip") || lower.endsWith(".jsplugin")) {
-            // ★ v3.0：.zip 一律先按 JS 插件包探一次。只有真的含 manifest.json
-            //   且声明了 scripts 的才走 JS 通道；否则退回 jar 通道
-            //   （历史上有人把 jar 插件包改名成 .zip 分发，不能让那条路断掉）。
-            // ★ v3.4：再退一步 —— 内含 .py 的 zip 走 Python 源码包通道
-            //   （用户常把一堆源打包成 zip 一次性导入）。
-            importJsFile(uri, name);
+            // ★ v3.0：.zip 一律先按 JS 插件包探一次；否则退回 jar 通道。
+            // ★ v3.4：内含 .py 的 zip 走 Python 源码包通道
+            return importJsFile(uri2, name);
         } else if (lower.endsWith(".jar") || lower.endsWith(".dex")) {
-            importJarFile(uri, name);
-        } else {
-            // .json / 其它：按文本读，交给前端统一导入逻辑
-            String content = readTextFromUri(uri);
-            JSONObject o = new JSONObject();
-            try {
-                if (content == null) {
-                    o.put("ok", false);
-                    o.put("cancel", false);
-                    o.put("error", "读取文件失败");
-                } else {
-                    o.put("ok", true);
-                    o.put("cancel", false);
-                    o.put("file", name);
-                    o.put("type", "json");
-                    o.put("json", content);
-                }
-            } catch (Throwable ignored) {}
-            callJs("window.onSourceFilePicked(" + o.toString() + ")");
+            return importJarFile(uri2, name);
         }
+        // .json / 其它：按文本读，交给前端统一导入逻辑
+        String content = readTextFromUri(uri2);
+        JSONObject o = new JSONObject();
+        try {
+            if (content == null) {
+                o.put("ok", false);
+                o.put("cancel", false);
+                o.put("error", "读取文件失败");
+            } else {
+                o.put("ok", true);
+                o.put("cancel", false);
+                o.put("file", name);
+                o.put("type", "json");
+                o.put("json", content);
+            }
+        } catch (Throwable ignored) {}
+        return o;
     }
 
     /**
@@ -1339,7 +1442,7 @@ public class MainActivity extends Activity
      * </ul>
      * 这样对用户来说「选个 .zip 就行」，不用懂两种插件的区别。
      */
-    private void importJsFile(android.net.Uri uri, String name) {
+    private JSONObject importJsFile(android.net.Uri uri, String name) {
         JSONObject o = new JSONObject();
         java.io.File out = null;
         try {
@@ -1401,7 +1504,7 @@ public class MainActivity extends Activity
                         ? t.getClass().getSimpleName() : t.getMessage()));
             } catch (Throwable ignored) {}
         }
-        callJs("window.onSourceFilePicked(" + o.toString() + ")");
+        return o;
     }
 
     /**
@@ -1410,7 +1513,7 @@ public class MainActivity extends Activity
      * <p>Python 解释器需要真实文件路径（zipimport / importlib 都按路径走），
      * 所以先把 content:// 拷到私有目录，再把路径回给前端 → importPySources。
      */
-    private void importPyFile(android.net.Uri uri, String name) {
+    private JSONObject importPyFile(android.net.Uri uri, String name) {
         JSONObject o = new JSONObject();
         java.io.File out = null;
         try {
@@ -1459,7 +1562,74 @@ public class MainActivity extends Activity
                         ? t.getClass().getSimpleName() : t.getMessage()));
             } catch (Throwable ignored) {}
         }
-        callJs("window.onSourceFilePicked(" + o.toString() + ")");
+        return o;
+    }
+
+    /**
+     * ★ v4.21.1：单个 .js 源文件导入（LX 格式音乐源等）。
+     *
+     * <p>与 {@link #importJsFile}（zip 插件包）的区别：不改后缀、不探测 zip，
+     * 直接把 content:// 拷到 js_plugin_inbox 下的 .js 文件，回 type:"js"
+     * 给前端 → importSourceJs → JsPluginLoader.load 按 .js 走
+     * 「自动包装 manifest + LX 检测」分支。源文件本体一字不动。
+     */
+    private JSONObject importRawJsFile(android.net.Uri uri, String name) {
+        JSONObject o = new JSONObject();
+        java.io.File out = null;
+        try {
+            java.io.File dir = getDir("js_plugin_inbox", MODE_PRIVATE);
+            String stem = name == null ? "source" : name.replaceAll("\\.js$", "");
+            String safe = com.tingshu.app.core.Utils.safe(stem).replaceAll("^_+|_+$", "");
+            if (safe.length() == 0) safe = "js_" + Math.abs(stem.hashCode());
+            // ★ v4.21.7：文件名去掉时间戳 —— 同一文件重复导入落同一个路径，
+            //   插件目录同名覆盖、PluginRepo 记录不新增（此前每导一次堆一个重复源，
+            //   源列表越积越多，搜索/取链全部双路并发）。
+            //   兼容清理：把旧版带时间戳的同 stem 文件一并删掉。
+            java.io.File[] olds = dir.listFiles();
+            if (olds != null) {
+                for (java.io.File f : olds) {
+                    String fn = f.getName();
+                    if (fn.equals(safe + ".js")) continue;
+                    if (fn.startsWith(safe + "-") && fn.endsWith(".js")) f.delete();
+                }
+            }
+            out = new java.io.File(dir, safe + ".js");
+
+            java.io.InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) throw new IllegalStateException("无法打开文件");
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+            byte[] buf = new byte[8192];
+            int n;
+            long total = 0;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                // 单个音乐源脚本正常几十 KB；给 20MB 上限防误选大文件
+                if (total > 20 * 1024 * 1024) {
+                    in.close();
+                    fo.close();
+                    throw new IllegalStateException("源文件超过 20MB，拒绝导入");
+                }
+                fo.write(buf, 0, n);
+            }
+            in.close();
+            fo.flush();
+            fo.close();
+
+            o.put("ok", true);
+            o.put("cancel", false);
+            o.put("file", name == null ? "" : name);
+            o.put("type", "js");
+            o.put("path", out.getAbsolutePath());
+        } catch (Throwable t) {
+            if (out != null) { try { out.delete(); } catch (Throwable ignored) {} }
+            try {
+                o.put("ok", false);
+                o.put("cancel", false);
+                o.put("error", "读取 JS 源失败：" + (t.getMessage() == null
+                        ? t.getClass().getSimpleName() : t.getMessage()));
+            } catch (Throwable ignored) {}
+        }
+        return o;
     }
 
     /**
@@ -1489,7 +1659,7 @@ public class MainActivity extends Activity
      * jar 插件导入：DexClassLoader 要求真实文件路径，
      * 所以先把 content:// 复制到私有 plugins 目录，再把路径回给前端。
      */
-    private void importJarFile(android.net.Uri uri, String name) {
+    private JSONObject importJarFile(android.net.Uri uri, String name) {
         JSONObject o = new JSONObject();
         try {
             java.io.File dir = getDir("plugins", MODE_PRIVATE);
@@ -1530,7 +1700,7 @@ public class MainActivity extends Activity
                         ? t.getClass().getSimpleName() : t.getMessage()));
             } catch (Throwable ignored) {}
         }
-        callJs("window.onSourceFilePicked(" + o.toString() + ")");
+        return o;
     }
 
     /** 从 content:// 读出文件名 */
@@ -1635,7 +1805,19 @@ public class MainActivity extends Activity
         PlayerService.unbindCtl();
         if (core != null) {
             core.saveProgressNow();
-            core.release();
+            // ★ v4.21.32 方案 B：界面关掉但还在听 → 把播放核心交回服务，
+            //   后台继续出声（通知栏/桌面小组件照常控制）；已停止才真正释放。
+            if (core.hasContent()) {
+                try {
+                    com.tingshu.app.player.ResumeSession.save(this, core.book(),
+                            core.chapters(), core.index(), (long) core.curSec() * 1000,
+                            core.usedSource(), core.chapterUrl());
+                } catch (Throwable ignored) {}
+                PlayerService.giveBack(core);
+            } else {
+                core.release();
+            }
+            core = null;
         }
     }
 }
