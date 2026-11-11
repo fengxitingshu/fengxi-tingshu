@@ -3,9 +3,25 @@
 > 本文件独立于代码，记录项目背景、关键决策、法律边界与下一阶段（闲鱼接单）方向。
 > 作为后续阶段的上下文速查，避免每次重新交代背景。
 
+## ⚡ 最新进度指针（2026-11-12，跨设备/跨会话请先读这里）
+
+> 下方第 0 节及各 v2.x 里程碑段落是**历史记录**，版本号已过时；当前状态以本节为准。
+
+| 模块 | 当前版本 | 位置 |
+|---|---|---|
+| 枫兮听书 | **v4.21.42 / code 234** | 本目录 |
+| 枫兮影视（含车机化） | **v2.22 / code 33** | `fnplayer/` |
+| 下载站 / NAS 锚点 | manifest 驱动 / v2 | `../fx-video-download/`、`../fx-nas-anchor*/` |
+
+- **完整交接卡**：`_backup/docs/会话进度快照-20261112.md` —— 新会话粘贴即可续上，含本次会话全部结论、文件速查、待办、保密边界、电脑端接续步骤。
+- **全量进度纪要**：`_backup/PROGRESS.md`（覆盖影视 v2.17→v2.22、听书 v4.21.35→42、WorkBuddy 咨询结论）。
+- **同步通道**：GitHub PRIVATE `fengxitingshu/fengxi-tingshu` 的 `main`；电脑端 WorkBuddy `git pull` 后打开本目录即读到本文件。
+- **本地完整备份**（含明文机密，⚠️ 绝不上传）：`../枫兮项目-记忆进度完整备份-20261112.tar.gz`。
+- **保密**：域名 / sharecode / token / Cookie 一律占位符；keystore、APK、95MB 会话原始记录不入库；PUBLIC 仓库 `fengzhiyu` 不触碰。
+
 ## 0. 速览
 - **项目**：枫兮听书（FengXi TingShu）—— Android 听书 App，用户自写书源的**框架型工具**
-- **当前版本**：v4.21.8（versionCode 200），含手机版 + 车机版（`-car`，`CAR_MODE=1` 构建）
+- **当前版本**：v4.21.42（versionCode 234；此字段曾长期停在 v4.21.8，已按上方指针校正），含手机版 + 车机版（`-car`，`CAR_MODE=1` 构建）
 - **定位**：**非营利、技术中立**的听书框架；书源由用户自己写，App 不内置、不聚合盗版资源
 - **规模**：App 用户 100+ 人；QQ 群计划**千人封顶**即止步
 
@@ -59,7 +75,7 @@
 - v4.21.5：取链卡死真因定位——墨澜酷我后端1是纯拼URL零HTTP，链路 45s 不落定说明微任务滞留无人泵；resolveMusicUrl 改轮询泵（等线程每 2s 重进引擎 processMicrotasks），取链派发/回调/HTTP 全程写诊断日志。
 - v4.21.6：定位取链卡死根因——Rhino 微任务队列是 Context 级（每 Context 一条 ArrayDeque），派发/定时器/HTTP 回调散在不同线程不同 Context 各自的队列里互相泵不到；重构 LxRuntime 为单 JS 线程 Actor 模型（lx-js 单线程跑全部脚本、HTTP 4 线程池、定时器只投递），request 改真异步回调（脚本侧 JS 超时从此生效），resolveMusicUrl 派发收口 JS 线程。另：洛雪音源的 103.79.184.97 API 服务器外网不可达（外部服务问题非 App 问题）。
 - v4.21.7：确认取链打的是洛雪源的死服务器（103.79.184.97，URL 带 songmid/musicId/platform=kw 是洛雪 HYWmusic 格式，墨澜酷狗后端2 格式不同）——用户点的是洛雪源而非墨澜；洛雪脚本 HTTP 失败后 Promise 永不落定。修复重复导入堆积：importRawJsFile 落盘去时间戳（重导覆盖同一记录+清理旧文件），PluginRepo.dedupeJs() 启动按归一化文件名去重（保最新）；取链/搜索日志带源名，取链失败提示可切换源。
-- v4.21.8：取链改 App 原生多后端，彻底弃用 LX 脚本异步链（根因：async/生成器 shim 的 Promise 微任务跨 Context 滞留，连纯拼 URL 零 HTTP 的酷我后端1 都 45s 不落定；且脚本内嵌 103.79.184.97 死服、海堂 APP_UPGRADE_REQUIRED 停服）。LxSourceAdapter.resolveNative：① c.wwwweb.top/music/url POST JSON→url（实测 0.17s 出酷我 CDN 直链）② kuwo 官方 anti.s→https 直链 ③ kwstream 纯拼（Range 探测只读 1KB 兜底）。直链实测 206 audio/mpeg 可下。源文件原样加载不改。另：SourceRegistry 按脚本头 @name+@version（回退 MD5）去重，解决不同文件名装同一脚本导致双份加载。
+- v4.21.8：取链改 App 原生多后端，彻底弃用 LX 脚本异步链（根因：async/生成器 shim 的 Promise 微任务跨 Context 滞留，连纯拼 URL 零 HTTP 的酷我后端1 都 45s 不落定；且脚本内嵌 103.79.184.97 死服、海堂 APP_UPGRADE_REQUIRED 停服）。LxSourceAdapter.resolveNative：① c.[域名]/music/url POST JSON→url（实测 0.17s 出酷我 CDN 直链）② kuwo 官方 anti.s→https 直链 ③ kwstream 纯拼（Range 探测只读 1KB 兜底）。直链实测 206 audio/mpeg 可下。源文件原样加载不改。另：SourceRegistry 按脚本头 @name+@version（回退 MD5）去重，解决不同文件名装同一脚本导致双份加载。
 - v4.20.4：单 .js 音源直导（LX 运行时 + JsCompat 语法降级：async/await→生成器、const→let，墨澜原版脚本原样执行不改动）+ registerSource 即时挂 host（红果等 prelude 系插件可原样导入）+ 移除悬浮"回到视频画面"chip（视频在播点悬浮球直回画面）+ 上下滑切集去提示直达 + Rhino 升级 1.8.1（需 build-tools 35 的 R8/d8，android-14 的 8.2.2-dev 对新字节码 NPE）
 - v4.20.3：视频播放器完整化（上下滑切集/长按2倍速/全屏横屏/播放页内选集）+ 播放页按钮行「▶视频」入口四按钮分散对齐 + 设置页「诊断日志」（PlayerLog 导出，查 WMA 等播放问题）+ 红果插件 v5（categoryMenus 零网络直出，修发现页源列表慢）+ 墨澜音乐插件（酷我搜索+流媒体 master 直链；墨澜原版是 LX 取链源无搜索，海堂后端已加签名失效）
 - v4.20.2：短剧播放器控制条（点画面呼出：播放暂停/上下集/拖进度/时长，3.5s 自动藏）+ 画面等比缩放防拉伸 + 返回键先收画面不退出 + 修「回到视频画面」chip 反逻辑；v4.20.1：崩溃取证弹窗（闪退日志界面化）+ 修 setBackgroundResource 启动闪退；v4.20.0：视频短剧源支持（红果短剧 JS 插件 + 视频画面层 SysEngine.setSurface + registerSource 返回源对象/video() 回退/isVideoSource）；红果官网搜索接口偶发 503 风控
@@ -88,8 +104,8 @@
 - 验证：`/tmp/fntest` 桌面 mock（Python 绑 `::1:5666`）+ 26 项测试全过：IPv6 字面量、authx 与 Python 参考逐字节比对、媒体库/影片/剧集、诊断 5 段、HLS 改写与 Cookie 透传。
 - **未实测（用户手机自测）**：真实飞牛列表 API 是否免 authx、影片/海报字段名、`Trim-MC-token` Cookie 名、ijk 视频硬解兼容性。降级：首页/诊断页「改用网页浏览」内嵌飞牛 Web 端；硬解出错自动切软解重连一次。
 - **v1.1（versionCode 2）**：诊断第 3 步 TCP 失败不再直接 return，改为自动扫 5666/5667/8000/8001/443/80 并给改址建议；纯 IPv6 且全端口不通时输出飞牛 IPv6 防火墙专项排查清单（路由器 IPv6 防火墙放行 5667、NAS 端口设置、DDNS 前缀变化等）。`FnClient.tcpProbe` 遍历所有解析地址逐个连；前端 `.diagrow .m` 加 `white-space:pre-wrap` 显示多行。
-- **分发坑（vivo）**：聊天里的 APK 文件卡片点开只给「vivo 健康 / vivo 文档 / 浏览器」三个打开方式，**没有应用安装器**，装不上。设备分享面板（workbuddy-device）会话中曾连接失败/工具消失。**可用方案**：发布静态下载页（手机浏览器打开→点按钮下载→系统弹安装）。已发布 `https://ab1f2330f397556fe.app.workbuddy.host/?sharecode=LPIHFTHJ3X`，站点目录 `fnplayer/download-site/`。注意带 sharecode 的访问控制会拦裸资源（403），页面用 JS 把 `location.search` 附加到下载链接。
-- **2026-11-05 用户首次连通实测**：`https://fn.513969511.xyz:5667` → 地址解析 OK、DNS 解析 IPv4=0 IPv6=1（`2408:821b:8a22:ab31:62be:b4ff:fe02:f790`）→ **TCP 5667「连接被拒绝」**。当时判断为 NAS/路由器 IPv6 入站未放行。
+- **分发坑（vivo）**：聊天里的 APK 文件卡片点开只给「vivo 健康 / vivo 文档 / 浏览器」三个打开方式，**没有应用安装器**，装不上。设备分享面板（workbuddy-device）会话中曾连接失败/工具消失。**可用方案**：发布静态下载页（手机浏览器打开→点按钮下载→系统弹安装）。已发布 `https://ab1f2330f397556fe.app.workbuddy.host/?sharecode=[分享码]`，站点目录 `fnplayer/download-site/`。注意带 sharecode 的访问控制会拦裸资源（403），页面用 JS 把 `location.search` 附加到下载链接。
+- **2026-11-05 用户首次连通实测**：`https://[更新域名]:5667` → 地址解析 OK、DNS 解析 IPv4=0 IPv6=1（`2408:821b:8a22:ab31:62be:b4ff:fe02:f790`）→ **TCP 5667「连接被拒绝」**。当时判断为 NAS/路由器 IPv6 入站未放行。
 - **v1.2（versionCode 3，2026-11-05）——「跟网页走」自动选路；上条结论已修正**：用户补充「网页版可以登录没问题」+ 浏览器飞牛登录页截图，推翻「整体 IPv6 不通」的判断。真因：域名解析到纯 AAAA（NAS 公网 v6），但浏览器登录页走的是**另一条路**（443 反代 / 飞牛官方 DDNS 中继 / IPv4 中转），App 却死磕 `IPv6:5667` 裸 TCP 直连；34ms RST 只说明「这一条直连路径没服务」，不代表 Web 服务不可达。**另查出一个发布事故：下载页一直放的是 v1.0**（v1.1 只归档在 release/、从未同步），用户装的始终是 v1.0，端口扫描功能根本没到手机上。
   - 新增 `core/Reach.java`：候选地址（原地址→`https://host`(443)→`http://host`(80)→5667/5666/8000/8001/5666）→ 4 线程并行发**真实 HTTP GET /v/**（自签证书一律放宽），任何 HTTP 响应码都算「有服务」；飞牛页面优先；成功即 `Config.setBase()` 写回 + https 时 `setTrustSsl(true)` + 进程内缓存 30min。
   - `FnClient.diagnose()` 第 3 步由「裸 TCP 一票否决」改为「网页可达性（自动选路）」，裸 TCP 降级为参考信息；第 4/5 步用选中地址；`FnClient()` 默认构造优先取 `Reach.cached()`。
@@ -99,7 +115,7 @@
   - 验证：`/tmp/fntest/ReachTest.java` + `reach_mock.py`（模拟「直连端口全不通、网页在 8000」）17 项全过；换真实 `/tmp/fntest-json.jar` 后诊断 5 段全 OK。**坑**：桌面测试必须把真实 org.json jar 放在 android.jar 前面，否则 android.jar 里的 `Stub!` 空壳会让 JSON 解析假失败（第 5 步误报「响应不是预期 JSON」）。
   - **结论修正**：以后遇到「网页能登录、App 连不上」，先让用户复制浏览器完整 URL（含 scheme 与端口）或让 App 自动选路，**不要直接归因 IPv6 防火墙**。裸 TCP 只能证明单条路径。
   - **发布纪律（写死）**：`build.sh` 出新版本后，必须**同时**把 APK 复制进 `download-site/` 并改 index.html 的文件名/版本，否则用户下载的还是旧包。
-- **v1.3（versionCode 4，2026-11-05）—— 原生账号密码登录 + 签名公式修正**：用户 v1.2 实测自动选路成功（网页在 `https://fn.513969511.xyz` 443 中继，`✓ HTTP 200 飞牛页面`，地址已自动写回），只剩第 5 步 API 全 404。**深挖社区开源实现后查出一个关键错误：此前 Authx 签名公式是错的**（空格连接 `secret+" "+path+...+"_"+api_key`），而 fnv.py（quark-auto-save PR#106）与 fnos-tv（hong-ke）两个**独立**实现都用**全下划线** `"_".join([secret, path, nonce, timestamp, body_hash, api_key])`；之前的"Python 交叉比对通过"是自己写的参考自己验，等于没验证（教训：交叉验证必须用独立第三方实现）。
+- **v1.3（versionCode 4，2026-11-05）—— 原生账号密码登录 + 签名公式修正**：用户 v1.2 实测自动选路成功（网页在 `https://[更新域名]` 443 中继，`✓ HTTP 200 飞牛页面`，地址已自动写回），只剩第 5 步 API 全 404。**深挖社区开源实现后查出一个关键错误：此前 Authx 签名公式是错的**（空格连接 `secret+" "+path+...+"_"+api_key`），而 fnv.py（quark-auto-save PR#106）与 fnos-tv（hong-ke）两个**独立**实现都用**全下划线** `"_".join([secret, path, nonce, timestamp, body_hash, api_key])`；之前的"Python 交叉比对通过"是自己写的参考自己验，等于没验证（教训：交叉验证必须用独立第三方实现）。
   - **重大简化：secret/api_key 是飞牛前端的公开常量**，fnos-tv 直接硬编码：secret=`NDzZTVxnRKP8Z0jXg1VAMonaG8akvh`，api_key=`16CCEB3D-AB42-077D-36A1-F355324E4237`（随前端 JS 下发给每个浏览器，非机密）。已内置为 `Authx.DEFAULT_SECRET/DEFAULT_API_KEY`，authx 默认启用，用户不再需要 F12 挖密钥（手填仍可覆盖）。
   - **新增原生账号密码登录**：`POST /v/api/v1/login` body `{"username","password","app_name":"trimemedia-web"}` → `data.token`（fnv.py 同款），设置页新增密码框 +「账号密码登录（推荐）」按钮（`Bridge.loginNative` → `window.onNativeLogin`）；诊断第 5 步失败且填了账号密码时**自动登录重试并存 Token**。WebView 网页登录降级为备用。
   - **probe() 重写为路径矩阵**（trail 随诊断输出）：`GET /v/api/v1/user/info`（fnos-tv 的登录态校验端点）、`GET /v/api/v1/mdb/list`（fnv.py）、`GET /v/api/v1/mediadb/list`（fnos-tv-web），`/v` 前缀与无前缀都试；404=路径不存在 / 401/403 或 code=-2=需登录 / code=0=通，一眼定位。`Authorization` 裸 token（fnv.py/fnos-tv 一致）。
