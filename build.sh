@@ -13,17 +13,53 @@
 #   - java-lib/chaquopy_java.jar -> 参与 javac 与 d8
 set -e
 
-PROJ=/workspace/fengxi-tingshu
-BT=/root/android/android-14
+# 路径均可用环境变量覆盖：Linux 沙箱取默认值；Windows 主开发环境由
+# .fengxi-env/build-here.sh source D:/fengxi-dev/env.sh 后注入（路径写成 D:/... 形式，
+# 这样 find 产出的 sources.txt 里也是 JVM 能直接读的盘符路径）。
+PROJ=${PROJ:-/workspace/fengxi-tingshu}
+BT=${BT:-/root/android/android-14}
 # ★ v4.20.4：R8/d8 升级用 build-tools 35 的（旧 android-14 的 R8 8.2.2-dev
 #   对 Rhino 1.8.1 的 Java 11 字节码（invokedynamic 串拼接）会 NPE 崩溃）
-BT8=/tmp/bt35/android-15
-ANDROID_JAR=/root/android/android-35/android.jar
-TOOL=/root/toolchain
-JDK=/usr/lib/jvm/java-17-openjdk-amd64/bin
-KS=/root/android/test.keystore   # ★ 别名已改为 fengxi（原 test 是无身份信息的占位证书，vivo 安装器会拒绝）
-OUT=$PROJ/out
-LIB=$PROJ/java-lib
+BT8=${BT8:-/tmp/bt35/android-15}
+ANDROID_JAR=${ANDROID_JAR:-/root/android/android-35/android.jar}
+TOOL=${TOOL:-/root/toolchain}
+JDK=${JDK:-/usr/lib/jvm/java-17-openjdk-amd64/bin}
+KS=${KS:-/root/android/test.keystore}   # ★ 别名已改为 fengxi（原 test 是无身份信息的占位证书，vivo 安装器会拒绝）
+OUT=${OUT:-$PROJ/out}
+LIB=${LIB:-$PROJ/java-lib}
+
+# ★ Windows 主开发环境适配：Linux 下全部取默认值，行为与原来完全一致。
+#   CP_SEP = JVM 类路径分隔符（Windows 是分号）；wpath/mkcp 把传给 JVM 的
+#   路径统一成盘符形式，避免 Windows 下 javac/R8 收到 /d/... 这种 MSYS 路径。
+CP_SEP=${CP_SEP:-:}
+PY=${PY:-python3}
+ZIP=${ZIP:-zip}
+JAVAC=${JAVAC:-javac}
+JAVA=${JAVA:-$JDK/java}
+JAR=${JAR:-$JDK/jar}
+AAPT2=${AAPT2:-$BT/aapt2}
+ZIPALIGN=${ZIPALIGN:-$BT/zipalign}
+APKSIGNER=${APKSIGNER:-$BT/apksigner}
+D8=${D8:-$BT8/d8}
+D8JAR=${D8JAR:-$BT8/lib/d8.jar}
+# 本机未回填 test.keystore 时用 SKIP_SIGN=1 只做编译验证：不签名、不产出可安装的 APK
+SKIP_SIGN=${SKIP_SIGN:-0}
+
+wpath() {
+  if [ "$CP_SEP" != ":" ] && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+mkcp() {
+  local out="" p
+  for p in "$@"; do
+    [ -n "$out" ] && out="$out$CP_SEP"
+    out="$out$(wpath "$p")"
+  done
+  printf '%s' "$out"
+}
 
 export PATH="$JDK:$PATH"
 
@@ -75,6 +111,10 @@ if [ "$WMA_TRANS" = "1" ]; then
   DEPS+=("$PROJ/java-lib/mobile-ffmpeg.jar")
   echo "==> 完整版：mobile-ffmpeg.jar 已加入 dex 打包"
 fi
+# Windows：R8 是 JVM 程序，只认盘符路径；cygpath -m 对 D:/... 幂等
+if [ "$CP_SEP" != ":" ]; then
+  for i in "${!DEPS[@]}"; do DEPS[$i]="$(wpath "${DEPS[$i]}")"; done
+fi
 # javac 编译期 classpath：
 #   - kotlin-stdlib：host 引用了 kotlin.jvm.functions.Function1
 #   - rhino-slim   ：v3.0 起 core/js/* 引用了 org.mozilla.javascript.*
@@ -82,10 +122,16 @@ fi
 #   - chaquopy_java：v3.4 起 app/python/* 引用了 com.chaquo.python.*
 #   - okhttp/okio  ：v3.9.9 起 Fuel 兼容层（FuelJsonKt.responseJson）引用 okhttp3
 #   - ijkplayer    ：v4.9.0 起 PlayerCore/Engines 引用 tv.danmaku.ijk.media.player.*
-JAVAC_CP="$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/rhino-1.8.1.jar:$TOOL/jsoup-1.17.2.jar:$PROJ/java-lib/chaquopy_java.jar:$TOOL/okhttp-4.10.0.jar:$TOOL/okio-jvm-3.0.0.jar:$PROJ/java-lib/ijkplayer-java.jar:$PROJ/java-lib/mobile-ffmpeg.jar"
+JAVAC_CP=$(mkcp \
+  "$TOOL/kotlin-stdlib-1.8.22.jar" "$TOOL/rhino-1.8.1.jar" "$TOOL/jsoup-1.17.2.jar" \
+  "$LIB/chaquopy_java.jar" "$TOOL/okhttp-4.10.0.jar" "$TOOL/okio-jvm-3.0.0.jar" \
+  "$LIB/ijkplayer-java.jar" "$LIB/mobile-ffmpeg.jar")
 
 # Kotlin 编译器自身运行时（跑 K2JVMCompiler 用）
-KCP="$TOOL/kotlin-compiler-embeddable-1.8.22.jar:$TOOL/kotlin-stdlib-1.8.22.jar:$TOOL/kotlin-reflect-1.8.22.jar:$TOOL/trove4j-1.0.20200330.jar:$TOOL/annotations-13.0.jar"
+KCP=$(mkcp \
+  "$TOOL/kotlin-compiler-embeddable-1.8.22.jar" "$TOOL/kotlin-stdlib-1.8.22.jar" \
+  "$TOOL/kotlin-reflect-1.8.22.jar" "$TOOL/trove4j-1.0.20200330.jar" \
+  "$TOOL/annotations-13.0.jar")
 
 rm -rf "$OUT"
 mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/dex" "$LIB"
@@ -100,7 +146,7 @@ else
 fi
 
 echo "==> [1/9] aapt2 compile"
-"$BT/aapt2" compile --dir "$PROJ/res" -o "$OUT/res.zip"
+"$AAPT2" compile --dir "$PROJ/res" -o "$OUT/res.zip"
 
 echo "==> [2/9] aapt2 link"
 # ★ 实测：此版 aapt2 的 --version-name 参数会被 Manifest 里显式的
@@ -112,7 +158,7 @@ if [ "$CAR_MODE" = "1" ]; then
   sed "s/android:versionName=\"[^\"]*\"/android:versionName=\"${BASE_VER}-car\"/" \
     "$PROJ/AndroidManifest.xml" > "$LINK_MANIFEST"
 fi
-"$BT/aapt2" link \
+"$AAPT2" link \
   -o "$OUT/base.apk" \
   -I "$ANDROID_JAR" \
   --manifest "$LINK_MANIFEST" \
@@ -124,7 +170,7 @@ fi
 
 # 车机版硬校验：versionName 必须真的带上 -car（防 sed 失效静默出标准版）
 if [ "$CAR_MODE" = "1" ]; then
-  GOT_VER=$("$BT/aapt2" dump badging "$OUT/base.apk" | head -1 \
+  GOT_VER=$("$AAPT2" dump badging "$OUT/base.apk" | head -1 \
             | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
   if [ "$GOT_VER" != "${BASE_VER}-car" ]; then
     echo "    !! 车机版 versionName 校验失败：期望 ${BASE_VER}-car，实际 $GOT_VER" >&2
@@ -135,28 +181,34 @@ fi
 
 echo "==> [3/9] kotlinc（host 里必须用 Kotlin object 表达的那几个类）"
 rm -rf "$OUT/classes" && mkdir -p "$OUT/classes"
-KT_SRC=$(find "$PROJ/src-kt" -name '*.kt' 2>/dev/null)
-if [ -n "$KT_SRC" ]; then
-  "$JDK/java" -Dfile.encoding=UTF-8 -cp "$KCP" \
+# 用数组传源文件，避免项目路径含空格时被拆成两个参数
+KT_FILES=()
+while IFS= read -r f; do KT_FILES+=("$f"); done < <(find "$PROJ/src-kt" -name '*.kt' 2>/dev/null)
+if [ ${#KT_FILES[@]} -gt 0 ]; then
+  "$JAVA" -Dfile.encoding=UTF-8 -cp "$KCP" \
     org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
     -no-stdlib \
-    -cp "$ANDROID_JAR:$TOOL/kotlin-stdlib-1.8.22.jar" \
-    -jvm-target 1.8 -d "$OUT/classes" $KT_SRC
-  echo "    kotlin 源文件：$(echo "$KT_SRC" | wc -l) 个"
+    -cp "$(mkcp "$ANDROID_JAR" "$TOOL/kotlin-stdlib-1.8.22.jar")" \
+    -jvm-target 1.8 -d "$(wpath "$OUT/classes")" "${KT_FILES[@]}"
+  echo "    kotlin 源文件：${#KT_FILES[@]} 个"
 else
   echo "    (无 kotlin 源)"
 fi
 
 echo "==> [4/9] javac"
 find "$PROJ/src" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
+# Windows：javac 的 @argfile 按空白分词，项目路径含空格时必须逐行加引号
+if [ "$CP_SEP" != ":" ]; then
+  sed -i 's/.*/"&"/' "$OUT/sources.txt"
+fi
 # kotlin-stdlib 只用于 javac 的类型检查（host 里引用了 Function1），
 # 不参与 d8 打包路径的"程序文件"判定（d8 那边单独用 ${DEPS[@]} 喂真身）。
 set +e
-javac -source 8 -target 8 -encoding UTF-8 \
-  -bootclasspath "$ANDROID_JAR" \
-  -cp "$ANDROID_JAR:${JAVAC_CP}:$OUT/classes" \
-  -d "$OUT/classes" \
-  @"$OUT/sources.txt" 2>&1 | grep -v 'bootstrap class path'
+"$JAVAC" -source 8 -target 8 -encoding UTF-8 \
+  -bootclasspath "$(wpath "$ANDROID_JAR")" \
+  -cp "$(mkcp "$ANDROID_JAR" "$OUT/classes")${CP_SEP}${JAVAC_CP}" \
+  -d "$(wpath "$OUT/classes")" \
+  @"$(wpath "$OUT/sources.txt")" 2>&1 | grep -a -v 'bootstrap class path'
 JAVAC_RC=${PIPESTATUS[0]}
 set -e
 if [ "$JAVAC_RC" != "0" ]; then
@@ -177,23 +229,24 @@ if [ "${OBFUSCATE:-1}" = "1" ]; then
   rm -f "$OUT/mapping.txt"
   # R8 的目录输入不接受 META-INF/*.kotlin_module 等非 class 文件，
   # 先打成 jar（归档模式下非 class 条目会被忽略），再连同依赖 jar 一起喂给 R8。
-  "$JDK/jar" cf "$OUT/host.jar" -C "$OUT/classes" .
-  "$JDK/java" -cp "$BT8/lib/d8.jar" com.android.tools.r8.R8 \
+  "$JAR" cf "$(wpath "$OUT/host.jar")" -C "$(wpath "$OUT/classes")" .
+  "$JAVA" -cp "$(wpath "$D8JAR")" com.android.tools.r8.R8 \
     --release --min-api 21 \
-    --lib "$ANDROID_JAR" \
-    --pg-conf "$PROJ/proguard-rules.pro" \
-    --pg-map-output "$OUT/mapping.txt" \
-    --output "$OUT/dex" \
-    "$OUT/host.jar" "${DEPS[@]}"
+    --lib "$(wpath "$ANDROID_JAR")" \
+    --pg-conf "$(wpath "$PROJ/proguard-rules.pro")" \
+    --pg-map-output "$(wpath "$OUT/mapping.txt")" \
+    --output "$(wpath "$OUT/dex")" \
+    "$(wpath "$OUT/host.jar")" "${DEPS[@]}"
   if [ ! -f "$OUT/dex/classes.dex" ]; then
     echo "!!! R8 没有产出 dex，中止构建"; exit 1
   fi
   echo "    R8 混淆完成，mapping.txt：$(du -h "$OUT/mapping.txt" | cut -f1)"
 else
   find "$OUT/classes" -name '*.class' > "$OUT/classes.txt"
-  "$BT8/d8" --min-api 21 --release --lib "$ANDROID_JAR" \
-    --output "$OUT/dex" \
-    @"$OUT/classes.txt" "${DEPS[@]}"
+  [ "$CP_SEP" != ":" ] && sed -i 's/.*/"&"/' "$OUT/classes.txt" || true
+  "$D8" --min-api 21 --release --lib "$(wpath "$ANDROID_JAR")" \
+    --output "$(wpath "$OUT/dex")" \
+    @"$(wpath "$OUT/classes.txt")" "${DEPS[@]}"
 fi
 
 echo "==> [6/9] pack dex（收集全部 classes*.dex）"
@@ -204,7 +257,7 @@ for d in dex/classes*.dex; do
   [ -f "$d" ] || continue
   base=$(basename "$d")
   cp "$d" "$base"
-  zip -q -X unsigned.apk "$base"
+  "$ZIP" -q -X unsigned.apk "$base"
   DEX_N=$((DEX_N+1))
   echo "    + $base ($(du -h "$d" | cut -f1))"
 done
@@ -222,7 +275,7 @@ RHRES="$OUT/rhres"
 rm -rf "$RHRES"; mkdir -p "$RHRES"
 unzip -o -q "$TOOL/rhino-1.8.1.jar" "org/mozilla/javascript/resources/*" -d "$RHRES"
 cd "$RHRES"
-zip -q -X "$OUT/unsigned.apk" org/mozilla/javascript/resources/Messages*.properties
+"$ZIP" -q -X "$OUT/unsigned.apk" org/mozilla/javascript/resources/Messages*.properties
 cd "$PROJ"
 echo "    + rhino Messages*.properties ×$(ls "$RHRES"/org/mozilla/javascript/resources | wc -l)"
 
@@ -355,14 +408,14 @@ echo "    + license 检查屏蔽自检通过"
 PYP="$PROJ/python/assets/chaquopy"
 if [ -d "$PYP" ]; then
   cd "$PROJ/python"
-  zip -q -r -X "$OUT/unsigned.apk" assets
+  "$ZIP" -q -r -X "$OUT/unsigned.apk" assets
   cd "$PROJ"
   echo "    + assets/chaquopy ($(du -sh "$PYP" | cut -f1))"
 fi
 if [ -d "$PROJ/lib/arm64-v8a" ]; then
   cd "$PROJ"
   # native 库用 STORED（-0 不压缩），Android 直接从 APK mmap，解压反而更慢
-  zip -q -0 -r -X "$OUT/unsigned.apk" lib
+  "$ZIP" -q -0 -r -X "$OUT/unsigned.apk" lib
   cd "$PROJ"
   echo "    + lib/arm64-v8a ($(du -sh "$PROJ/lib/arm64-v8a" | cut -f1))"
 fi
@@ -375,10 +428,10 @@ fi
 #         -p  4096 页对齐（native 库；-4 只管 resources.arsc 那类 4 字节对齐）
 #         -f  已存在就覆盖
 #         4   资源区仍按 4 对齐
-"$BT/zipalign" -p -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
+"$ZIPALIGN" -p -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 
 # 校验对齐（zipalign -c 返回非 0 就是没对齐，直接让构建失败而不是签出一个坏包）
-if ! "$BT/zipalign" -c -p -v 4 "$OUT/aligned.apk" >/dev/null 2>&1; then
+if ! "$ZIPALIGN" -c -p -v 4 "$OUT/aligned.apk" >/dev/null 2>&1; then
   echo "    !! zipalign 校验失败：native 库未做 4KB 页对齐" >&2
   exit 1
 fi
@@ -396,14 +449,18 @@ for rel in "assets/chaquopy/bootstrap-native/arm64-v8a/java/chaquopy.so" \
 done
 echo "    + APK 资产复核通过（java/chaquopy.so 已入包）"
 
+# 签名段整体可跳过：SKIP_SIGN=1 用于「本机还没回填 test.keystore」时做编译验证。
+# 跳过时不产出 TingShu.apk，aligned.apk 明确标注为不可安装/不可发布，
+# 避免误把未签名中间产物当成交付包。
+if [ "$SKIP_SIGN" != "1" ]; then
 echo "==> [8/9] sign"
-"$BT/apksigner" sign \
+"$APKSIGNER" sign \
   --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --ks-key-alias fengxi \
   --out "$PROJ/TingShu.apk" "$OUT/aligned.apk"
 
 echo "==> [9/9] verify"
-"$BT/apksigner" verify --print-certs "$PROJ/TingShu.apk" | head -4
+"$APKSIGNER" verify --print-certs "$PROJ/TingShu.apk" | head -4
 
 # ★ v3.7.15：签名硬闸门。
 #
@@ -414,7 +471,7 @@ echo "==> [9/9] verify"
 #
 #   这里把"必须签过名"变成构建的一部分：verify 不通过就直接判构建失败，
 #   并且顺手比对"成品 ≠ 未签名中间产物"，从机制上堵死贴错源的可能。
-if ! "$BT/apksigner" verify "$PROJ/TingShu.apk" >/dev/null 2>&1; then
+if ! "$APKSIGNER" verify "$PROJ/TingShu.apk" >/dev/null 2>&1; then
   echo "    !! 签名校验失败：$PROJ/TingShu.apk 没有有效签名" >&2
   echo "       （若你拿到的是 aligned.apk 的副本，就是这个原因）" >&2
   exit 1
@@ -426,7 +483,7 @@ fi
 #   apksigner 认为它"签名有效"，但 vivo / OPPO 等厂商安装器会校验证书完整性，
 #   判定为「缺乏开发者证书」直接拒绝安装（用户装机报"软件包似乎无效"）。
 #   所以这里额外断言证书确实带组织与地区信息。
-if ! "$BT/apksigner" verify --print-certs "$PROJ/TingShu.apk" 2>/dev/null \
+if ! "$APKSIGNER" verify --print-certs "$PROJ/TingShu.apk" 2>/dev/null \
      | grep -q "O=FengXi TingShu Project"; then
   echo "    !! 签名证书身份不完整（Subject 缺少 O=/C= 等字段）" >&2
   echo "       厂商安装器（vivo/OPPO）会报「缺乏开发者证书」。请用规范证书重签：" >&2
@@ -446,6 +503,10 @@ if ! unzip -l "$PROJ/TingShu.apk" "META-INF/MANIFEST.MF" >/dev/null 2>&1; then
   exit 1
 fi
 echo "    + 签名闸门通过（已签名且与 aligned.apk 不同）"
+else
+  echo "==> [8/9] 跳过签名（SKIP_SIGN=1，本机未回填 test.keystore）"
+  echo "    未签名中间产物仅供编译验证，不可安装 / 不可发布：$OUT/aligned.apk"
+fi
 
 # ★ v3.7.16：Manifest 组件保名闸门（R8 混淆回归防线）。
 #
@@ -465,7 +526,7 @@ echo "    + 签名闸门通过（已签名且与 aligned.apk 不同）"
 #
 #   这里把「Manifest 声明的类名 == 混淆后的类名」变成硬断言，
 #   从机制上堵死这类漏 keep 的坑。
-python3 - "$PROJ" <<'PYCHK'
+"$PY" - "$PROJ" <<'PYCHK'
 import re, sys, os
 proj = sys.argv[1]
 mf = open(os.path.join(proj, "AndroidManifest.xml"), encoding="utf-8").read()
@@ -497,7 +558,7 @@ echo "    + Manifest 组件保名闸门通过（无组件被混淆）"
 # ★ v3.7.17：反射类保名闸门。
 #   Rhino 的 VMBridge 等类是按硬编码字符串 Class.forName() 反射加载的，
 #   被混淆改名后运行时 NoClassDefFoundError，JS 引擎整体失效。
-python3 - "$PROJ" <<'PYCHK2'
+"$PY" - "$PROJ" <<'PYCHK2'
 import re, sys, os
 mp = open(os.path.join(sys.argv[1], "out", "mapping.txt"), encoding="utf-8").read()
 need = ["org.mozilla.javascript.VMBridge", "org.mozilla.javascript.Context",
@@ -516,11 +577,16 @@ PYCHK2
 if [ $? -ne 0 ]; then exit 1; fi
 echo "    + 反射类保名闸门通过（Rhino 关键类未改名）"
 
-ls -la "$PROJ/TingShu.apk"
-echo "==> BUILD OK"
+if [ "$SKIP_SIGN" != "1" ]; then
+  ls -la "$PROJ/TingShu.apk"
+  echo "==> BUILD OK"
+else
+  ls -la "$OUT/aligned.apk"
+  echo "==> COMPILE OK（未签名，仅编译验证；回填 test.keystore 后去掉 SKIP_SIGN 才会出正式包）"
+fi
 
 # ★ v4.14.0-car：车机版产物归档到 release/
-if [ "$CAR_MODE" = "1" ]; then
+if [ "$CAR_MODE" = "1" ] && [ "$SKIP_SIGN" != "1" ]; then
   mkdir -p "$PROJ/release"
   cp "$PROJ/TingShu.apk" "$PROJ/release/枫兮听书-v${BASE_VER}-car.apk"
   echo "==> 车机版已归档：release/枫兮听书-v${BASE_VER}-car.apk"

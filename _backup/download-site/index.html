@@ -5,190 +5,136 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>枫兮 · 应用下载</title>
 <style>
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: #0e1116; color: #e8ecf2; min-height: 100vh;
-    font: 15px/1.8 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-    padding: 24px 16px calc(40px + env(safe-area-inset-bottom));
-  }
-  .wrap { max-width: 560px; margin: 0 auto; }
-  .hd { text-align: center; margin-bottom: 24px; }
-  .hd h1 { font-size: 23px; margin: 0 0 4px; letter-spacing: .5px; }
-  .hd p { color: #8b96a8; font-size: 13.5px; margin: 0; }
-  .card {
-    background: #171c24; border: 1px solid #262e3a; border-radius: 18px;
-    padding: 22px 20px; margin-bottom: 16px; box-shadow: 0 10px 34px rgba(0,0,0,.4);
-  }
-  .top { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
-  .icon {
-    flex: 0 0 58px; width: 58px; height: 58px; border-radius: 16px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 25px; font-weight: 700; color: #fff; letter-spacing: 1px;
-  }
-  .icon.v { background: linear-gradient(140deg,#3b82f6,#7c3aed); box-shadow: 0 6px 18px rgba(80,110,255,.3); }
-  .icon.t { background: linear-gradient(140deg,#0ea5a4,#3b82f6); box-shadow: 0 6px 18px rgba(14,165,164,.3); }
-  .top h2 { font-size: 20px; margin: 0 0 2px; }
-  .top .sub { color: #8b96a8; font-size: 12.5px; line-height: 1.6; }
-  .btn {
-    display: block; width: 100%; text-align: center; text-decoration: none;
-    background: linear-gradient(135deg,#3b82f6,#6366f1); color: #fff;
-    font-size: 16.5px; font-weight: 600; padding: 15px; border-radius: 13px;
-    box-shadow: 0 6px 20px rgba(59,130,246,.35); margin: 16px 0 0;
-  }
-  .btn.t { background: linear-gradient(135deg,#0ea5a4,#3b82f6); box-shadow: 0 6px 20px rgba(14,165,164,.3); }
-  .btn:active { transform: translateY(1px); opacity: .92; }
-  .btn.ghost {
-    background: #1d2531; color: #a9c4e8; box-shadow: none;
-    border: 1px solid #2c3a4d; font-size: 13.5px; padding: 11px; margin-top: 9px;
-  }
-  .meta { font-size: 12px; color: #7d8899; margin-top: 11px; line-height: 1.9; }
-  .meta code { color: #b9c7d8; font-size: 11.5px; }
-  h3 {
-    font-size: 13px; color: #9fd8ff; margin: 18px 0 9px;
-    letter-spacing: .3px; font-weight: 600;
-  }
-  ul { padding-left: 19px; margin: 0; font-size: 13.5px; color: #a8b3c2; }
-  li { margin: 6px 0; }
-  li b { color: #d7e2ee; font-weight: 600; }
-  .extra {
-    margin-top: 14px; padding-top: 12px; border-top: 1px solid #232b37;
-    font-size: 12.5px; color: #8b96a8;
-  }
-  a.link { color: #7fd1ff; text-decoration: none; }
-  h2.sec {
-    font-size: 16px; color: #9fd8ff; margin: 0 0 14px;
-    border-left: 4px solid #3b82f6; padding-left: 10px;
-  }
-  ol { padding-left: 20px; margin: 0; font-size: 13.5px; color: #a8b3c2; }
-  ol li { margin: 7px 0; }
-  .warnbox {
-    background: #241c10; border: 1px solid #57401c; border-radius: 10px;
-    color: #f0d09a; padding: 12px 14px; font-size: 13px; margin-top: 14px;
-  }
-  .warnbox b { color: #ffdca6; }
-  details { border-top: 1px solid #232b37; padding: 12px 0 0; margin-top: 14px; }
-  summary { cursor: pointer; color: #9fd8ff; font-size: 13px; font-weight: 600; }
-  .kv { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
-  .kv td { padding: 6px 4px; border-bottom: 1px solid #232b37; vertical-align: top; }
-  .kv tr:last-child td { border-bottom: 0; }
-  .kv td.k { color: #8792a4; width: 26%; }
-  .kv td.v { color: #c6d3e2; word-break: break-all; }
-  .kv code { color: #9fd8ff; font-size: 11.5px; }
-  .foot { text-align: center; color: #5c6675; font-size: 11.5px; margin-top: 26px; line-height: 2; }
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{background:#0e1116;color:#e8ecf2;min-height:100vh;
+ font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+ padding:24px 16px calc(40px + env(safe-area-inset-bottom))}
+.wrap{max-width:560px;margin:0 auto}
+.hd{text-align:center;margin-bottom:24px}
+.hd h1{font-size:23px;margin:0 0 4px;letter-spacing:.5px}
+.hd p{color:#8b96a8;font-size:13.5px;margin:0}
+.card{background:#171c24;border:1px solid #262e3a;border-radius:18px;
+ padding:22px 20px;margin-bottom:16px;box-shadow:0 10px 34px rgba(0,0,0,.4)}
+.top{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.icon{flex:0 0 58px;width:58px;height:58px;border-radius:16px;display:flex;
+ align-items:center;justify-content:center;font-size:25px;font-weight:700;color:#fff}
+.icon.v{background:linear-gradient(140deg,#3b82f6,#7c3aed);box-shadow:0 6px 18px rgba(80,110,255,.3)}
+.icon.t{background:linear-gradient(140deg,#0ea5a4,#3b82f6);box-shadow:0 6px 18px rgba(14,165,164,.3)}
+.top h2{font-size:20px;margin:0 0 2px}
+.top h2 span{font-size:13px;color:#8b96a8;font-weight:400}
+.top .sub{color:#8b96a8;font-size:12.5px;line-height:1.6}
+.btn{display:block;width:100%;text-align:center;text-decoration:none;
+ background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-size:17px;
+ font-weight:700;letter-spacing:.3px;padding:16px;border-radius:13px;
+ box-shadow:0 6px 20px rgba(59,130,246,.35);margin:16px 0 0}
+.btn.t{background:linear-gradient(135deg,#0ea5a4,#3b82f6);box-shadow:0 6px 20px rgba(14,165,164,.3)}
+.btn:active{transform:translateY(1px);opacity:.92}
+.btn.ghost{background:#1d2531;color:#a9c4e8;box-shadow:none;border:1px solid #2c3a4d;
+ font-size:13.5px;padding:11px;margin-top:9px}
+.meta{font-size:12px;color:#7d8899;margin-top:11px;line-height:1.9}
+.meta code{color:#b9c7d8;font-size:11.5px}
+h3{font-size:13px;color:#9fd8ff;margin:18px 0 9px;letter-spacing:.3px;font-weight:600}
+ul{padding-left:19px;margin:0;font-size:13.5px;color:#a8b3c2}
+li{margin:6px 0}li b{color:#d7e2ee;font-weight:600}
+.extra{margin-top:14px;padding-top:12px;border-top:1px solid #232b37;font-size:12.5px;color:#8b96a8}
+a.link{color:#7fd1ff;text-decoration:none}
+h2.sec{font-size:16px;color:#9fd8ff;margin:0 0 14px;border-left:4px solid #3b82f6;padding-left:10px}
+ol{padding-left:20px;margin:0;font-size:13.5px;color:#a8b3c2}ol li{margin:7px 0}
+.warnbox{background:#241c10;border:1px solid #57401c;border-radius:10px;color:#f0d09a;
+ padding:12px 14px;font-size:13px;margin-top:14px}
+.warnbox b{color:#ffdca6}
+/* 折叠区：默认收起，首屏只留两个软件 + 两个大按钮 */
+details.fold{margin-top:14px;padding-top:12px;border-top:1px solid #232b37}
+details.fold>summary{cursor:pointer;color:#9fd8ff;font-size:13px;font-weight:600;
+ list-style:none;display:flex;align-items:center;gap:8px}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::before{content:"▸";font-size:12px;color:#6f9fc9}
+details.fold[open]>summary::before{content:"▾"}
+details.fold>summary .cnt{color:#7d8899;font-weight:400;font-size:12px}
+details.card.fold{margin-top:0;padding-top:16px;border-top:0}
+details.fold ul{margin-top:10px}
+.kv{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+.kv td{padding:6px 4px;border-bottom:1px solid #232b37;vertical-align:top}
+.kv tr:last-child td{border-bottom:0}
+.kv td.k{color:#8792a4;width:26%}.kv td.v{color:#c6d3e2;word-break:break-all}
+.kv code{color:#9fd8ff;font-size:11.5px}
+.foot{text-align:center;color:#5c6675;font-size:11.5px;margin-top:26px;line-height:2}
 </style>
 </head>
 <body>
 <div class="wrap">
-
   <div class="hd">
     <h1>枫兮 · 应用下载</h1>
-    <p>两个 App，点按钮直接下载安装 · 安卓手机 / 车机通用</p>
+    <p>两个应用 · 点下面的大按钮直接下载安装 · 安卓手机 / 车机通用</p>
   </div>
-
-  <!-- 枫兮影视 -->
   <div class="card">
     <div class="top">
       <div class="icon v">影</div>
       <div>
-        <h2>枫兮影视 <span style="font-size:13px;color:#8b96a8;font-weight:400">v2.16</span></h2>
+        <h2>枫兮影视 <span>v2.25</span></h2>
         <div class="sub">飞牛 NAS / TVBox 多源影视播放器</div>
       </div>
     </div>
-    <a class="btn" data-dl href="fengxi-video-v2.16.apk" download="fengxi-video-v2.16.apk">下载安装包（5.9 MB）</a>
-    <a class="btn ghost" data-dl href="fengxi-video-v2.16.apk">备用直链（浏览器直存）</a>
-    <div class="meta">
-      Android 5.0+ · arm64 · 包名 <code>com.fengxi.fnplayer</code> · versionCode 27
-    </div>
-
-    <h3>能做什么</h3>
-    <ul>
-      <li><b>v2.16 修复</b>：换上与枫兮听书同款橙 FX 图标；修复爬虫源（豆瓣等）播放报 no protocol / code=1；顶栏两个下拉不再挤在一起；海报不再整片空白</li>
-      <li><b>v2.16 优化</b>：接口加载改并发、慢源有超时提示，首页不再卡住转圈</li>
-      <li><b>飞牛 NAS</b>：原生登录、媒体库分类、影片详情、选集、取链播放</li>
-      <li><b>多源订阅</b>：TVBox / CMS 配置解析、线路选择、资源站与直播源自动录入</li>
-      <li><b>爬虫源</b>：内置 spider 运行时，<code>csp_</code> jar 源可直连播放</li>
-      <li><b>三个内容页</b>：首页（影视）、直播（m3u/txt）、短剧（竖滑 + 自动翻页）</li>
-      <li><b>播放</b>：ijkplayer 硬软解自动切换、画中画、https 流经本地代理、拖动续传</li>
-      <li><b>界面</b>：居中源选择弹窗（带搜索）、主题、历史记录、书架</li>
-    </ul>
-
-    <div class="extra">
-      附：<a class="link" data-dl href="hongguo-v2.js">hongguo-v2.js</a>（红果短剧源脚本，v2.9 起需重新导入生效）
-    </div>
+    <a class="btn v" href="fengxi-video-v2.25.apk">下载 枫兮影视 · 5.9 MB</a>
+    <a class="btn ghost" href="fengxi-video-v2.25.apk">备用直链（点这个也能下）</a>
+    <div class="extra">附：<a class="link" href="hongguo-v2.js">hongguo-v2.js（红果短剧源脚本，v2.9 起需重新导入生效）</a></div>
+    <details class="fold">
+      <summary>版本更新与功能说明 <span class="cnt">共 14 条 · 点开看</span></summary>
+      <ul><li><b>飞牛 NAS</b>：原生登录、媒体库分类、影片详情、选集、取链播放</li><li><b>多源订阅</b>：TVBox / CMS 配置解析、线路选择、资源站与直播源自动录入</li><li><b>v2.21</b>：搜索对齐 EasyBox——所有源<b>并行检索</b>，实时显示「搜索(N/M)」，结果按源分组筛选（全部显示 + 来源 chips），卡片标注「来源：X」</li><li><b>v2.21</b>：首页源下拉贴到最左边；播放缓冲期不再误显中央大三角（仅暂停时显示）</li><li><b>v2.21</b>：播放失败信息可定位（地址主机/是否代理/建议），首次错误自动软解并重新取链（刷新 NAS 时效链接）</li><li><b>v2.22</b>：<b>车机竖屏短剧流</b>——所有短剧卡片统一进竖屏沉浸页（含爬虫源），像刷抖音一样上下滑切集，下一集预取命中后<b>零等待</b>换集，控件 3s 自动渐隐</li><li><b>v2.22</b>：<b>悬浮小窗播放</b>——播放页点 ▣ 缩为可拖动小窗（左右边缘吸附），画面无缝移交不黑屏，双击回全屏自动续播；适配深蓝 S05 + Deepal+ 卡片桌面</li><li><b>v2.22</b>：<b>车机浮窗卡片首页</b>——浮窗宽度 &lt;480px 自动切单列横排大卡 / 双列 16:9 小卡，热区 ≥48px，对比度强化，浮窗缩放实时自适应</li><li><b>v2.23</b>：<b>对照 EasyBox 重整竖屏排版</b>——底部第 4 栏改为「我的」，订阅 / 观看记录 / 聚合搜索一屏直达；空态直接引导添加订阅源；详情页选集支持正序 / 倒序切换</li><li><b>v2.23</b>：修<b>冷启动白屏</b>（不再因未填 NAS 地址强制跳设置页，资源站 / 爬虫 / TVBox 线路也能进首页）；添加源与导入源改异步，网络慢时界面不再假死；修弹层残留、海报列数只对首页生效、车机态热区失效</li><li><b>v2.24</b>：修<b>「添加源后返回首页仍卡在空态」</b>——切回首页时海报墙为空就重新加载；按「不内置源」红线把内置源脚本彻底移出安装包，本 App <b>零内置源</b>，内容全部来自你自己导入</li><li><b>v2.24</b>：对照 EasyBox 官方包的明文前端与同作者开源工程复核排版，确认「我的」聚合入口、首启引导、选集正倒序方向正确；版本号 / 下载页 / 更新清单同步，沿用原签名证书可直接覆盖安装</li><li><b>v2.25</b>：修<b>真机闪退</b>——不再加载第三方爬虫包里的 native 加密壳（ABI 不匹配会直接杀进程），改为明确提示「不支持」；源清单改摘要返回，大配置不再把 WebView 撑爆；「我的 → 崩溃日志」可一键复制堆栈定位问题</li><li><b>v2.25</b>：修<b>「很多源解析不了」</b>——纯爬虫站线路不再被误判失败并整体回滚；配置里相对 spider.jar / file:// ext 自动补全并按需下载；type=0 的 XML 采集站可读；JSON 截取改括号平衡，尾部带脚本的配置也能解析；沿用原签名证书可直接覆盖安装</li></ul>
+      <div class="meta">Android 5.0+ · 包名 <code>com.fengxi.fnplayer</code> · versionCode 36</div>
+    </details>
   </div>
 
-  <!-- 枫兮听书 -->
   <div class="card">
     <div class="top">
       <div class="icon t">听</div>
       <div>
-        <h2>枫兮听书 <span style="font-size:13px;color:#8b96a8;font-weight:400">v4.21.34</span></h2>
+        <h2>枫兮听书 <span>v4.21.56</span></h2>
         <div class="sub">网盘有声书 · 解析转存 · 缓存中继 · 后台播放</div>
       </div>
     </div>
-    <a class="btn t" data-dl href="fengxi-tingshu-v4.21.34.apk" download="fengxi-tingshu-v4.21.34.apk">下载安装包（47.8 MB）</a>
-    <a class="btn ghost" data-dl href="fengxi-tingshu-v4.21.34.apk">备用直链（浏览器直存）</a>
-    <div class="meta">
-      Android 5.0+ · 包名 <code>com.tingshu.app</code> · versionCode 226
-    </div>
-
-    <h3>能做什么</h3>
-    <ul>
-      <li><b>一条链路走通</b>：网盘分享解析 → 自动转存 → 取链 → 本地缓存中继 → 播放</li>
-      <li><b>一次点击就播</b>：不用点两下、不会只弹状态栏；支持拖动续传</li>
-      <li><b>后台播放</b>：退出界面照常听，通知栏 / 状态栏可控制</li>
-      <li><b>桌面小组件</b>：App 未启动时点一下也能直接开播</li>
-      <li><b>缓存自动轮转</b>：播完删掉旧缓存，再缓存下一批，不堆占空间</li>
-      <li><b>功能诊断</b>：按功能块单独出日志，出问题时能定位到哪一步</li>
-      <li><b>书库管理</b>：搜索页、批量多选导入、排序</li>
-    </ul>
-  </div>
-
-  <!-- 安装 -->
-  <div class="card">
-    <h2 class="sec">安装步骤</h2>
-    <ol>
-      <li>点上面的下载按钮，浏览器把 APK 存进「下载」目录（提示风险时选「仍要下载」）</li>
-      <li>到「文件管理 → 下载」找到 APK，点开用「包安装程序」安装</li>
-      <li>弹出「未知来源」时允许本浏览器安装应用</li>
-      <li>影视：打开后填飞牛地址或导入 TVBox 订阅；听书：登录网盘后粘贴分享链接即可</li>
-    </ol>
-    <div class="warnbox">
-      <b>安装提示</b>：两个包都是 targetSdk 28（为放行局域网明文 HTTP），新系统可能提示「为旧版 Android 打造」，属正常，继续安装即可。若点 APK 被别的 App 抢开，去 设置 → 应用管理 → 找到抢注 <code>.apk</code> 的 App → 清除默认值。
-    </div>
-    <details>
-      <summary>文件校验（可选）</summary>
-      <table class="kv">
-        <tr><td class="k">影视 v2.16</td><td class="v">6,153,620 字节 · MD5 <code>585ac0be946c34987ea42d1f812963d8</code></td></tr>
-        <tr><td class="k">听书 v4.21.34</td><td class="v">50,143,438 字节 · MD5 <code>bb8c07e997aed50c7bae85851d2faaff</code></td></tr>
-      </table>
+    <a class="btn t" href="fengxi-tingshu-v4.21.56.apk">下载 枫兮听书 · 47.9 MB</a>
+    <a class="btn ghost" href="fengxi-tingshu-v4.21.56.apk">备用直链（点这个也能下）</a>
+    
+    <details class="fold">
+      <summary>版本更新与功能说明 <span class="cnt">共 27 条 · 点开看</span></summary>
+      <ul><li><b>v4.21.56</b>：<b>播放页「更多」菜单加液态玻璃</b>——点「⋯更多」（及长按）弹出的菜单改成与首页书源下拉同款的毛玻璃质感，随模糊强度滑块一起联动；只加这一个临时弹出层，不碰底栏等常驻层，悬浮球/滑块不受影响</li><li><b>v4.21.55</b>：<b>回退到 4.21.52 稳定版代码</b>——撤销 4.21.53/4.21.54 两轮的玻璃质感改动，恢复大家实测「效果不错」的液态玻璃版本（悬浮球正常、滑块正常、底栏正常）；仅升版本号以便覆盖安装，功能与 4.21.52 完全一致</li><li><b>v4.21.54</b>：<b>修复 4.21.53 的回归</b>——移除播放页按钮/弹出菜单/底栏新增的 backdrop-filter（这台机 WebView targetSdk28 上会触发合成层异常，导致<b>悬浮球消失、设置滑块拖不动</b>），改用自带磨砂底色的玻璃质感，任何场景都有一致观感；播放页更多按钮/菜单/底栏仍随模糊强度滑块联动</li><li><b>v4.21.53</b>：<b>玻璃质感三处补齐</b>——①模糊强度 0% 改为「桌面文件夹」式磨砂玻璃（轻糊+白雾+亮边，不再是全透片）②播放页「更多」按钮与弹出菜单接入滑块一起变 ③底部导航栏做成半透明玻璃、透出背后滚动内容；三处均随模糊强度滑块实时联动</li><li><b>v4.21.52</b>：<b>液态玻璃 + 滑块布局修复</b>——浮层改成透明带高光的液态玻璃质感（边缘细亮边 + 斜向微光），白底大幅压低；滑块 0% 是全透明玻璃、越往右越糊；修复设置页滑块溢出屏幕——标签与滑块分行、滑块从左到右铺满</li><li><b>v4.21.51</b>：<b>模糊强度可调</b>——设置 → 外观新增「模糊强度」滑块（0~100%，默认 60% 即旧效果），一根滑块统一控制播放页封面虚化、书源下拉/弹层/选集毛玻璃、倍速面板；0% 接近实色、100% 最强最通透，拖动即时生效、重启保留；同时修掉毛玻璃白底太厚透不出颜色的问题</li><li><b>v4.21.50</b>：<b>实时毛玻璃</b>——首页书源下拉、底部弹层、选集弹层、播放页倍速面板全部改成 iOS 风格毛玻璃（模糊背后实时内容，不再是纯色卡片）；老设备不支持时自动回退，不影响使用</li><li><b>v4.21.49</b>：修<b>「正在下载」区块不见了</b>（改独立常驻，刷新清单不再清空进度，任何路径切回来都自动恢复）；修<b>分集页底部按钮被导航栏遮住</b>导致「转存 NAS 找不到」</li><li><b>v4.21.49</b>：新增<b>转存整本</b> —— 下载管理主页面每本书直接一键转存全部已下载分集到「本地目录」或「NAS 网盘」，进度与结果都能看到；未配置 WebDAV 时给明确指引</li><li><b>v4.21.48</b>：<b>分集管理</b>——下载管理里可展开每本书逐集查看（大小 / 状态 / 存放位置），支持单集播放、单集删除、全选 / 反选、批量删除</li><li><b>v4.21.48</b>：<b>手动转存</b>——勾选任意分集后现场挑本地文件夹复制（逐集校验大小、原下载文件不动），或一键传到 NAS 网盘（沿用 WebDAV 远端去重）</li><li><b>v4.21.46</b>：<b>检查更新彻底修好</b>——反代主站用自签证书导致旧版只能读到停更的公共镜像；现在只对内置更新源放行自签证书（不影响其它网络请求），主站不通自动切内网直连，下载后仍做 MD5 校验</li><li><b>v4.21.45</b>：<b>检查更新改回内置官方渠道</b>——自动走反代 HTTPS 主站，主站不通时自动切内网直连；关于页不再显示或要求填写任何服务器地址（避免截图泄密）</li><li><b>v4.21.44</b>：彻底修复番茄听书「直连」等 jar 插件源翻页提示「后面几页都是重复内容」—— 顺着插件给的下一页地址翻，插件没给就自动探测站点实际用的分页写法</li><li><b>v4.21.44</b>：下载页主按钮可直接下载（修掉手机浏览器拦截）；App「检查更新」改读 NAS 下载站同一份清单</li><li><b>网址生成书源（新）</b>：源管理里输入网站地址，App 自动分析成源，带全过程诊断</li><li><b>自动更新一条龙</b>：点「检查更新」自动比对最新版本，自动下载（带进度与 MD5 校验）并自动拉起安装</li><li><b>一条链路走通</b>：网盘分享解析 → 自动转存 → 取链 → 本地缓存中继 → 播放</li><li><b>一次点击就播</b>：不用点两下、不会只弹状态栏；支持拖动续传</li><li><b>后台播放</b>：退出界面照常听，通知栏 / 状态栏可控制</li><li><b>缓存自动轮转</b>：播完删掉旧缓存，再缓存下一批，不堆占空间</li><li><b>功能诊断</b>：按功能块单独出日志，出问题时能定位到哪一步</li><li><b>v4.21.40</b>：<b>自动整理重复源</b>——同站点重复的源验证后失效的自动关闭、留下好源；都能用的不再被直接删除，而是归入源管理页新的「重复源」分组，由你确认后删多余的</li><li><b>v4.21.40</b>：<b>重复源分组</b>——组内附使用引导；下次批量验证组里只剩一个好源时自动退回原分组，删源时同步清标记不留孤儿</li><li><b>v4.21.41</b>：<b>修复删除失效</b>——插件源（JS 包 / jar）删除后不再被重新加载装回来；删除记录按白名单过滤，删了就是真删了</li><li><b>v4.21.41</b>：<b>修复预存失真</b>——预存不再超出总集数（杜绝把最后一集错标成第 N 集的假缓存）；集间 1.2 秒限流间隔；连续 5 次失败自动暂停、5 分钟后自动恢复，长书预存稳定落盘</li><li><b>v4.21.42</b>：<b>修复 JS 插件源分类翻页</b>——页码藏在分类地址尾部，翻页时宿主一直把第 1 页地址重复传回去；现在按页号推进并顺插件给的下一页链接续页</li></ul>
+      <div class="meta">Android 5.0+ · 包名 <code>com.tingshu.app</code> · versionCode 248</div>
     </details>
   </div>
 
-  <!-- 已知边界 -->
   <div class="card">
-    <h2 class="sec">已知边界</h2>
-    <ul>
-      <li><b>影视</b>：红果短剧官网仅免费试看集有直链，付费集会明确提示「第 X 集起无地址」；爬虫源依赖配置里能下载到的 jar，拿不到的源会灰显提示；v2.9 起移除了「连接诊断」。</li>
-      <li><b>听书</b>：网盘解析依赖分享链接本身有效与账号登录态，失效链接会解析失败；缓存文件占本机空间，App 会自动清理已播内容。</li>
-    </ul>
+    <div class="top">
+      <div class="icon t">伴</div>
+      <div>
+        <h2>伴读娘 <span>v1.9.1</span></h2>
+        <div class="sub">会念消息的像素小人 · 真人音色 + 断网兜底</div>
+      </div>
+    </div>
+    <a class="btn t" href="buddy-v1.9.1.apk">下载 伴读娘 · 17.3 MB</a>
+    <a class="btn ghost" href="buddy-v1.9.1.apk">备用直链（点这个也能下）</a>
+    
+    <details class="fold">
+      <summary>版本更新与功能说明 <span class="cnt">共 15 条 · 点开看</span></summary>
+      <ul><li><b>1.9.1</b>：音色列表精简：修掉孔卡尼语等小语种漏进列表（韩语ko前缀误匹配孔卡尼语kok），中文简繁体合并为一条；只保留中英日韩法德西俄常用语言</li><li><b>1.9</b>：音色列表重做——不再显示上百个国家语言；自动优先选中手机自带语音引擎（小V/vivo/讯飞等有男女声的），只有 Google 引擎时才回退显示中英日韩等常用语言</li><li><b>1.8</b>：彻底去掉内置离线引擎（删掉33MB模型和so，安装包从60MB瘦到18MB），只保留手机系统语音；音色列表优化——语言级音色显示成中文语言名并去重，中文排最前；小V等厂商引擎会直接列出男女声音色；当前引擎无男女声时会引导你去切换</li><li><b>1.7</b>：朗读改为手机系统语音（iQOO就是小V），不再联网更稳定；新增引擎和音色下拉，自动列出本机所有语音；系统语音不可用时自动用内置音色；换FX系列新图标</li><li><b>1.6.5</b>：形象高清化（素材放大3倍+锐化，线条平滑无颗粒感）；新增声音来源开关（在线优先/只用本地）和朗读音量滑条；来消息不念时现在会弹提示告诉你原因</li><li><b>1.6.4</b>：形象不再是白蒙蒙（画笔透明度污染修复，颜色饱和清晰）；离线试听闪退根因修复（模型改为直接从安装包内读取，不再拷贝，还省 33MB 手机空间）</li><li><b>1.6.3</b>：修复启动闪退：双页布局里设置页容器被重复挂载导致必定崩溃，已在模拟器验证首页/设置页均正常</li><li><b>1.6.2</b>：排查加固版：启动若崩溃会直接把原因显示在屏幕上（截图发我即可修复），同时崩溃日志自动存到手机</li><li><b>1.6.1</b>：闪退排查版：新增崩溃自诊断，闪退后打开设置页可查看并复制崩溃原因；其余功能与 v1.6 相同</li><li><b>会念消息</b>：微信/QQ 来新消息自动念「谁说：什么」，最近消息点一条重听一条</li><li><b>真人音色</b>：微软在线语音合成，内置 14 种中文音色（晓晓/云希/东北腔/台湾腔/香港腔等），可试听可切换</li><li><b>断网兜底</b>：内置离线语音引擎（174 个发音人），联网失败自动切换接着念，断网也能用</li><li><b>会动的形象</b>：5 个像素 Q 版少女（美优/露米/小琪/蒂娜/娜美），会呼吸眨眼、挥手、小跑、跳跃</li><li><b>v1.6</b>：形象去雾层、整数倍缩放线条更锐利；界面改双页（首页形象 / 设置页集中设置）；离线引擎稳定性加固</li><li>消息记录只存本机（最近 500 条），不上传、不读取无关信息；在线合成仅发送要念的文本</li></ul>
+      <div class="meta">Android 5.0+ · 包名 <code>com.fengxi.notiread</code> · versionCode 16</div>
+    </details>
   </div>
 
-  <div class="foot">仅供个人使用 · 枫兮影视 / 枫兮听书<br>更新于 2026-11-09</div>
+  <details class="card fold">
+    <summary>安装步骤与文件校验 <span class="cnt">点开看</span></summary>
+    <ol>
+      <li>点上面的下载按钮，APK 存进「下载」目录（提示风险时选「仍要下载」）</li>
+      <li>到「文件管理 → 下载」点开 APK，用「包安装程序」安装</li>
+      <li>弹出「未知来源」时允许本浏览器安装应用</li>
+      <li>影视：打开后填 NAS 地址或导入订阅；听书：登录网盘后粘贴分享链接</li>
+    </ol>
+    <div class="warnbox"><b>安装提示</b>：两个包都是 targetSdk 28（为放行局域网明文 HTTP），新系统可能提示「为旧版 Android 打造」，属正常，继续安装即可。</div>
+    <h3>文件校验（可选）</h3>
+    <table class="kv"><tr><td class='k'>枫兮影视 v2.25</td><td class='v'>6,141,325 字节 · MD5 <code>0034b87ea131bc26d1a5e33519af81a6</code></td></tr><tr><td class='k'>枫兮听书 v4.21.56</td><td class='v'>50,278,606 字节 · MD5 <code>643735c289dc91a094b1811810fce7b7</code></td></tr><tr><td class='k'>伴读娘 v1.9.1</td><td class='v'>18,128,551 字节 · MD5 <code>38325e54da8703373f58c9d4d1946def</code></td></tr></table>
+  </details>
+  <div class="foot">仅供个人使用 · 枫兮影视 / 枫兮听书<br>纯内网直连 NAS · 更新于 2026-11-17 17:06:10</div>
 </div>
-
-<script>
-  // 公网访问凭据（sharecode）必须继承到下载直链，否则会被访问控制判 403。
-  (function () {
-    var q = window.location.search;
-    if (!q) return;
-    var as = document.querySelectorAll('a[data-dl]');
-    for (var i = 0; i < as.length; i++) {
-      var a = as[i];
-      a.setAttribute('href', a.getAttribute('href') + q);
-    }
-  })();
-</script>
 </body>
 </html>

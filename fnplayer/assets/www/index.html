@@ -47,8 +47,8 @@
       <div class="empty hide" id="homeEmpty">
         <div class="empty-ico">▦</div>
         <div id="emptyText">还没有内容</div>
-        <button class="btn primary" onclick="App.go('pageSettings')">去设置 → 源管理</button>
-        <button class="btn" onclick="App.openWeb()">改用网页浏览</button>
+        <button class="btn primary" onclick="App.goSrcMgmt()">立即添加订阅源</button>
+        <button class="btn" onclick="App.openWeb()">改用网页浏览（降级）</button>
       </div>
     </section>
 
@@ -69,7 +69,10 @@
         <div class="act" id="actShare"><span>⇪</span><i>分享</i></div>
         <div class="act" id="actIntro"><span>☰</span><i>简介</i></div>
       </div>
-      <div class="sec-row"><div class="sec-t">选集<span class="sec-n" id="epCount"></span></div></div>
+      <div class="sec-row">
+        <div class="sec-t">选集<span class="sec-n" id="epCount"></span></div>
+        <button class="chip" id="epOrderBtn" style="margin:0">正序 ⇅</button>
+      </div>
       <div class="epgrid" id="epList"></div>
     </section>
 
@@ -123,12 +126,20 @@
     <!-- 设置 -->
     <section id="pageSettings" class="page hide">
 
-      <!-- 源管理（v2.4：分层 —— 第一层源管理 → 第二层源分类 → 第三层源设置） -->
+      <!-- v2.23：EasyBox 对齐 ——「我的」聚合入口（订阅 / 记录 / 搜索一屏直达） -->
       <div class="sgroup">
-        <div class="sg-t">源管理</div>
+        <div class="sg-t">我的</div>
         <div class="srow" id="srSrcMgmt">
-          <div class="s-l"><div class="s-t">源管理</div><div class="s-d" id="svSource">NAS 源 / 资源站 / 短剧源</div></div>
+          <div class="s-l"><div class="s-t">订阅 / 源管理</div><div class="s-d" id="svSource">添加订阅、切换线路、管理已导入的源</div></div>
           <div class="s-v link">进入</div>
+        </div>
+        <div class="srow" id="srMyHist">
+          <div class="s-l"><div class="s-t">观看记录</div><div class="s-d">接着上次进度继续看</div></div>
+          <div class="s-v link">查看</div>
+        </div>
+        <div class="srow" id="srMySearch">
+          <div class="s-l"><div class="s-t">聚合搜索</div><div class="s-d">在已导入的多个源里一起找片</div></div>
+          <div class="s-v link">搜索</div>
         </div>
         <div class="srow" id="srDiag">
           <div class="s-l"><div class="s-t">内嵌网页浏览（降级模式）</div><div class="s-d">原生海报墙读不到数据时，直接浏览 NAS 影视网页</div></div>
@@ -178,11 +189,15 @@
           <div class="s-l"><div class="s-t">观看历史</div><div class="s-d">播放时自动记录，最多 50 条</div></div>
           <div class="s-v link" id="svHistory">清空</div>
         </div>
+        <div class="srow" id="srCrashLog">
+          <div class="s-l"><div class="s-t">崩溃日志</div><div class="s-d">闪退后点这里复制日志，可发给开发者定位</div></div>
+          <div class="s-v link">复制</div>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-t">关于</div>
-        <div class="card-s">枫兮影视 <span id="appVer">v2.13</span> · 多源影视播放器：NAS 源 / 资源站 / 爬虫源 / 短剧源，支持 TVBox 线路订阅、加密配置解码、关键词搜索与观看历史。<br>本 App 不内置任何影视资源，内容全部来自你自导入的源。</div>
+        <div class="card-s">枫兮影视 <span id="appVer">v2.25</span> · 多源影视播放器：NAS 源 / 资源站 / 爬虫源 / 短剧源，支持 TVBox 线路订阅、加密配置解码、关键词搜索与观看历史。<br>本 App 不内置任何影视资源，内容全部来自你自导入的源。</div>
       </div>
     </section>
 
@@ -288,7 +303,7 @@
     <div class="tabitem on" data-tab="pageHome"><span>▦</span><i>首页</i></div>
     <div class="tabitem" data-tab="pageLive"><span>▶</span><i>直播</i></div>
     <div class="tabitem" data-tab="pageShort"><span>≋</span><i>短剧</i></div>
-    <div class="tabitem" data-tab="pageSettings"><span>⚙</span><i>设置</i></div>
+    <div class="tabitem" data-tab="pageSettings"><span>⚙</span><i>我的</i></div>
   </nav>
 </div>
 

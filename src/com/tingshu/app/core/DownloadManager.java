@@ -500,7 +500,8 @@ public final class DownloadManager {
             java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
 
     /** 转存目录下的远端文件清单：文件名 → 字节数 */
-    private static java.util.Map<String, Long> remoteSizes(String dirUrl,
+    /** ★ v4.21.48：包内可见，供手动转存（DlExport）复用同一份远端清单 */
+    static java.util.Map<String, Long> remoteSizes(String dirUrl,
             String user, String pass, String auth) {
         java.util.Map<String, Long> m = new java.util.HashMap<String, Long>();
         try {
@@ -524,7 +525,8 @@ public final class DownloadManager {
      * 尺寸不一致（半截上传/版本不同）则重新上传覆盖。existingSizes 非 null 时
      * 复用调用方已列好的清单（批量转存只发一次 PROPFIND）。
      */
-    private static String uploadOneToWebDav(Book book, int humanIdx, File f,
+    /** ★ v4.21.48：包内可见，手动转存按集调用时复用去重/封面逻辑 */
+    static String uploadOneToWebDav(Book book, int humanIdx, File f,
             java.util.Map<String, Long> existingSizes) {
         try {
             if (f == null || !f.isFile()) return "本地文件不存在";

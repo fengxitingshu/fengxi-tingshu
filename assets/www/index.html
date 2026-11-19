@@ -353,6 +353,19 @@
       </div>
     </div>
 
+    <!-- ★ v4.21.52：模糊强度自定义（0~100%），拖动即时生效，重启保留 -->
+    <!-- ★ v4.21.53：滑块独占下一行铺满，避免长描述把它挤出屏幕 -->
+    <div class="setrow setrow-stack">
+      <div class="setlabel">模糊强度<span class="setdesc">播放页封面虚化 + 书源下拉 / 弹层 / 倍速面板一起变；0% 透明液态玻璃，越往右越糊</span></div>
+      <div class="speed" id="fxBlurWrap">
+        <div class="speed-slider">
+          <input type="range" class="sp-range" min="0" max="100" step="1" value="60"
+                 id="fxBlur_r" oninput="App.ui.onFxBlurInput(this.value)">
+          <div class="sp-val" id="fxBlur_v">60%</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ★ v4.6.0：自定义源（本地书源 + 网盘接口）入口移到设置 -->
     <div class="setrow" onclick="App.ui.openCustomFromSettings()">
       <div class="setlabel">自定义源<span class="setdesc">本地书源扫描 + 网盘接口登录 / 配置</span></div>
@@ -389,7 +402,7 @@
     <div class="setrow"><div class="setlabel">网络</div><div class="setval" id="netInfo">检测中…</div></div>
     <div class="setrow"><div class="setlabel">数据存储</div><div class="setval">仅本机</div></div>
 
-    <!-- ★ v4.21.35：更新源改为官方下载站（原 GitHub Releases 已移除） -->
+    <!-- ★ v4.21.45：更新源内置自动选路，界面不显示也不需要填写任何地址 -->
     <div class="chapter-hd"><span>软件更新</span></div>
     <div class="upd-card">
       <div class="upd-hd">
@@ -976,7 +989,39 @@
     <div class="btn" onclick="App.ui.back()">&#8249;</div>
     <h1 class="nav-left">我的下载</h1>
   </div>
+  <!-- ★ v4.21.49：正在下载改成静态常驻区块。
+       以前这个容器是 onDownloadList 动态生成的，下载每完成一集刷新清单就会把它
+       连同进度一起清空，看起来就是「正在下载不见了」。现在独立于清单，永不重建。 -->
+  <div id="dlRunBox" class="dl-run-box">
+    <div class="dlm-sect">正在下载</div>
+    <div id="dlRunBody"></div>
+  </div>
+  <!-- 整本一键转存的进度（分集页也有一个，两个页面都能看到反馈） -->
+  <div id="dlManageProg" class="dlep-prog hide"></div>
   <div id="dlManageBody" class="content"></div>
+</div>
+
+<!-- ==================== ★ v4.21.48 分集管理页 ==================== -->
+<div id="pageDlEpisodes" class="page hide">
+  <div class="nav">
+    <div class="btn" onclick="App.ui.back()">&#8249;</div>
+    <h1 class="nav-left" id="dlepTitle">分集管理</h1>
+    <div class="btn" onclick="App.ui.dlepRefresh()">&#8635;</div>
+  </div>
+  <div id="dlepBody" class="content"></div>
+  <div id="dlepProg" class="dlep-prog hide"></div>
+  <div class="dlep-bar">
+    <div class="dlep-tools">
+      <button class="btn-mini" onclick="App.ui.dlepAll()">全选</button>
+      <button class="btn-mini" onclick="App.ui.dlepInvert()">反选</button>
+      <span id="dlepSelText">已选 0 集</span>
+    </div>
+    <div class="dlep-acts">
+      <button class="btn-mini danger" onclick="App.ui.dlepDelMany()">删除选中</button>
+      <button class="btn-mini" onclick="App.ui.dlepExportLocal()">转存本地</button>
+      <button class="btn-mini" onclick="App.ui.dlepExportNas()">转存 NAS</button>
+    </div>
+  </div>
 </div>
 
 <!-- ==================== 全屏播放页 ==================== -->

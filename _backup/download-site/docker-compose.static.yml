@@ -1,0 +1,26 @@
+# FX 下载站 v3 —— 纯内网静态托管
+#
+# 与旧版（锚点 v2）的区别：
+#   * 删掉 SRC_MANIFEST：不再从外部会话级发布站拉清单，外网断了也不影响下载页
+#   * 删掉 INTERVAL：不轮询、不重写 index.html
+#   * anchor.py 换成纯静态服务器：只把 /data 里的文件托管出去
+#
+# 页面 / manifest / APK 全部由发版本机执行 publish.py 经内网 WebDAV 推送到 ./web，
+# 推完即生效。改完本文件后重启一次容器即可。
+services:
+  fx-download:
+    image: python:3.12-alpine
+    container_name: fx-download
+    restart: unless-stopped
+    working_dir: /app
+    command: python -u /app/anchor.py
+    ports:
+      - "8099:8000"
+    environment:
+      - OUT_DIR=/data
+      - HTTP_PORT=8000
+      - TZ=Asia/Shanghai
+    volumes:
+      # 脚本只读挂载；静态服务不会写入任何文件
+      - ./anchor.py:/app/anchor.py:ro
+      - ./web:/data

@@ -39,6 +39,16 @@ public final class Bridge {
     // v2.16：单线程池会被一个慢请求（豆瓣 API / jar 下载 / 自愈）堵死，
     // 后面所有 loadItems / 直播 / 切源全部排队 → 「卡住不动」。改 3 线程并发。
     private final ExecutorService io = Executors.newFixedThreadPool(3);
+    /** v2.25：探活独立线程池。旧版 spiderUsable 在 io 线程里再 submit 回 io 池，
+     *  多个并发任务会把 3 条线程全占满并互相等待，界面看起来就是「卡死」。 */
+    private static final ExecutorService PROBE =
+            Executors.newSingleThreadExecutor(new java.util.concurrent.ThreadFactory() {
+                @Override public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "fx-probe");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
 
     public Bridge(WebView web, MainActivity act) {
         this.web = web;
@@ -75,8 +85,8 @@ public final class Bridge {
                 o.put("version", pi.versionName);
                 o.put("versionCode", pi.versionCode);
             } catch (Throwable ignored) {
-                o.put("version", "2.22");
-                o.put("versionCode", 33);
+                o.put("version", "2.25");
+                o.put("versionCode", 36);
             }
             o.put("effectiveBase", Reach.cached().length() > 0 ? Reach.cached() : Config.base());
             // 设置中心
@@ -574,24 +584,63 @@ public final class Bridge {
             throw new Exception("当前源不是爬虫源");
         String jar = src.optString("jar", "");
         return com.fengxi.fnplayer.spider.SpiderRuntime.get(
-                act, jar, src.optString("api", ""), src.optString("ext", ""));
+                act, jar, src.optString("api", ""), resolveExt(src));
+    }
+
+    /** ext 文本的内存缓存：key = 配置文件绝对地址。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> EXT_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, String>();
+
+    /**
+     * v2.25：FongMi/TVBox 配置里站点 ext 常写成 {@code file://one.json}、
+     * {@code ./one.json} 或远程 URL，运行时要下载后把「内容」当 extend 传给
+     * Spider.init(Context,String)。旧版把文件名原样传给爬虫，于是这类站点
+     * 全部返回空列表（用户看到的「很多源解析不了」）。改为按需下载并缓存。
+     */
+    private String resolveExt(JSONObject s) {
+        String ext = s.optString("ext", "");
+        String url = s.optString("extUrl", "");
+        if (url.length() == 0 || !url.startsWith("http")) return ext;
+        String hit = EXT_CACHE.get(url);
+        if (hit != null) return hit;
+        try {
+            Map<String, String> h = new java.util.LinkedHashMap<String, String>();
+            h.put("User-Agent", "okhttp/3.15");
+            com.fengxi.fnplayer.core.Net.Resp resp =
+                    com.fengxi.fnplayer.core.Net.get(url, h, true, 10000);
+            if (resp.error.length() == 0 && resp.code >= 200 && resp.code < 300
+                    && resp.body != null && resp.body.trim().length() > 0) {
+                String body = resp.body.trim();
+                EXT_CACHE.put(url, body);
+                return body;
+            }
+        } catch (Throwable ignored) {}
+        return ext;
     }
 
     @JavascriptInterface
     public void loadLibraries() {
         io.execute(new Runnable() {
             @Override public void run() {
-                FnClient.Result r = loadLibrariesOnce();
-                // v2.16：只对「网络层错误」自愈。接口返回网页 / homeContent 没分类
-                // 这类是源本身内容问题，切源也多半一样，傻等反而让首页一直转圈。
-                // v2.18：Guard 加密壳源（NoClassDefFoundError: DexNative）也触发自愈
-                // —— 这类源永远出不了内容，自动换到可用源，不再让首页整页报错。
-                if (!r.ok && (isNetError(r.error) || r.error.contains("加密壳"))) {
-                    String healed = tryHealSource();
-                    if (healed.length() > 0) {
-                        r = loadLibrariesOnce();
-                        js("window.onSourceHealed && window.onSourceHealed(" + q(healed) + ")");
+                FnClient.Result r;
+                try {
+                    r = loadLibrariesOnce();
+                    // v2.16：只对「网络层错误」自愈。接口返回网页 / homeContent 没分类
+                    // 这类是源本身内容问题，切源也多半一样，傻等反而让首页一直转圈。
+                    // v2.18：Guard 加密壳源（NoClassDefFoundError: DexNative）也触发自愈
+                    // —— 这类源永远出不了内容，自动换到可用源，不再让首页整页报错。
+                    if (!r.ok && (isNetError(r.error) || r.error.contains("加密壳")
+                            || r.error.contains("不支持"))) {
+                        String healed = tryHealSource();
+                        if (healed.length() > 0) {
+                            r = loadLibrariesOnce();
+                            js("window.onSourceHealed && window.onSourceHealed(" + q(healed) + ")");
+                        }
                     }
+                } catch (Throwable t) {
+                    // v2.25：任何逃逸异常都必须给前端一个回调，否则首页永远转圈
+                    r = new FnClient.Result();
+                    r.error = "读取媒体库异常：" + Utils.brief(t);
                 }
                 js("window.onLibraries && window.onLibraries(" + resultJson(r, true) + ")");
             }
@@ -1029,14 +1078,14 @@ public final class Bridge {
         } catch (Throwable t) { return ""; }
     }
 
-    /** 源列表 + 当前选中。 */
+    /** 源列表 + 当前选中（v2.25：只给摘要，不带 script/ext/jar 大字段）。 */
     @JavascriptInterface
     public String listSources() {
         JSONObject o = new JSONObject();
         try {
             ensureSourceSeed();
             o.put("ok", true);
-            o.put("list", new JSONArray(Config.sources()));
+            o.put("list", slimSources(new JSONArray(Config.sources())));
             o.put("cur", Config.curSourceId());
         } catch (Throwable t) {
             try { o.put("ok", false).put("error", Utils.brief(t)); } catch (Throwable ignored) {}
@@ -1045,10 +1094,71 @@ public final class Bridge {
     }
 
     /**
+     * v2.25：TVBox 一份配置常有几十上百个站点，站点的 ext / 脚本 / img+ base64 jar
+     * 每个几 KB～几百 KB。旧版 listSources 把整个源数组原样返回给 WebView，
+     * 前端 loadSources / renderSrcCat / loadHome 又要反复 JSON.parse 这份 MB 级字符串，
+     * 卡死甚至 OOM 闪退。这里改成「摘要清单」，大字段只在需要时按需取。
+     */
+    private static JSONArray slimSources(JSONArray arr) {
+        JSONArray out = new JSONArray();
+        if (arr == null) return out;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject s = arr.optJSONObject(i);
+            if (s == null) continue;
+            JSONObject d = new JSONObject();
+            java.util.Iterator<String> it = s.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                if ("script".equals(k) || "ext".equals(k) || "jar".equals(k)) continue;
+                Object v = s.opt(k);
+                if (v == null) continue;
+                if (v instanceof String && ((String) v).length() > 4096)
+                    v = ((String) v).substring(0, 4096);
+                try { d.put(k, v); } catch (Throwable ignored) {}
+            }
+            try {
+                d.put("hasScript", s.optString("script", "").length() > 0)
+                 .put("hasExt", s.optString("ext", "").length() > 0
+                         || s.optString("extUrl", "").length() > 0)
+                 .put("hasJar", s.optString("jar", "").length() > 0);
+            } catch (Throwable ignored) {}
+            out.put(d);
+        }
+        return out;
+    }
+
+    /** 按需取单个源的完整参数（编辑 / 诊断用），避免大字段常驻前端。 */
+    @JavascriptInterface
+    public String getSource(String id) {
+        try {
+            JSONArray arr = new JSONArray(Config.sources());
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject s = arr.optJSONObject(i);
+                if (s != null && id != null && id.equals(s.optString("id"))) return s.toString();
+            }
+        } catch (Throwable ignored) {}
+        return "{}";
+    }
+
+    /**
      * 添加源。json: {name, type:"nas"|"cms"|"js", api, user, pass, trustSsl, secret, apiKey, script}
      * nas 源会立即用账号密码登录验证；成功后保存 token 到源参数里。
      */
+    /**
+     * v2.23：异步包装。NAS 源会同步登录验证，绝不能跑在 WebView 的 JavaBridge
+     * 线程上（历史上「选源卡死 20s」就是同步网络堵死整条桥）。结果走回调。
+     */
     @JavascriptInterface
+    public void addSourceAsync(final String json) {
+        io.execute(new Runnable() {
+            @Override public void run() {
+                String r = addSource(json);
+                js("window.onAddSourceDone && window.onAddSourceDone(" + r + ")");
+            }
+        });
+    }
+
+    /** 同步实现：仅 Java 内部调用，前端一律用 addSourceAsync。 */
     public String addSource(String json) {
         JSONObject r = new JSONObject();
         try {
@@ -1281,7 +1391,21 @@ public final class Bridge {
      * </ul>
      * 导入成功自动归入对应分类（manifest group 或名称含「短剧」→ 短剧源）。
      */
+    /**
+     * v2.23：异步包装。URL 导入最长 30s，原来同步跑在桥线程会让整个界面假死。
+     * 复用已有的 onImportDone 回调（文件导入也走它）。
+     */
     @JavascriptInterface
+    public void importSourceAsync(final String input, final String nameHint) {
+        io.execute(new Runnable() {
+            @Override public void run() {
+                String r = importSource(input, nameHint);
+                js("window.onImportDone && window.onImportDone(" + r + ")");
+            }
+        });
+    }
+
+    /** 同步实现：仅 Java 内部调用，前端一律用 importSourceAsync。 */
     public String importSource(String input, String nameHint) {
         JSONObject r = new JSONObject();
         try {
@@ -1397,7 +1521,7 @@ public final class Bridge {
      * </ul>
      * 兼容 // 注释、/* *​/ 注释与尾逗号。
      */
-    @JavascriptInterface
+    // v2.23：降为 Java 内部方法，前端已全走 parseTvboxAsync；不再暴露同步网络面。
     public String parseTvbox(String input) {
         JSONObject r = new JSONObject();
         try {
@@ -1434,10 +1558,12 @@ public final class Bridge {
             }
             // 形态二：配置本体
             parseSitesAndLives(o, r, new JSONArray(), fromUrl ? input.trim() : "");
-            if (r.optInt("added", 0) == 0 && r.optInt("liveAdded", 0) == 0
-                    && r.optInt("skipped", 0) > 0) {
-                r.put("ok", false).put("error", "解析到 " + r.optInt("skipped", 0)
-                        + " 个站点，但都是 xml 或爬虫源（type≠1），暂不支持");
+            // v2.25：只统计 CMS 是老 bug —— 现在主流线路几乎全是 type=3 爬虫站，
+            // 旧代码会把「全是爬虫站」误判成解析失败并整体回滚，源一个都留不下。
+            if (r.optInt("added", 0) == 0 && r.optInt("spiderAdded", 0) == 0
+                    && r.optInt("liveAdded", 0) == 0) {
+                r.put("ok", false).put("error", "没解析到可用的站点或直播源（"
+                        + r.optInt("skipped", 0) + " 个站点缺少接口地址）");
                 return r.toString();
             }
             r.put("ok", true).put("type", "config");
@@ -1480,7 +1606,11 @@ public final class Bridge {
                         for (int i = 0; i < urls.length(); i++) {
                             JSONObject u = urls.optJSONObject(i);
                             if (u == null) continue;
-                            String cu = u.optString("url", "");
+                            String cu = u.optString("url", "").trim();
+                            // v2.25：多仓里也常见相对线路地址，按仓库地址补全
+                            if (!cu.startsWith("http") && input != null
+                                    && input.trim().startsWith("http"))
+                                cu = completeRelative(cu, input.trim());
                             if (!cu.startsWith("http")) continue;
                             JSONObject ln = new JSONObject();
                             ln.put("name", u.optString("name", "线路 " + (i + 1)));
@@ -1504,19 +1634,32 @@ public final class Bridge {
                                 .put("name", name).put("lines", lines);
                         return;
                     }
-                    int added = 0, skipped = 0, liveAdded = 0;
+                    int added = 0, skipped = 0, liveAdded = 0, spiderAdded = 0;
                     JSONArray names = new JSONArray();
+                    // v2.25：配置里 sites 也可能是一个指向站点列表的 URL
+                    if (o.optJSONArray("sites") == null) {
+                        String sitesUrl = o.optString("sites", "").trim();
+                        if (sitesUrl.startsWith("http")) {
+                            String sub = extractJsonText(fetchConfigText(sitesUrl));
+                            if (sub.length() > 0) {
+                                try { o = new JSONObject(stripJsonComments(sub)); }
+                                catch (Throwable ignored) {}
+                            }
+                        }
+                    }
                     parseSitesAndLives(o, r, names, fromUrl ? input.trim() : "");
                     added = r.optInt("added", 0);
                     skipped = r.optInt("skipped", 0);
                     liveAdded = r.optInt("liveAdded", 0);
-                    if (added == 0 && liveAdded == 0) {
-                        r.put("ok", false).put("error", "没解析到可用的资源站/直播源"
-                                + (skipped > 0 ? "（" + skipped + " 个为 xml/爬虫源，暂不支持）" : "")
+                    spiderAdded = r.optInt("spiderAdded", 0);
+                    if (added == 0 && spiderAdded == 0 && liveAdded == 0) {
+                        r.put("ok", false).put("error", "没解析到可用的站点/直播源"
+                                + (skipped > 0 ? "（" + skipped + " 个站点缺少接口地址）" : "")
                                 + liveSkipHint(r));
                         return;
                     }
-                    r.put("ok", true).put("type", "config").put("added", added).put("skipped", skipped)
+                    r.put("ok", true).put("type", "config").put("added", added)
+                            .put("spiderAdded", spiderAdded).put("skipped", skipped)
                             .put("liveAdded", liveAdded).put("names", names);
                 } catch (Throwable t) {
                     try { r.put("ok", false).put("error", Utils.brief(t)); } catch (Throwable ignored) {}
@@ -1562,9 +1705,10 @@ public final class Bridge {
                             JSONArray names = new JSONArray();
                             parseSitesAndLives(o, r, names, lineUrl == null ? "" : lineUrl.trim());
                             int added = r.optInt("added", 0), liveAdded = r.optInt("liveAdded", 0);
-                            if (added == 0 && liveAdded == 0) {
-                                r.put("ok", false).put("error", "该线路没解析到可用的资源站/直播源"
-                                        + (r.optInt("skipped", 0) > 0 ? "（均为 xml/爬虫源）" : "")
+                            int spiderAdded = r.optInt("spiderAdded", 0);
+                            if (added == 0 && spiderAdded == 0 && liveAdded == 0) {
+                                r.put("ok", false).put("error", "该线路没解析到可用的站点/直播源"
+                                        + (r.optInt("skipped", 0) > 0 ? "（这些站点缺少接口地址）" : "")
                                         + liveSkipHint(r));
                             } else {
                                 // 线路名记回 box 源
@@ -1596,8 +1740,8 @@ public final class Bridge {
                                     if (liveAdded > 0 && la.length() > 0)
                                         firstLive = la.optJSONObject(la.length() - 1).optString("id", "");
                                 } catch (Throwable ignored) {}
-                                r.put("ok", true).put("added", added).put("liveAdded", liveAdded)
-                                        .put("skipped", r.optInt("skipped", 0))
+                                r.put("ok", true).put("added", added).put("spiderAdded", spiderAdded)
+                                        .put("liveAdded", liveAdded).put("skipped", r.optInt("skipped", 0))
                                         .put("lineName", lineName == null ? "" : lineName)
                                         .put("firstName", firstName).put("firstLive", firstLive)
                                         .put("names", names);
@@ -1630,8 +1774,11 @@ public final class Bridge {
      */
     private void parseSitesAndLives(JSONObject o, JSONObject r, JSONArray names, String cfgUrl) throws Exception {
         int added = 0, skipped = 0, spiderAdded = 0;
-        String base = cfgUrl == null ? "" : cfgUrl.trim();
-        if (base.startsWith("http")) base = baseUrlOf(base); else base = "";
+        // v2.25：保留配置「完整 URL」用于相对路径补全。旧版只取 scheme://host，
+        // 把 https://host/tv/config.json 旁的相对 jar/ext 全拼到根目录 → 404。
+        String cfgFull = cfgUrl == null ? "" : cfgUrl.trim();
+        if (!cfgFull.startsWith("http")) cfgFull = "";
+        String base = cfgFull.length() > 0 ? baseUrlOf(cfgFull) : "";
         JSONArray sites = o.optJSONArray("sites");
         JSONArray arr = null;
         try { arr = new JSONArray(Config.sources()); } catch (Throwable ignored) {}
@@ -1646,18 +1793,26 @@ public final class Bridge {
                 // v2.13 放宽：type=1 是 CMS 资源站，api 是相对路径时用配置地址补全
                 boolean isCms = type == 1;
                 if (isCms && !api.startsWith("http")) {
-                    String full = completeRelative(api, base);
+                    String full = completeRelative(api, cfgFull);
                     if (full.length() > 0) api = full;
                     else isCms = false;
                 }
                 if (!isCms && api.startsWith("//") && api.length() > 2) {
-                    String full = completeRelative(api, base);
+                    String full = completeRelative(api, cfgFull);
                     if (full.startsWith("http")) api = full;
                 }
                 // 未标 type（或 0/4）但 api 像 CMS 接口的，也按资源站收
                 if (!isCms && type != 3 && api.startsWith("http")
                         && !api.contains("csp_") && !api.endsWith(".js") && !api.endsWith(".jar")
                         && CmsClient.looksLikeCms(api)) {
+                    isCms = true;
+                }
+                // v2.25：type=0 是 XML 采集站（不是爬虫）。TVBox 生态里大量站点是
+                // 这个类型，旧版会把「非 CMS 且有 api」的站点一律塞进 spider，
+                // 于是变成一堆找不到 jar 的死源。这里按资源站收，CmsClient 负责
+                // 兼容 XML 响应。
+                if (!isCms && type != 3 && api.startsWith("http")
+                        && !api.contains("csp_") && !api.endsWith(".js") && !api.endsWith(".jar")) {
                     isCms = true;
                 }
                 // v2.12：type=3 爬虫站（csp_ 类名 / .js / .jar 接口）统一收档展示，
@@ -1667,8 +1822,10 @@ public final class Bridge {
                 if (isCms) {
                     try { api = Utils.normalizeApi(api); } catch (Throwable ignored) {}
                 } else if (!isSpider) {
-                    // type=1 但 api 既不是 http 也补不出相对地址 → 归爬虫（类名）
-                    isSpider = api.length() > 0;
+                    // type=1 但 api 既不是 http 也补不出相对地址 → 归爬虫（类名）。
+                    // v2.25：只有「非 http」的接口才可能是类名/脚本名，http 地址
+                    // 一律按资源站处理，避免制造大量无 jar 的假爬虫源。
+                    isSpider = api.length() > 0 && !api.startsWith("http");
                     if (!isSpider) { skipped++; continue; }
                 }
                 if (isCms || isSpider) {
@@ -1692,6 +1849,9 @@ public final class Bridge {
                     if (!isCms) {
                         String jar = s.optString("jar", "").trim();
                         if (jar.length() == 0) jar = o.optString("spider", "").trim();
+                        // v2.25：FongMi 官方示例里 spider 就是 "spider.jar" 相对路径，
+                        // 旧版只收 http/img+ → 每个爬虫源都没有 jar，全部解析失败。
+                        jar = resolveCfgPath(jar, cfgFull);
                         if (jar.startsWith("http") || jar.startsWith("img+")) src.put("jar", jar);
                         // ★ v2.17：站点的 extend 参数必须随源保存。花卷的 site_urls、
                         // 玩偶/网盘类的 token、ucCookie、quarkCookie 都在 ext 里，
@@ -1706,7 +1866,11 @@ public final class Bridge {
                                             ev.substring(4), android.util.Base64.DEFAULT), "UTF-8");
                                 } catch (Throwable ignored) {}
                             }
-                            if (ev.length() > 0) src.put("ext", ev);
+                            // v2.25：ext 是 file://one.json / ./xx.json / 远程 URL 时，
+                            // 要下载「内容」再传给 Spider.init，而不是传文件名。
+                            String extUrl = resolveCfgPath(ev, cfgFull);
+                            if (extUrl.startsWith("http")) src.put("extUrl", extUrl);
+                            else if (ev.length() > 0) src.put("ext", ev);
                         }
                     }
                     try {
@@ -1928,7 +2092,7 @@ public final class Bridge {
 
     /** spider 源可用性 = jar 能下载、类能实例化、homeContent 能出内容。带 8 秒超时。 */
     private boolean spiderUsable(final JSONObject s) {
-        java.util.concurrent.Future<Boolean> f = io.submit(
+        java.util.concurrent.Future<Boolean> f = PROBE.submit(
                 new java.util.concurrent.Callable<Boolean>() {
                     @Override public Boolean call() {
                         try {
@@ -2089,19 +2253,37 @@ public final class Bridge {
         return normal;
     }
 
-    /** 取第一个 { / [ 到最后一个 } / ] 之间的正文。 */
+    /**
+     * v2.25：从第一个 { / [ 起做括号平衡扫描，取到与之匹配的结尾。
+     * 旧版用 lastIndexOf('}')，配置尾部挂统计脚本 / 广告文本 / 第二个 JSON 时
+     * 会把整段截进来 → JSON 解析失败（表现为「这个源根本解析不了」）。
+     */
     private static String sliceJson(String t) {
         t = t.trim();
         int s = t.indexOf('{');
         int s2 = t.indexOf('[');
         if (s2 >= 0 && (s < 0 || s2 < s)) s = s2;
-        int e = t.lastIndexOf('}');
-        int e2 = t.lastIndexOf(']');
-        e = Math.max(e, e2);
-        if (s > 0 || (s >= 0 && e >= 0 && e < t.length() - 1)) {
-            if (s >= 0 && e > s) t = t.substring(s, e + 1);
+        if (s < 0) return t;
+        char open = t.charAt(s), close = open == '{' ? '}' : ']';
+        int depth = 0;
+        boolean inStr = false, esc = false;
+        for (int i = s; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (inStr) {
+                if (esc) esc = false;
+                else if (c == '\\') esc = true;
+                else if (c == '"') inStr = false;
+                continue;
+            }
+            if (c == '"') { inStr = true; continue; }
+            if (c == open) depth++;
+            else if (c == close) {
+                depth--;
+                if (depth == 0) return t.substring(s, i + 1);
+            }
         }
-        return t;
+        int e = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
+        return (e > s) ? t.substring(s, e + 1) : t;
     }
 
     private static boolean looksLikeJson(String s) {
@@ -2134,6 +2316,25 @@ public final class Bridge {
             } catch (Throwable ignored) {}
         }
         return best;
+    }
+
+    /**
+     * v2.25：把配置里的 {@code file://one.json} / {@code ./spider.jar} /
+     * {@code ../ext/xx.json} 这类相对资源补成绝对 URL。
+     * 只处理「看起来像路径」的值，避免把 {@code csp_Douban} 这类爬虫类名当文件。
+     */
+    private static String resolveCfgPath(String v, String cfgUrl) {
+        if (v == null) return "";
+        String s = v.trim();
+        if (s.length() == 0) return "";
+        if (s.startsWith("img+") || s.startsWith("http://") || s.startsWith("https://")) return s;
+        if (s.startsWith("file://")) s = s.substring(7);
+        boolean pathLike = s.startsWith("./") || s.startsWith("../") || s.startsWith("/")
+                || s.contains("/") || s.endsWith(".json") || s.endsWith(".jar")
+                || s.endsWith(".js") || s.endsWith(".txt") || s.endsWith(".xml");
+        if (!pathLike || cfgUrl == null || !cfgUrl.startsWith("http")) return s;
+        String full = completeRelative(s, cfgUrl);
+        return full.length() > 0 ? full : s;
     }
 
     /**
@@ -2359,7 +2560,7 @@ public final class Bridge {
     }
 
     /** 原生拉取 m3u 文本（绕开 WebView 跨源限制），返回 {ok, text}。 */
-    @JavascriptInterface
+    // v2.23：降为 Java 内部方法，前端已全走 loadLiveAsync；不再暴露同步网络面。
     public String fetchLive(String url) {
         JSONObject r = new JSONObject();
         try {
@@ -2892,6 +3093,22 @@ public final class Bridge {
                 Toast.makeText(act, s, Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    /** v2.25：真机闪退后，用户可在「我的 → 崩溃日志」里复制堆栈发回来定位。 */
+    @JavascriptInterface
+    public String getCrashLog() {
+        try {
+            String s = com.fengxi.fnplayer.core.CrashGuard.read(act.getApplicationContext());
+            if (s.length() > 32000) s = s.substring(s.length() - 32000);
+            return new JSONObject().put("ok", true).put("text", s).toString();
+        } catch (Throwable t) { return "{\"ok\":false,\"text\":\"\"}"; }
+    }
+
+    @JavascriptInterface
+    public void clearCrashLog() {
+        try { com.fengxi.fnplayer.core.CrashGuard.clear(act.getApplicationContext()); }
+        catch (Throwable ignored) {}
     }
 
     @JavascriptInterface

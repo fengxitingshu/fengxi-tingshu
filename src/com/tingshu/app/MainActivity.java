@@ -40,6 +40,8 @@ public class MainActivity extends Activity
 
     private WebView web;
     private PlayerCore core;
+    /** ★ v4.21.48：SAF 目录选择器结果要回传给 Bridge（手动转存） */
+    private Bridge bridge;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     /** 续播用：本次播放请求的起始偏移（毫秒） */
@@ -156,7 +158,8 @@ public class MainActivity extends Activity
         //   不走系统框，保持 App 自身风格统一。
         web.setWebChromeClient(new android.webkit.WebChromeClient());
 
-        web.addJavascriptInterface(new Bridge(web, this), "Android");
+        bridge = new Bridge(web, this);
+        web.addJavascriptInterface(bridge, "Android");
 
         // ★ v4.21.32 方案 B：进程被杀后，服务里的「暗核心」可能正在独立播放。
         //   优先接管它（只换绑回调，不重取链、不中断、不产生第二个播放器）；
@@ -1075,6 +1078,25 @@ public class MainActivity extends Activity
     /** ★ v3.9.1：本地书源自定义目录（SAF 目录树） */
     private static final int REQ_PICK_LOCAL_DIR = 2005;
 
+    /** ★ v4.21.48：手动转存 —— 现场挑一次性目标目录（与「下载存放目录」分开） */
+    private static final int REQ_PICK_EXPORT_DIR = 2006;
+
+    /**
+     * ★ v4.21.48：手动转存的目录选择器。
+     * 结果交回 {@link Bridge#dlExportLocalGo(String)}，由它启动后台复制。
+     */
+    public void pickExportDir() {
+        try {
+            Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(it, REQ_PICK_EXPORT_DIR);
+        } catch (Throwable t) {
+            callJs("window.onDlExportDone({ok:0,skip:0,fail:0,total:0,target:'',error:'无法打开目录选择器'})");
+        }
+    }
+
     /**
      * ★ v2.9：打开系统文件夹选择器，挑一个「下载存放目录」。
      *
@@ -1339,6 +1361,26 @@ public class MainActivity extends Activity
                 o.put("name", name);
             } catch (Throwable ignored) {}
             callJs("window.onDownloadDir(" + o.toString() + ")");
+            return;
+        }
+
+        // ★ v4.21.48：手动转存目标目录（现场挑，不改「下载存放目录」设置）
+        if (requestCode == REQ_PICK_EXPORT_DIR) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                callJs("window.onDlExportDone({ok:0,skip:0,fail:0,total:0,"
+                        + "target:'',error:'',cancel:true})");
+                return;
+            }
+            android.net.Uri tree = data.getData();
+            try {
+                // 复制在后台线程进行，持久授权保证整个复制期间都能写
+                getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            } catch (Throwable ignored) {
+                // 个别 ROM 不支持持久授权，本次会话内仍可用
+            }
+            if (bridge != null) bridge.dlExportLocalGo(tree.toString());
             return;
         }
 

@@ -5,6 +5,7 @@ import com.tingshu.app.data.Models.BookDetail;
 import com.tingshu.app.data.Models.Chapter;
 import com.tingshu.app.source.BrowsableSource;
 import com.tingshu.app.source.Category;
+import com.tingshu.app.source.PagePaging;
 import com.tingshu.app.source.Source;
 
 import java.lang.reflect.Method;
@@ -36,6 +37,26 @@ public final class TingShuAdapter extends AbsSourceProxy {
     private final String sourceName;
     private final String sourceDesc;
     private final String baseUrl;
+
+    /**
+     * ★ v4.21.44：jar 插件源的分类分页链。
+     *
+     * <p>原版「我的听书」插件的 {@code getCategoryList(url)} 返回的 Category 是
+     * {@code (list, currentPage, totalPage, currentUrl, nextUrl)} 五元组；
+     * 旧实现只取了 {@code getList()}，既把宿主传进来的 {@code page} 丢掉，
+     * 也把 {@code nextUrl} 丢掉 —— 于是每翻一页都用原始分类地址重新请求第 1 页，
+     * 前端连翻 5 页拿到同一批书，提示「后面几页都是重复内容」（番茄听书「直连」
+     * 就是走这条链路，所以 v4.21.42 / v4.21.43 只改 JS 插件源一直没修到）。
+     *
+     * <p>现在按 {@code (catId, page)} 记每一页真正请求的地址：优先顺插件给的
+     * {@code nextUrl}；插件没给就按契约补 {@code #N}；若整页结果与上一页完全相同，
+     * 再用 {@link PagePaging#candidates} 逐个探测其它分页写法，命中后记住模板。
+     */
+    private final Map<String, String> pageUrlCache = new HashMap<String, String>();
+    private final Map<String, String> pageSigCache = new HashMap<String, String>();
+    private final Map<String, String> pageTplCache = new HashMap<String, String>();
+    /** 同一插件实例的分页链串行化，避免并发翻页串页 */
+    private final Object browseLock = new Object();
 
     public TingShuAdapter(Object tingShu) {
         this.tingShu = tingShu;
@@ -274,13 +295,114 @@ public final class TingShuAdapter extends AbsSourceProxy {
 
     @Override
     public List<Book> browse(String catId, int page) throws Exception {
-        List<Book> out = new ArrayList<Book>();
-        if (empty(catId)) return out;
+        if (empty(catId)) return new ArrayList<Book>();
+        if (page < 1) page = 1;
+        synchronized (browseLock) {
+            clearErr();
+            String url, mode;
+            String tpl = pageTplCache.get(catId);
+            if (page == 1) {
+                // 首屏 / 刷新 / 换分类：从原始地址重新起链
+                clearChain(catId);
+                url = PagePaging.firstPageUrl(catId);
+                mode = "start";
+            } else if (tpl != null && tpl.length() > 0) {
+                // 之前探测出的分页写法，直接套用
+                url = PagePaging.applyTpl(tpl, page);
+                mode = "tpl";
+            } else {
+                String chained = pageUrlCache.get(PagePaging.key(catId, page));
+                if (chained != null && chained.length() > 0) {
+                    url = chained;
+                    mode = "chain";
+                } else {
+                    url = PagePaging.withPage(catId, page);
+                    mode = "hash";
+                }
+            }
+            String prevUrl = page > 1
+                    ? pageUrlCache.get(PagePaging.key(catId, page - 1)) : null;
+            if (url.equals(prevUrl)) {
+                url = PagePaging.withPage(catId, page);
+                mode = "hash-force";
+            }
+
+            Object cat = loadCategory(url);
+            if (cat == null) rethrowIfErr("插件源分类加载失败");
+            if (cat == null) return new ArrayList<Book>();
+            List<Book> books = toBooks(cat);
+            String sig = PagePaging.sig(books);
+            String prevSig = page > 1
+                    ? pageSigCache.get(PagePaging.key(catId, page - 1)) : null;
+
+            // 整页与上一页完全相同 ⇒ 上面猜的分页写法没生效，换写法探测。
+            // 只在真的重复时才试，正常源不会多花钱请求。
+            if (page > 1 && sig.length() > 0 && sig.equals(prevSig)) {
+                int tried = 0;
+                for (String[] cand : PagePaging.candidates(catId, page)) {
+                    if (tried >= 6 || cand[0].equals(url)) continue;
+                    tried++;
+                    Object c2 = loadCategoryQuiet(cand[0]);
+                    if (c2 == null) continue;
+                    List<Book> b2 = toBooks(c2);
+                    String s2 = PagePaging.sig(b2);
+                    if (s2.length() == 0 || s2.equals(prevSig)) continue;
+                    url = cand[0];
+                    cat = c2;
+                    books = b2;
+                    sig = s2;
+                    pageTplCache.put(catId, cand[1]);
+                    mode = "probe";
+                    break;
+                }
+            }
+            pageUrlCache.put(PagePaging.key(catId, page), url);
+            pageSigCache.put(PagePaging.key(catId, page), sig);
+
+            String next = nextUrlOf(cat);
+            boolean hasNext = !empty(next) && !next.equals(url);
+            if (hasNext) pageUrlCache.put(PagePaging.key(catId, page + 1), next);
+            else pageUrlCache.remove(PagePaging.key(catId, page + 1));
+
+            // 脱敏诊断：只打页号 / 模式 / 条数，绝不回显任何 URL 或域名
+            try {
+                android.util.Log.i("FxCatBrows", "page=" + page + " mode=" + mode
+                        + " next=" + (hasNext ? 1 : 0) + " n=" + books.size());
+            } catch (Throwable ignored) {}
+            return books;
+        }
+    }
+
+    /** 清掉某个分类残留的分页链（换分类 / 刷新首屏时调） */
+    private void clearChain(String catId) {
+        String prefix = catId + PagePaging.SEP;
+        java.util.Iterator<Map.Entry<String, String>> it =
+                pageUrlCache.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getKey().startsWith(prefix)) it.remove();
+        }
+        it = pageSigCache.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getKey().startsWith(prefix)) it.remove();
+        }
+        pageTplCache.remove(catId);
+    }
+
+    private Object loadCategory(String url) {
+        return invoke(tingShu, "getCategoryList",
+                new Class[]{String.class}, new Object[]{url});
+    }
+
+    /** 探测用的静默调用：失败不抛，也不污染 LAST_ERR */
+    private Object loadCategoryQuiet(String url) {
         clearErr();
-        Object cat = invoke(tingShu, "getCategoryList",
-                new Class[]{String.class}, new Object[]{catId});
-        if (cat == null) rethrowIfErr("插件源分类加载失败");
-        if (cat == null) return out;
+        Object c = loadCategory(url);
+        clearErr();
+        return c;
+    }
+
+    private List<Book> toBooks(Object cat) {
+        List<Book> out = new ArrayList<Book>();
         Object list = invoke(cat, "getList", new Class[0], new Object[0]);
         if (!(list instanceof List)) return out;
         List<?> ll = (List<?>) list;
@@ -289,6 +411,13 @@ public final class TingShuAdapter extends AbsSourceProxy {
             if (b != null && !empty(b.title) && !empty(b.url)) out.add(b);
         }
         return out;
+    }
+
+    /** 原版 Category 的第五个字段就是插件算好的下一页地址 */
+    private String nextUrlOf(Object cat) {
+        Object o = invoke(cat, "getNextUrl", new Class[0], new Object[0]);
+        if (o == null) o = invoke(cat, "component5", new Class[0], new Object[0]);
+        return nz(str(o));
     }
 
     // ==================== 内部工具 ====================

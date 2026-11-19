@@ -120,6 +120,7 @@
         wgdiag: 'pageWgDiag',         // ★ v3.8.4 小组件诊断日志
         backup: 'pageBackup',         // ★ v3.8.0 备份与恢复
         dlmanage: 'pageDlManage',     // ★ v2.9 下载管理
+        dlep: 'pageDlEpisodes',       // ★ v4.21.48 分集管理
         custom: 'pageCustom',         // ★ v3.9.0 自定义源（本地书源 + 网盘接口）
         agre: 'pageAgre',             // ★ v4.11.0 用户协议
         priv: 'pagePriv',             // ★ v4.11.0 隐私政策
@@ -186,6 +187,15 @@
             enter();
         }
         App.page = id;
+        // ★ v4.21.49：下载任务轮询跟着页面生命周期走。
+        //   以前只在 openDlManage() 里启动，且异步回包会误停 —— 从播放页 /
+        //   分集页 / 底部导航回到下载管理页后，「正在下载」就永远不刷新了。
+        //   现在统一在切页处收口：落到下载管理页就恢复，离开就停。
+        if (id === 'pageDlManage') {
+            if (ui.dlPollStart) { ui.dlPollStart(); TS.call('downloadTasks'); }
+        } else if (ui.stopDlPoll) {
+            ui.stopDlPoll();
+        }
     }
 
     function goTab(tab) {
@@ -260,6 +270,7 @@
         // ★ v3.7.14：源分组页多选态已移除，返回键不再需要先退多选
         if (App.fullShow) { ui.closeFull(); return true; }
         if (App.stack.length > 0) {
+            // ★ v4.21.49：轮询恢复已统一交给 showOne 的切页钩子，这里不再重复
             backToSub(App.stack.pop());
             return true;
         }
@@ -347,13 +358,10 @@
             snapped = restoreHomeSnap();
             if (snapped) paintHomeSources();
         }
-        // ★ v4.18.1：关键修复 —— 快照里的 homeSources 只是「单个源的占位数组」，
-        //   绝不能被当成真实源表。
-        //   旧逻辑：restoreHomeSnap() 成功后 App.homeSources 非空 → 不再发
-        //   discoverSources → 首页下拉永远只有快照那一个源。用户看到的就是
-        //   「明明开了好几个源，首页却只显示一个」，而且重启多少次都一样，
-        //   只有等某次源表数量变化触发 onSourceList 重拉才恢复。
-        //   现在：只要用了快照，就必须再拉一次真实源表（回包会整体覆盖）。
+        // ★ v4.21.47：快照现在存的是「完整源表 + 当前源分类」，重启第一帧
+        //   下拉就能列全；这里仍固定再拉一次真实清单做对齐（原生已改成
+        //   轻量枚举，毫秒级回包，不再像旧版那样挨个执行插件分类判定）。
+        //   两个数据源在 onDiscoverSources 里合并，谁先到都不丢分类。
         if (snapped || !App.homeSources) TS.call('discoverSources');
         else paintHomeSources();
     }
@@ -380,13 +388,103 @@
     };
 
     window.onDiscoverSources = function (arr) {
-        App.discoverSources = arr || [];
-        App.homeSources = App.discoverSources;
+        arr = arr || [];
+        // ★ v4.21.47：合并，不再整体覆盖。
+        //   原生现在只回「源名清单」（分类按需另拉），启动快照里可能已带着
+        //   上次记住的全量源名和当前源的分类；直接 arr 覆盖会把这些冲掉，
+        //   又变回「下拉只有一个 / 分类条空白」。
+        var prev = App.homeSources || [];
+        var prevMap = {};
+        for (var p = 0; p < prev.length; p++) {
+            if (prev[p] && prev[p].id) prevMap[prev[p].id] = prev[p];
+        }
+        var out = [], seen = {};
+        for (var i = 0; i < arr.length; i++) {
+            var s = arr[i];
+            if (!s || !s.id || seen[s.id]) continue;
+            seen[s.id] = 1;
+            var old = prevMap[s.id];
+            out.push({
+                id: s.id,
+                name: s.name || (old && old.name) || s.id,
+                // 回包没带分类时保留快照/上一次的分类，别把分类条清空
+                cats: (s.cats && s.cats.length) ? s.cats : ((old && old.cats) || [])
+            });
+        }
+        // 兜底：原生枚举异常只回了 0/1 个源时，保留已有的完整源表
+        if (!App._homeSnapPartial && out.length < 2 && prev.length > out.length) {
+            for (var k = 0; k < prev.length; k++) {
+                if (!prev[k] || !prev[k].id || seen[prev[k].id]) continue;
+                seen[prev[k].id] = 1;
+                out.push(prev[k]);
+            }
+        }
+        App._homeSnapPartial = false;
+        App.discoverSources = out;
+        App.homeSources = out;
         // ★ v3.7.6：源列表到手的第一时间恢复"上次用的源"，
         //   然后才渲染 —— 这样冷启动第一屏直接是上次那个源的内容，不再是空白。
         if (!App.home.src) restoreLastHomeSource(App.homeSources);
         if (App.page === SUBS.discover) renderDiscover();
-        if (App.page === TABS.home) { paintHomeSources(); }
+        if (App.page === TABS.home) paintHomeSources();
+        refreshSrcPopIfOpen();
+    };
+
+    /**
+     * ★ v4.21.47：单个源的分类按需回来（onDiscoverSources 只给源名）。
+     * 只更新那一个源，不重拉整表；当前正停在该源时顺手重绘分类条。
+     */
+    window.onSourceCategories = function (o) {
+        o = o || {};
+        var id = o.id, cats = o.cats || [];
+        if (!id) return;
+        var list = App.homeSources || [], hit = null;
+        for (var i = 0; i < list.length; i++) if (list[i].id === id) { hit = list[i]; break; }
+        if (!hit) return;
+        if (cats.length) {
+            hit.cats = cats;
+            if (App._catFail) delete App._catFail[id];
+        } else {
+            // 空分类：可能是拉取失败/超时，也可能是这个源只支持搜索。
+            // 一律标记，否则 paintHomeSources 每次重绘都会再发一次请求，
+            // 「回包空 → 重绘 → 再请求」会变成死循环。用户可点「重试」再试。
+            // 保留已有分类，别把用户正在用的分类条清空。
+            App._catFail = App._catFail || {};
+            App._catFail[id] = true;
+        }
+        if (App._catWaitSrc === id) {
+            App._catWaitSrc = '';
+            clearTimeout(App._catWaitTimer);
+        }
+        // 只重绘分类条/内容；paintHomeSources 内部会复用已累积的书单，不会重拉
+        if (App.page === TABS.home && App.home.src === id) paintHomeSources();
+    };
+
+    /** ★ v4.21.47：分类加载失败后的手动重试 */
+    ui.retryHomeCats = function () {
+        var id = App.home.src;
+        if (!id) return;
+        App._catFail = App._catFail || {};
+        delete App._catFail[id];
+        TS.call('sourceCategories', id);
+        paintHomeSources();
+    };
+
+    /** ★ v4.21.47：下拉顶部「显示全部书源」→ 进全量源列表选择页 */
+    ui.showAllHomeSources = function () {
+        ui.closeSrcPop();
+        App._homePick = true;
+        App._homeAllOnce = true;
+        App._pickerAsked = false;
+        resetHomePaging();
+        paintHomeSources();
+    };
+
+    /** ★ v4.21.47：从「全部书源」页回内容首页 */
+    ui.homeSrcAllBack = function () {
+        App._homeAllOnce = false;
+        App._homePick = false;
+        paintHomeSources();
     };
 
     /**
@@ -399,8 +497,13 @@
         var cl = $('homeContent');
         if (!cd || !cl) return;
 
+        // ★ v4.21.47：下拉里点了「显示全部书源」→ 临时进全量源列表页，
+        //   不改用户的首页显示方式偏好（classic/list 保持原样）。
         // ★ v3.9.38：源列表模式且停在「选择页」→ 渲染源列表
-        if (App._homeMode === 'list' && App._homePick) { renderHomePicker(); return; }
+        if (App._homePick && (App._homeMode === 'list' || App._homeAllOnce)) {
+            renderHomePicker();
+            return;
+        }
 
         // ★ v3.9.3：首页停在本地书源视图 → 走专属渲染，不进分类浏览流程
         if (App.home.src === 'local') { renderHomeLocal(); return; }
@@ -451,8 +554,33 @@
         }
         cd.innerHTML = h;
 
-        if (!cfg || !cfg.id || !cats.length) {
+        if (!cfg || !cfg.id) {
             cl.innerHTML = errBlock('这个源暂时没有分类，换个源试试');
+            return;
+        }
+        // ★ v4.21.47：分类现在是按需拉的，没带分类 ≠ 这个源坏了。
+        //   旧版直接一句「这个源暂时没有分类」把人堵死，就是用户说的
+        //   「点开之后根本加载不出来」。这里改成明确 loading + 单源请求 + 超时兜底。
+        if (!cats.length) {
+            App._catFail = App._catFail || {};
+            if (App._catFail[cfg.id]) {
+                cl.innerHTML = errBlock('这个源暂时没有分类，换个源试试')
+                    + '<div class="nosrc-btns" style="margin-top:10px">'
+                    + '<button class="mini ghost" onclick="App.ui.retryHomeCats()">重试加载分类</button>'
+                    + '<button class="mini" onclick="App.ui.goTab(\'search\')">去搜索</button>'
+                    + '</div>';
+                return;
+            }
+            cl.innerHTML = '<div class="loading"><span class="spinner"></span>正在获取分类…</div>';
+            App._catWaitSrc = cfg.id;
+            clearTimeout(App._catWaitTimer);
+            App._catWaitTimer = setTimeout(function () {
+                if (App._catWaitSrc !== cfg.id) return;
+                App._catWaitSrc = '';
+                App._catFail[cfg.id] = true;
+                if (App.tab === 'home') paintHomeSources();
+            }, 9000);
+            TS.call('sourceCategories', cfg.id);
             return;
         }
 
@@ -544,6 +672,7 @@
         App._homeMode = (v === 'list') ? 'list' : 'classic';
         try { localStorage.setItem('homeMode', App._homeMode); } catch (e) {}
         // 切到源列表模式立刻进选择页；切回内容直达立刻恢复内容
+        App._homeAllOnce = false;               // ★ v4.21.47：清除临时「全部书源」态
         App._homePick = (App._homeMode === 'list');
         resetHomePaging();
         if (App.tab === 'home') paintHomeSources();
@@ -567,8 +696,10 @@
         if (!cl) return;
         if (cd) cd.innerHTML = '';
         var el = $('homeSrcName');
-        if (el) el.textContent = '选择书源';
-        var list = App.homeSources || [];
+        if (el) el.textContent = App._homeAllOnce ? '全部书源' : '选择书源';
+        // ★ v4.21.47：用「可浏览清单 ∪ 权威全量表」列全部源，
+        //   不再因为原生分类清单还没回来就只显示一个。
+        var list = homeDropdownSources();
         var browsable = {};
         // ★ v3.9.50：停用的源不出现在首页源列表（管理态里关掉即从列表移除）。
         //   ★ v3.9.51：homeSources 是 discoverSources 的缓存，setSourceEnabled
@@ -632,6 +763,14 @@
                  '<button class="mini" onclick="App.ui.homeSrcSelEnable(false)">停用</button>' +
                  '<button class="mini" onclick="App.ui.homeSrcSelDelete()">删除</button>' +
                  '<button class="mini ghost" onclick="App.ui.homeSrcBatchExit()">完成</button>' +
+                 '</div>';
+        }
+        // ★ v4.21.47：「显示全部书源」页给一条明确的计数条 + 返回入口
+        if (App._homeAllOnce) {
+            var total = list.length + others.length + (localOn ? 1 : 0);
+            h += '<div class="homebatchbar" style="margin:0 0 8px">' +
+                 '<span class="sbb-cnt">已显示全部 <b>' + total + '</b> 个书源</span>' +
+                 '<button class="mini ghost" onclick="App.ui.homeSrcAllBack()">返回首页</button>' +
                  '</div>';
         }
         h += '<div class="srcgrid">';
@@ -872,11 +1011,21 @@
         try {
             var cfg = null, list = App.homeSources || [];
             for (var i = 0; i < list.length; i++) if (list[i].id === srcId) cfg = list[i];
+            // ★ v4.21.47：连「完整源表」一起存 —— 以前只存当前一个源，
+            //   冷启动 restoreHomeSnap() 就往 App.homeSources 里塞一个只含
+            //   单元素的占位数组，原生分类清单稍慢一点没回来，左上角下拉
+            //   就永远只有一个源。现在重启第一帧就能还原全部源名。
+            var brief = [];
+            for (var k = 0; k < list.length; k++) {
+                if (!list[k] || !list[k].id) continue;
+                brief.push({ id: list[k].id, name: list[k].name || list[k].id });
+            }
             localStorage.setItem(HOME_SNAP_KEY, JSON.stringify({
                 src: srcId,
                 cat: catId,
                 books: all.slice(0, 48),          // 只存首屏，控制体积
-                cats: (cfg && cfg.cats) || [],
+                cats: (cfg && cfg.cats) || [],     // 当前源的分类（秒开分类条）
+                sources: brief,                    // 全部源名（下拉不依赖慢回包）
                 srcName: (cfg && cfg.name) || '',
                 hasMore: !!App.homeHasMore,
                 ts: Date.now()
@@ -897,7 +1046,22 @@
             App.homePage[snap.cat] = 1;
             App.homeHasMore = !!snap.hasMore;
             if (!App.homeSources) {
-                App.homeSources = [{ id: snap.src, name: snap.srcName || snap.src, cats: snap.cats || [] }];
+                var srcs = (snap.sources && snap.sources.length) ? snap.sources : null;
+                if (!srcs) {
+                    // 老版本快照没有全量源表：保持兼容，但标记「不完整」，
+                    // 后面的 onDiscoverSources 会用真实清单整体替换。
+                    srcs = [{ id: snap.src, name: snap.srcName || snap.src }];
+                    App._homeSnapPartial = true;
+                }
+                App.homeSources = [];
+                for (var i = 0; i < srcs.length; i++) {
+                    if (!srcs[i] || !srcs[i].id) continue;
+                    App.homeSources.push({
+                        id: srcs[i].id,
+                        name: srcs[i].name || srcs[i].id,
+                        cats: (srcs[i].id === snap.src) ? (snap.cats || []) : []
+                    });
+                }
             }
             return true;
         } catch (e) { return false; }
@@ -1377,53 +1541,76 @@
         return cfg;
     }
 
-    /** 左上角源名称 → 在按钮正下方拉出悬浮下拉 */
-    ui.homeSrcToggle = function (ev) {
-        if (ev && ev.stopPropagation) ev.stopPropagation();
-        // ★ v3.9.38：源列表模式下，点源名 = 回「源列表选择页」换源
-        if (App._homeMode === 'list') {
-            ui.closeSrcPop();
-            App._homePick = true;
-            App._pickerAsked = false;
-            paintHomeSources();
-            return;
+    /**
+     * ★ v4.21.47：下拉候选 = 原生可浏览清单 ∪ 权威全量表 App.sources。
+     *
+     * <p>以前只认 App.homeSources（靠原生 discoverSources 回包）。冷启动回包
+     * 稍慢、或插件判定只回了一个源时，下拉就永远只有那一项 —— 用户说的
+     * 「每次重新打开都变成只有一个」就是这个。现在书源管理里那张全量表
+     * （listSources 毫秒级就回）随时能兜底，下拉始终列得全。
+     */
+    function homeDropdownSources() {
+        var byId = {}, order = [];
+        var hs = App.homeSources || [];
+        for (var i = 0; i < hs.length; i++) {
+            if (!hs[i] || !hs[i].id) continue;
+            var hid = hs[i].id;
+            // 本地源 / 网盘源在下拉底部单独分段，这里排除避免重复两行
+            if (hid === 'local' || hid.indexOf('pan_') === 0) continue;
+            byId[hid] = {
+                id: hid,
+                name: hs[i].name || hid,
+                cats: hs[i].cats || []
+            };
+            order.push(hid);
         }
-        var pop = $('homeSrcPop');
-        if (pop && !pop.classList.contains('hide')) { ui.closeSrcPop(); return; }
+        var ss = App.sources || [];
+        for (var j = 0; j < ss.length; j++) {
+            var s = ss[j];
+            if (!s || !s.id || s.enabled === false) continue;
+            // 本地源 / 网盘源在下面单独分段，避免重复
+            if (s.id === 'local' || s.origin === 'pan' ||
+                (s.id && s.id.indexOf('pan_') === 0)) continue;
+            var cur = byId[s.id];
+            if (!cur) {
+                cur = { id: s.id, name: s.alias || s.name || s.id, cats: [] };
+                byId[s.id] = cur;
+                order.push(s.id);
+            } else if (!cur.name || cur.name === cur.id) {
+                cur.name = s.alias || s.name || cur.name;
+            }
+        }
+        var out = [];
+        for (var k = 0; k < order.length; k++) if (byId[order[k]]) out.push(byId[order[k]]);
+        return out;
+    }
 
-        var list = App.homeSources || [];
-        if (!list.length) {
-            TS.call('discoverSources');
-            TS.toast('正在获取可用书源…');
-            return;
-        }
-        var h = '';
+    /** 画下拉内容：只改 innerHTML，不再克隆/替换整个列表节点（96 项时那一下最卡） */
+    function renderHomeSrcPopList() {
+        var box = $('homeSrcList');
+        if (!box) return;
+        var list = homeDropdownSources();
+        var h = '<div class="srcdd-item srcdd-all" onclick="App.ui.showAllHomeSources()">' +
+                '<span>显示全部书源（' + list.length + '）</span>' +
+                '<span class="go">›</span></div>';
         for (var i = 0; i < list.length; i++) {
             var on = App.home.src === list[i].id;
             h += '<div class="srcdd-item' + (on ? ' on' : '') +
                  '" data-id="' + escAttr(list[i].id) + '"' +
                  ' onclick="App.ui.homePickSrc(\'' + escAttr(list[i].id) + '\')">' +
-                 '<span>' + TS.esc(list[i].name) + '</span>' +
+                 '<span>' + TS.esc(list[i].name || list[i].id) + '</span>' +
                  '<span class="tick">✓</span></div>';
         }
         // ★ v3.9.3：自定义源（本地书源）开启后也进下拉，方便直接选。
-        // ★ v4.6.0：已启用的网盘源也进下拉——盘内扫描让网盘源有了「书架」，
-        //   可以像书源一样当首页源用（点进去就是该网盘的有声书列表）。
-        // ★ v4.8.0：网盘源曾无条件进下拉——之前要求 enabled，而 pan 源的
-        //   enabled = 开关 && Cookie 已配置，任何一边没跟上下拉就消失，
-        //   用户眼里就是「首页看不到网盘源」。
-        // ★ v4.9.3：改成**只在网盘源开关打开（已启用且已配置）时**才进下拉。
-        //   未开启的网盘源不该出现在首页源列表里 —— 之前无条件罗列，
-        //   首页下拉被「夸克/UC/115/天翼/阿里」几行占满，反而找不到自己的书源。
-        //   想用哪个网盘，到「书源管理 → 自定义源」把开关打开即可。
+        // ★ v4.9.3：网盘源只在开关打开（已启用且已配置）时进下拉，
+        //   未开启的不该占满首页下拉；想用哪个到「书源管理 → 自定义源」打开。
         var custom = [], pans = [];
         for (var s = 0; s < (App.sources || []).length; s++) {
             var cs = App.sources[s];
             if (!cs) continue;
             if (cs.id === 'local') { if (cs.enabled !== false) custom.push(cs); }
             else if (cs.origin === 'pan' || (cs.id && cs.id.indexOf('pan_') === 0)) {
-                // 例外：当前正停在首页的这个网盘源，即使开关被关掉也留着，
-                // 否则下拉里连"自己现在在哪个源"都看不到。
+                // 例外：当前正停在首页的这个网盘源，即使开关被关掉也留着
                 if (cs.enabled || cs.id === App.home.src) pans.push(cs);
             }
         }
@@ -1451,8 +1638,39 @@
                      '<span class="tick">✓</span></div>';
             }
         }
-        $('homeSrcList').innerHTML = h;
-        bindSrcPopLongPress();                   // ★ v4.1：长按项 → 编辑/停用/删除
+        box.innerHTML = h;
+        bindSrcPopLongPress();                   // 内部只绑一次，重复调用无开销
+    }
+
+    /** 源表回包时，下拉若正开着就原地刷新内容（不关闭、不重建节点） */
+    function refreshSrcPopIfOpen() {
+        var pop = $('homeSrcPop');
+        if (pop && !pop.classList.contains('hide')) renderHomeSrcPopList();
+    }
+
+    /** 左上角源名称 → 在按钮正下方拉出悬浮下拉 */
+    ui.homeSrcToggle = function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        // ★ v3.9.38：源列表模式下，点源名 = 回「源列表选择页」换源
+        if (App._homeMode === 'list') {
+            ui.closeSrcPop();
+            App._homePick = true;
+            App._pickerAsked = false;
+            paintHomeSources();
+            return;
+        }
+        var pop = $('homeSrcPop');
+        if (pop && !pop.classList.contains('hide')) { ui.closeSrcPop(); return; }
+
+        // ★ v4.21.47：只有「全量表 + 可浏览清单」都空才提示等待；
+        //   以前只看 homeSources，原生回包没到就直接不展开下拉（点开像卡死）。
+        if (!(App.homeSources || []).length && !(App.sources || []).length) {
+            TS.call('listSources');
+            TS.call('discoverSources');
+            TS.toast('正在获取可用书源…');
+            return;
+        }
+        renderHomeSrcPopList();
         pop.classList.remove('hide');
         $('homeSrcBtn').classList.add('open');
         // 点页面任意其它地方收起（用捕获阶段，避免被 stopPropagation 挡掉）
@@ -1468,18 +1686,19 @@
      */
     function bindSrcPopLongPress() {
         var list = $('homeSrcList');
-        if (!list) return;
-        // 每次 innerHTML 重画后重绑：克隆替换法自动丢弃旧监听
-        var fresh = list.cloneNode(false);       // 只克隆节点本身，不带走子节点
-        fresh.innerHTML = list.innerHTML;
-        list.parentNode.replaceChild(fresh, list);
+        if (!list || list.__fxLongBound) return;
+        // ★ v4.21.47：事件委托，只在容器上绑一次。
+        //   旧版每次展开都 cloneNode + replaceChild 把整个列表节点换掉，
+        //   96 个源时相当于把 HTML 解析两遍 —— 这就是「点开之后特别卡」。
+        //   容器节点不变、只改 innerHTML，委托监听天然继续有效。
+        list.__fxLongBound = true;
         var timer = null, fired = false, sx = 0, sy = 0;
-        fresh.addEventListener('touchstart', function (e) {
+        list.addEventListener('touchstart', function (e) {
             var t = e.target;
-            while (t && t !== fresh && !(t.classList && t.classList.contains('srcdd-item'))) {
+            while (t && t !== list && !(t.classList && t.classList.contains('srcdd-item'))) {
                 t = t.parentNode;
             }
-            if (!t || t === fresh || !t.getAttribute('data-id')) return;
+            if (!t || t === list || !t.getAttribute('data-id')) return;
             var id = t.getAttribute('data-id');
             var p = e.touches[0];
             sx = p.clientX; sy = p.clientY; fired = false;
@@ -1488,13 +1707,13 @@
                 ui.homeSrcCtx(id, sx, sy);
             }, 480);
         }, { passive: true });
-        fresh.addEventListener('touchmove', function (e) {
+        list.addEventListener('touchmove', function (e) {
             if (!timer) return;
             var p = e.touches[0];
             if (Math.abs(p.clientX - sx) + Math.abs(p.clientY - sy) < 10) return;
             clearTimeout(timer); timer = null;
         }, { passive: true });
-        fresh.addEventListener('touchend', function (e) {
+        list.addEventListener('touchend', function (e) {
             if (timer) { clearTimeout(timer); timer = null; }
             if (fired) e.preventDefault();       // 长按后的 click 吞掉
         }, { passive: false });
@@ -1546,6 +1765,7 @@
         if (ui.homeSrcCardGuard()) return;
         // ★ v3.9.38：无论哪种模式，点了源就是离开了「源列表选择页」
         App._homePick = false;
+        App._homeAllOnce = false;                // ★ v4.21.47：退出临时「全部书源」页
         ui.closeSrcPop();
         if (App.home.src === sid) {
             // list 模式下点当前源 = 进内容；classic 下行为不变（重放也不闪屏）
@@ -1572,12 +1792,12 @@
             renderHomePan();
             return;
         }
-        var list = App.homeSources || [];
-        for (var i = 0; i < list.length; i++) {
-            if (list[i].id === sid) {
-                App.home.cat = (list[i].cats && list[i].cats.length) ? list[i].cats[0].k : '';
-            }
-        }
+        var list = App.homeSources || [], picked = null;
+        for (var i = 0; i < list.length; i++) if (list[i].id === sid) picked = list[i];
+        App.home.cat = (picked && picked.cats && picked.cats.length) ? picked.cats[0].k : '';
+        // ★ v4.21.47：换源允许重新尝试分类；没带分类就立刻按需拉这一个源
+        if (App._catFail) delete App._catFail[sid];
+        if (!picked || !(picked.cats || []).length) TS.call('sourceCategories', sid);
         saveLastHomeSource(sid);                 // ★ v3.7.6：记住这次选的源
         paintHomeSources();
     };
@@ -6164,6 +6384,7 @@
             paintCustom();
         }
         if (App.page === TABS.home) paintHomeSources();
+        refreshSrcPopIfOpen();                   // ★ v4.21.47：下拉开着就同步全量表
 
         // ★ v3.7.9：源表在"启动后"变多了 —— 说明是 Python 运行时后台就绪后
         //   补登记的那批 .py 源。这时要把首页/发现页的源列表一起刷新，
@@ -9899,19 +10120,20 @@
         if (row) row.style.display = (o.uri && o.uri.length) ? '' : 'none';
     };
 
-    /** 打开下载管理页 */
+    /** 打开下载管理页（任务轮询由 showOne 切页钩子自动接管） */
     ui.openDlManage = function () {
         goSub('dlmanage');
         TS.call('downloadList');
-        // ★ v4.18.0：下载中任务可视化 —— 打开页面即开始轮询任务簿
-        TS.call('downloadTasks');
-        if (!App._dlPoll) {
-            App._dlPoll = setInterval(function () {
-                // 离开下载管理页自动停轮询
-                if (App.page !== 'pageDlManage') { ui.stopDlPoll(); return; }
-                TS.call('downloadTasks');
-            }, 1000);
-        }
+    };
+
+    /** 任务轮询（★ v4.21.48 抽出复用：从分集管理页返回时也能接上） */
+    ui.dlPollStart = function () {
+        if (App._dlPoll) return;
+        App._dlPoll = setInterval(function () {
+            // 离开下载管理页自动停轮询（分集页返回时由 dlepBack 重启）
+            if (App.page !== 'pageDlManage') { ui.stopDlPoll(); return; }
+            TS.call('downloadTasks');
+        }, 1000);
     };
 
     /** 停止下载任务轮询（离开页面 / 页面隐藏时） */
@@ -9921,12 +10143,18 @@
 
     /** 原生：下载中任务清单（★ v4.18.0，1s 轮询） */
     window.onDownloadTasks = function (arr) {
-        if (App.page !== 'pageDlManage') { ui.stopDlPoll(); return; }
+        // ★ v4.21.49：这里绝不能 stopDlPoll() —— 异步回包可能在切页动画期间
+        //   到达，把轮询误停掉后就再也没人重启，表现为「正在下载」永久消失。
+        if (App.page !== 'pageDlManage') return;
         var box = $('dlRunBody');
         if (!box) return;
         var tasks = arr || [];
-        if (!tasks.length) { box.innerHTML = ''; return; }
-        var h = '<div class="dlm-sect">下载中</div>';
+        if (!tasks.length) {
+            box.innerHTML = '<div class="dl-run-empty">当前没有下载任务 · ' +
+                '在书籍详情页点「下载」后，进度会显示在这里</div>';
+            return;
+        }
+        var h = '';
         for (var i = 0; i < tasks.length; i++) {
             var t = tasks[i];
             var pct = t.total > 0 ? Math.round(t.done * 100 / t.total) : 0;
@@ -9967,9 +10195,8 @@
         if (!box) return;
         var books = o.books || [];
         var h = '';
-        // ★ v4.18.0：顶部挂"下载中"区块容器（onDownloadTasks 独立刷新，
-        //   和下方已完成清单互不干扰）
-        h += '<div id="dlRunBody"></div>';
+        // ★ v4.21.49：「正在下载」容器已移到 index.html 静态常驻，
+        //   这里只管已下载清单，刷新时不再把上方任务区冲掉。
         h += '<div class="dlm-sect">已下载</div>';
         h += '<div class="dlm-sum">共 ' + (o.totalCount || 0) + ' 集 · ' +
              (o.totalText || '0 B') + '</div>';
@@ -9985,9 +10212,19 @@
                 h += '<div class="dlm-item">';
                 h += '<div class="dlm-info"><div class="dlm-t">' + TS.esc(b.title || b.key) + '</div>';
                 h += '<div class="dlm-s">' + b.count + ' 集 · ' + TS.esc(b.sizeText || '') + '</div></div>';
+                h += '<div class="dlm-two">';
+                h += '<button class="btn-mini" onclick="App.ui.dlEpisodes(\'' +
+                     escAttr(b.key) + '\',\'' + escAttr(b.title || '') + '\')">分集管理</button>';
                 h += '<button class="btn-mini danger" onclick="App.ui.dlRemove(\'' +
                      escAttr(b.key) + '\',\'' + escAttr(b.title || '') + '\')">删除</button>';
-                h += '</div>';
+                h += '</div></div>';
+                // ★ v4.21.49：整本一键转存直接放在主页面，不用先钻进分集页逐集勾
+                h += '<div class="dlm-exp"><span>转存整本</span>';
+                h += '<button class="btn-mini" onclick="App.ui.dlExportBook(\'' +
+                     escAttr(b.key) + '\',\'local\')">本地目录</button>';
+                h += '<button class="btn-mini" onclick="App.ui.dlExportBook(\'' +
+                     escAttr(b.key) + '\',\'nas\')">NAS 网盘</button>';
+                h += '<span class="dlm-exp-tip">只复制，不删原文件</span></div>';
             }
             h += '<div class="dlm-acts"><button class="btn-mini danger" onclick="App.ui.dlClearAll()">' +
                  '全部删除</button></div>';
@@ -10002,11 +10239,206 @@
         });
     };
 
+    /** ★ v4.21.49 整本一键转存：空数组交给原生展开成这本书所有已下载集 */
+    ui.dlExportBook = function (key, where) {
+        if (!key) return;
+        if (where === 'nas') TS.call('dlExportNas', key, '[]');
+        else TS.call('dlExportPickDir', key, '[]');
+    };
+
     ui.dlClearAll = function () {
         ui.confirmSheet('清空全部下载？此操作不可恢复。\n' +
                         '（只删 App 内的文件，外部文件夹里的不受影响）', function () {
             TS.call('downloadClearAll');
         });
+    };
+
+    // ==================== ★ v4.21.48 分集管理 ====================
+    //
+    // 下载管理页以前只能「整本书」看/删，分集级操作全缺。
+    // 这里补一个独立子页：逐集查看（状态/大小/存放位置）、勾选、单集删除、
+    // 单集播放、批量删除、批量转存到本地目录或 NAS。
+    // 所有回调都是 onDl* 独立命名，不碰下载/缓存共用的 onCache*。
+
+    /** 打开某本书的分集管理页 */
+    ui.dlEpisodes = function (key, title) {
+        if (!key) return;
+        App._dlepKey = key;
+        App._dlepTitle = title || key;
+        App._dlepSel = {};
+        App._dlepItems = [];
+        var t = $('dlepTitle');
+        if (t) t.textContent = '分集管理 · ' + App._dlepTitle;
+        goSub('dlep');
+        TS.call('downloadEpisodes', key);
+    };
+
+    ui.dlepRefresh = function () {
+        if (App._dlepKey) TS.call('downloadEpisodes', App._dlepKey);
+    };
+
+    /** 原生：某本书每一集的索引 */
+    window.onDlEpisodes = function (o) {
+        o = o || {};
+        var items = o.items || [];
+        App._dlepItems = items;
+        // 删过的集不再留在选中集里
+        var valid = {};
+        for (var k = 0; k < items.length; k++) {
+            if (App._dlepSel && App._dlepSel[items[k].idx]) valid[items[k].idx] = 1;
+        }
+        App._dlepSel = valid;
+
+        var box = $('dlepBody');
+        if (!box) return;
+        var h = '<div class="dlm-sum">' + TS.esc(o.title || App._dlepTitle) +
+                ' · 共 ' + (o.count || items.length) + ' 集</div>';
+        if (!items.length) {
+            h += '<div class="empty"><div class="big">📂</div>这本书还没有下载记录</div>';
+        } else {
+            for (var i = 0; i < items.length; i++) {
+                var e = items[i], idx = e.idx;
+                var done = e.status === 2;
+                h += '<div class="dlep-item" id="dlepRow_' + idx + '">';
+                h += '<div class="dlep-chk" onclick="App.ui.dlepToggle(' + idx + ')">✓</div>';
+                h += '<div class="dlep-info" onclick="App.ui.dlepToggle(' + idx + ')">';
+                h += '<div class="dlep-t">第 ' + idx + ' 集</div>';
+                h += '<div class="dlep-s">' + TS.esc(e.sizeText || '') + ' · ' +
+                     '<span class="' + (done ? 'dlep-ok' : 'dlep-bad') + '">' +
+                     TS.esc(e.statusText || '') + '</span> · ' + TS.esc(e.loc || '') +
+                     '</div></div>';
+                if (done && e.play) {
+                    h += '<button class="btn-mini" onclick="App.ui.dlepPlay(' + idx + ')">播放</button>';
+                }
+                h += '<button class="btn-mini danger" onclick="App.ui.dlepDelOne(' + idx +
+                     ')">删除</button>';
+                h += '</div>';
+            }
+            h += '<div class="dlm-acts">勾选分集后可批量删除 / 转存；转存只复制，不删原文件</div>';
+        }
+        box.innerHTML = h;
+        ui.dlepPaintSel();
+    };
+
+    /** 只更新勾选态，不整表重绘（保住滚动位置） */
+    ui.dlepPaintSel = function () {
+        var items = App._dlepItems || [], sel = App._dlepSel || {}, n = 0;
+        for (var i = 0; i < items.length; i++) {
+            var idx = items[i].idx;
+            var row = $('dlepRow_' + idx);
+            if (!row) continue;
+            var on = !!sel[idx];
+            if (on) n++;
+            row.classList.toggle('sel', on);
+            var chk = row.querySelector('.dlep-chk');
+            if (chk) chk.style.color = on ? '#fff' : 'transparent';
+        }
+        var s = $('dlepSelText');
+        if (s) s.textContent = '已选 ' + n + ' 集';
+    };
+
+    ui.dlepToggle = function (idx) {
+        if (!App._dlepSel) App._dlepSel = {};
+        if (App._dlepSel[idx]) delete App._dlepSel[idx];
+        else App._dlepSel[idx] = 1;
+        ui.dlepPaintSel();
+    };
+
+    ui.dlepAll = function () {
+        App._dlepSel = {};
+        var items = App._dlepItems || [];
+        for (var i = 0; i < items.length; i++) App._dlepSel[items[i].idx] = 1;
+        ui.dlepPaintSel();
+    };
+
+    ui.dlepInvert = function () {
+        var items = App._dlepItems || [], sel = App._dlepSel || {}, next = {};
+        for (var i = 0; i < items.length; i++) {
+            if (!sel[items[i].idx]) next[items[i].idx] = 1;
+        }
+        App._dlepSel = next;
+        ui.dlepPaintSel();
+    };
+
+    ui.dlepSelIdxs = function () {
+        var items = App._dlepItems || [], sel = App._dlepSel || {}, out = [];
+        for (var i = 0; i < items.length; i++) {
+            if (sel[items[i].idx]) out.push(items[i].idx);
+        }
+        return out;
+    };
+
+    ui.dlepItem = function (idx) {
+        var items = App._dlepItems || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].idx === idx) return items[i];
+        }
+        return null;
+    };
+
+    ui.dlepPlay = function (idx) {
+        var e = ui.dlepItem(idx);
+        if (!e || !e.play) { TS.toast('这一集的本地文件不在了'); return; }
+        TS.call('playUrl', e.play, '第' + idx + '集 · ' + (App._dlepTitle || ''));
+    };
+
+    ui.dlepDelOne = function (idx) {
+        ui.confirmSheet('删除第 ' + idx + ' 集？\n（只删 App 内的文件，外部目录里的副本不动）', function () {
+            TS.call('downloadDeleteOne', App._dlepKey, idx);
+        });
+    };
+
+    ui.dlepDelMany = function () {
+        var idxs = ui.dlepSelIdxs();
+        if (!idxs.length) { TS.toast('请先勾选分集'); return; }
+        ui.confirmSheet('删除选中的 ' + idxs.length + ' 集？此操作不可恢复。\n' +
+                        '（只删 App 内的文件，外部目录里的副本不动）', function () {
+            TS.call('downloadDeleteMany', App._dlepKey, JSON.stringify(idxs));
+        });
+    };
+
+    ui.dlepExportLocal = function () {
+        var idxs = ui.dlepSelIdxs();
+        if (!idxs.length) { TS.toast('请先勾选分集'); return; }
+        TS.call('dlExportPickDir', App._dlepKey, JSON.stringify(idxs));
+    };
+
+    ui.dlepExportNas = function () {
+        var idxs = ui.dlepSelIdxs();
+        if (!idxs.length) { TS.toast('请先勾选分集'); return; }
+        TS.call('dlExportNas', App._dlepKey, JSON.stringify(idxs));
+    };
+
+    /** 原生：转存进度（本地 / NAS 共用） */
+    window.onDlExportProgress = function (o) {
+        o = o || {};
+        var txt = '转存中 ' + (o.done || 0) + '/' + (o.total || 0) +
+            ' · 成功 ' + (o.ok || 0) + ' · 跳过 ' + (o.skip || 0) +
+            ' · 失败 ' + (o.fail || 0);
+        // ★ v4.21.49：主页面发起的整本转存也要能看见进度
+        var ids = ['dlepProg', 'dlManageProg'];
+        for (var i = 0; i < ids.length; i++) {
+            var p = $(ids[i]);
+            if (!p) continue;
+            p.classList.remove('hide');
+            p.textContent = txt;
+        }
+    };
+
+    /** 原生：转存结束（含取消挑目录） */
+    window.onDlExportDone = function (o) {
+        o = o || {};
+        var ids = ['dlepProg', 'dlManageProg'];
+        for (var i = 0; i < ids.length; i++) {
+            var p = $(ids[i]);
+            if (p) { p.classList.add('hide'); p.textContent = ''; }
+        }
+        if (o.cancel) { TS.toast('已取消，未选择目录'); return; }
+        if (o.error && !(o.ok || o.skip)) { TS.toast('转存失败：' + o.error); return; }
+        TS.toast('转存完成：成功 ' + (o.ok || 0) + ' 集 · 跳过 ' + (o.skip || 0) + ' 集' +
+                 ((o.fail || 0) ? ' · 失败 ' + o.fail + ' 集' : '') +
+                 (o.target ? ' → ' + o.target : ''));
+        if (o.error && o.fail) TS.toast('首个失败原因：' + o.error);
     };
 
     // ==================== 设备信息 ====================
@@ -10362,6 +10794,64 @@
         ui.openSrcGroup('custom');
     };
     applyHomeCols();
+
+    // ==================== ★ v4.21.52 模糊强度自定义（0~100，默认 60） ====================
+    // 滑杆值换算成各处 blur / alpha / saturate 写进 :root 的 --fx-* 变量，
+    // 样式即时读取；偏好存 localStorage（跟备份走），重启保留。
+    // 分段线性：0 → 60 → 100 三个锚点，60% 为默认。
+    // ★ v4.21.53 液态玻璃重做：底色整体大幅压低。0% 不再是大白底，
+    //   而是极低底色 + CSS 里固定的高光边/斜向微光 = 透明但有玻璃材质；
+    //   往右模糊渐强，底色只轻微增加（仍通透），封面也保留最低轻糊压字。
+    var FX_BLUR_KEY = 'fxBlur';
+    function fxLerp(v, a, b, c) {
+        v = Math.max(0, Math.min(100, v));
+        return v <= 60 ? a + (b - a) * (v / 60)
+                       : b + (c - b) * ((v - 60) / 40);
+    }
+    function applyFxBlur(v) {
+        v = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+        App.fxBlur = v;
+        var st = document.documentElement.style;
+        // blur 像素：0% 浮层全透不糊（靠高光边撑材质），封面保留 6px 轻糊压字
+        st.setProperty('--fx-fbg',   fxLerp(v, 6, 18, 36) + 'px');
+        st.setProperty('--fx-pop',   fxLerp(v, 0, 8, 24) + 'px');
+        st.setProperty('--fx-sheet', fxLerp(v, 0, 10, 28) + 'px');
+        st.setProperty('--fx-speed', fxLerp(v, 0, 6, 18) + 'px');
+        // 饱和：强度低时一起收敛，避免「不模糊却发艳」
+        st.setProperty('--fx-fbgsat',    Math.round(fxLerp(v, 130, 145, 175)) + '%');
+        st.setProperty('--fx-sat',       Math.round(fxLerp(v, 140, 165, 190)) + '%');
+        st.setProperty('--fx-sat-speed', Math.round(fxLerp(v, 135, 160, 185)) + '%');
+        // 底色 alpha：整体压到很淡，0% 最透，往右只轻微增加（最高也远低于旧版）
+        st.setProperty('--fx-popA',    fxLerp(v, .10, .14, .22).toFixed(2));
+        st.setProperty('--fx-popAd',   fxLerp(v, .10, .14, .22).toFixed(2));
+        st.setProperty('--fx-subA',    fxLerp(v, .08, .10, .16).toFixed(2));
+        st.setProperty('--fx-subAd',   fxLerp(v, .08, .10, .16).toFixed(2));
+        st.setProperty('--fx-sheetA',  fxLerp(v, .12, .16, .24).toFixed(2));
+        st.setProperty('--fx-sheetAd', fxLerp(v, .14, .18, .26).toFixed(2));
+        st.setProperty('--fx-speedA',  fxLerp(v, .08, .12, .20).toFixed(2));
+        st.setProperty('--fx-speedAd', fxLerp(v, .08, .12, .20).toFixed(2));
+        // 同步设置页滑块显示
+        var r = $('fxBlur_r'), t = $('fxBlur_v');
+        if (r && String(r.value) !== String(v)) r.value = v;
+        if (t) t.textContent = v + '%';
+    }
+    var _fxBlurTimer = null;
+    ui.onFxBlurInput = function (val) {
+        var v = parseInt(val, 10);
+        if (isNaN(v)) return;
+        applyFxBlur(v);                       // 拖动即时生效
+        if (_fxBlurTimer) clearTimeout(_fxBlurTimer);
+        _fxBlurTimer = setTimeout(function () {  // 落盘节流，别在拖动中猛写
+            _fxBlurTimer = null;
+            try { localStorage.setItem(FX_BLUR_KEY, String(App.fxBlur)); } catch (e) {}
+        }, 150);
+    };
+    // 启动读回偏好（读不到用默认 60）
+    (function initFxBlur() {
+        var v = 60;
+        try { var raw = localStorage.getItem(FX_BLUR_KEY); if (raw !== null) v = parseInt(raw, 10); } catch (e) {}
+        applyFxBlur(isNaN(v) ? 60 : v);
+    })();
 
     ui.wgDiagRefresh = function () { TS.call('widgetDiagLog'); };
 
@@ -11060,6 +11550,62 @@
     // 最新版本放数组第一个，超出 1 条的收进「历史版本」折叠区。
 
     var CHANGELOG = [
+        {
+            ver: '4.21.49',
+            date: '2026-11-14',
+            items: [
+                '修复：下载管理里「正在下载」区块不见了 —— 它原先是跟着已下载清单动态生成的，下载每完成一集刷新清单就会把它连同进度一起清空，异步回包还会误停刷新；现在改成独立常驻区块，没有任务时也明确提示，从播放页 / 分集页 / 底部导航切回来都自动恢复',
+                '修复：分集管理页底部的批量操作栏（全选 / 批量删除 / 转存本地 / 转存 NAS）被全局底部导航栏盖住，导致按钮完全看不见；已把操作栏抬到底栏之上',
+                '新增：下载管理主页面每本书直接给「转存整本」两个按钮（本地目录 / NAS 网盘），一键转存这本书所有已下载的分集，不用先钻进分集页逐集勾选；进度与结果在主页面也能看到',
+                '改进：转存 NAS 未配置 WebDAV 时给出明确指引；整本转存只复制不删原文件，已转存过的同尺寸文件自动跳过'
+            ],
+        },
+        {
+            ver: '4.21.48',
+            date: '2026-11-14',
+            items: [
+                '新增：下载管理 → 分集管理 —— 每本书可展开看每一集（大小 / 状态 / 存放位置），支持单集播放、单集删除、全选 / 反选、批量删除',
+                '新增：手动转存（本地目录）—— 勾选任意分集后现场挑一个文件夹，复制成「书名/第N集.m4a」，逐集校验大小，原下载文件不动；已转存过的同尺寸文件自动跳过',
+                '新增：手动转存（NAS）—— 勾选分集后直接传到网盘「转存/书名/」目录，沿用已配置的 WebDAV 与远端去重；下载管理页里就能一键操作，不用再回选集菜单',
+                '改进：分集管理与转存用独立回调，不与缓存 / 下载进度事件混用；App 内文件与外部文件夹里的文件都能转存'
+            ],
+        },
+        {
+            ver: '4.21.47',
+            date: '2026-11-12',
+            items: [
+                '修复：每次重新打开 App，左上角书源下拉都只剩一个源、也没法显示全部 —— 冷启动首屏快照只记住了当前那一个源，完整清单要挨个初始化所有插件才回得来，回包一慢就一直卡在单源状态；现在重启第一帧就还原全部书源，清单改为即时返回',
+                '新增：下拉顶部「显示全部书源」入口 —— 一点就列出全部已启用书源（带总数），随时可返回内容首页',
+                '修复：点开书源下拉特别卡、有时根本加载不出来 —— 不再在启动时逐个执行插件的分类判定（近百次重操作互相拖累），分类改为选中某个源时按需加载，单个源有超时兜底，不会再拖住整页',
+                '修复：展开下拉时重复克隆重建整个列表造成长列表掉帧；源表回来时下拉原地刷新，不用关掉重开'
+            ],
+        },
+        {
+            ver: '4.21.46',
+            date: '2026-11-12',
+            items: [
+                '修复：检查更新仍检测不到新版 —— 查明反代主站用的是自签证书，旧版连不上只能退到停更的公共镜像（那份清单一直停在 4.21.42）；现在对内置更新源单独放行自签证书（严格限定这一个主机，不影响其它网络请求），安装包下载后仍做 MD5 校验',
+                '增强：主站不通时自动切家里内网直连；各源读同一份清单，界面不显示也不需要填写任何地址'
+            ],
+        },
+        {
+            ver: '4.21.45',
+            date: '2026-11-12',
+            items: [
+                '修复：App「检查更新」改回内置官方更新渠道 —— 自动走反代 HTTPS 主站，主站不通时自动切家里内网直连；关于页不再显示或要求填写任何服务器地址，避免截图泄密',
+                '说明：下载页 / 清单 / 安装包读同一份数据，发布新版后点「检查更新」即可自动下载安装'
+            ],
+        },
+        {
+            ver: '4.21.44',
+            date: '2026-11-12',
+            items: [
+                '修复：番茄听书「直连」等「我的听书」jar 插件源翻页仍提示「后面几页都是重复内容」—— 前两版改的是 JS 插件源，jar 源这条链路宿主一直把页码丢掉、也没接插件返回的下一页地址，每页都重新请求第 1 页；现在顺着插件给的下一页地址翻，插件没给就自动探测站点实际使用的分页写法',
+                '修复：下载页主下载按钮点了没反应 —— 主按钮带 download 属性被部分手机浏览器拦下；现在两个按钮一致，服务端同时补上文件名与安装包类型，都能直接下载',
+                '修复：App「检查更新」检测不到新版 —— 更新源改读 NAS 下载站清单，页面 / 清单 / APK 读同一份数据',
+                '修复：影视卡片版本漂移（下载页原写着 v2.16，实际是 v2.22）'
+            ],
+        },
         {
             ver: '4.21.42',
             date: '2026-11-11',

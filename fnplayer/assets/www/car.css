@@ -40,7 +40,8 @@ body.car .navico {
 }
 body.car .nav { padding-top: 10px; padding-bottom: 10px; }
 body.car .navtitle { font-size: 17px; }
-body.car .navsel {
+/* v2.23：原来写成 .navsel（不存在），车机态源按钮热区一直没生效 */
+body.car .srcsel-btn {
     min-height: 44px;
     font-size: 14px;
 }
@@ -101,4 +102,5 @@ body.car .ovl-card {
     max-width: calc(100% - 24px);
     max-height: calc(100% - 24px);
 }
-body.car .ovl-item { min-height: 48px; font-size: 14px; }
+/* v2.23：原来写成 .ovl-item（不存在），弹层行 48px 热区一直没生效 */
+body.car .pk-btn, body.car .pk-row, body.car .smitem { min-height: 48px; font-size: 14px; }

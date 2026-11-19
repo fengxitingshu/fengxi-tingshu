@@ -1,10 +1,10 @@
-/* 枫兮影视 v2.3 —— 海报墙 + 直播 + 短剧 + 源管理 + 飞牛 NAS 配置/诊断。纯 ES5。 */
+/* 枫兮影视 v2.23 —— 海报墙 + 直播 + 短剧 + 源管理 + 飞牛 NAS 配置。纯 ES5。 */
 var App = (function () {
     var $ = TS.$, esc = TS.esc;
     var TITLES = {
         pageHome: '枫兮', pageLive: '直播', pageShort: '短剧',
         pageDetail: '影片详情',
-        pageSettings: '设置', pageWeb: '飞牛影视网页',
+        pageSettings: '我的', pageWeb: '飞牛影视网页',
         pageSrcMgmt: '源管理', pageSrcCat: '源',
         pageSearch: '搜索', pageHistory: '观看历史'
     };
@@ -37,6 +37,10 @@ var App = (function () {
         each(document.querySelectorAll('.tabitem'), function (t) {
             t.classList.toggle('on', t.getAttribute('data-tab') === id);
         });
+        // v2.24：切回首页时海报墙是空的就补一次加载。
+        // v2.23 还额外要求「空态处于隐藏」，结果加完源再返回首页仍卡在
+        // 「立即添加订阅源」不刷新；已有内容时不重复请求，避免丢滚动位置。
+        if (id === 'pageHome' && !$('shelf').innerHTML) loadHome();
         // 切到直播/短剧页时刷新内容
         if (id === 'pageLive') { renderLives(); ensureLiveLoaded(); }
         if (id === 'pageShort') loadShort();
@@ -118,8 +122,10 @@ var App = (function () {
         } else {
             n = parseInt(cfg.homeColumns, 10) || 2;
         }
-        var sh = $('shelf');
-        if (sh) sh.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
+        // v2.23：四个 shelf（首页 / 短剧 / 搜索 / 历史）全部生效，原来只有首页生效。
+        each(document.querySelectorAll('.shelf'), function (sh) {
+            sh.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
+        });
     }
 
     function isCarMode() {
@@ -353,8 +359,13 @@ var App = (function () {
         $('dtDesc').textContent = d.sub || '点「立即播放」开始观看，或在下方选集里挑选一集。';
     };
 
-    window.onEpisodes = function (r) {
-        var list = r.list || [];
+    // v2.23：EasyBox 对齐 —— 选集正序 / 倒序切换（只重排，不重新请求）
+    var epReverse = false, epLast = [];
+    function renderEpList() {
+        var list = epLast.slice();
+        if (epReverse) list.reverse();
+        var btn = $('epOrderBtn');
+        if (btn) btn.textContent = epReverse ? '倒序 ⇅' : '正序 ⇅';
         $('epCount').textContent = list.length ? '共 ' + list.length + ' 集' : '';
         if (!list.length) {
             $('epList').innerHTML = '<div class="tip">未读到选集数据，可直接点上方「立即播放」。</div>';
@@ -370,7 +381,8 @@ var App = (function () {
                 TS.call('openVideo', el.getAttribute('data-guid'), el.getAttribute('data-title'), curItem ? curItem.guid : '');
             });
         });
-    };
+    }
+    window.onEpisodes = function (r) { epLast = r.list || []; renderEpList(); };
 
     // ==================== 搜索 / 观看历史页（v2.19，v2.20.1 聚合增强） ====================
 
@@ -549,7 +561,8 @@ var App = (function () {
     function closeLivePick() { $('livePickOvl').classList.add('hide'); }
 
     function closeAllSrcMenus() {
-        each(document.querySelectorAll('#srcPickOvl,#livePickOvl'), function (m) {
+        // v2.23：四个弹层全收（原来切 tab 时线路选择 / 悬浮窗引导会残留盖住新页面）
+        each(document.querySelectorAll('#srcPickOvl,#livePickOvl,#linePickOvl,#floatPermOvl'), function (m) {
             m.classList.add('hide');
         });
     }
@@ -836,13 +849,19 @@ var App = (function () {
             pass: $('naPass') ? $('naPass').value : '',
             trustSsl: $('naTrust') ? $('naTrust').checked : true
         });
-        var r;
-        try { r = JSON.parse(TS.call('addSource', body) || '{}'); } catch (e) { r = {}; }
+        // v2.23：NAS 源要跑账号密码登录（同步网络），改走异步桥，避免界面假死
+        TS.call('addSourceAsync', body);
+    }
+
+    window.onAddSourceDone = function (r) {
+        if (!r) return;
         if (r.ok) {
             TS.toast('源已添加');
             renderSrcCat();
+            // v2.24：在首页直接添加源时立刻刷新海报墙，别停在空态
+            if (cur === 'pageHome') loadHome();
         } else TS.toast('添加失败：' + (r.error || ''));
-    }
+    };
 
     window.onSourceLogin = function (ok, msg) {
         TS.toast((ok ? '✓ ' : '✗ ') + msg);
@@ -874,8 +893,9 @@ var App = (function () {
             TS.toast('已导入 TVBox 仓库，到 源管理 → TVBox 源 选择线路');
             return;
         }
-        var msg = '解析完成：添加 ' + (r.added || 0) + ' 个资源站、' + (r.liveAdded || 0) + ' 个直播源';
-        if (r.skipped) msg += '，跳过 ' + r.skipped + ' 个 xml/爬虫源';
+        var msg = '解析完成：添加 ' + (r.added || 0) + ' 个资源站、'
+            + (r.spiderAdded || 0) + ' 个爬虫源、' + (r.liveAdded || 0) + ' 个直播源';
+        if (r.skipped) msg += '，跳过 ' + r.skipped + ' 个无接口地址的站点';
         TS.toast(msg);
         loadSources();
         renderSrcMgmt();
@@ -1209,6 +1229,16 @@ var App = (function () {
             TS.toast('观看历史已清空');
         });
         $('srDiag').addEventListener('click', openWeb);   // v2.9：内嵌网页浏览入口（诊断已移除）
+        // v2.25：闪退后把原生崩溃堆栈复制到剪贴板，方便直接发回来定位
+        var crashEl = $('srCrashLog');
+        if (crashEl) crashEl.addEventListener('click', function () {
+            var r;
+            try { r = JSON.parse(TS.call('getCrashLog') || '{}'); } catch (e2) { r = {}; }
+            var t = r.text || '';
+            if (!t) { TS.toast('暂无崩溃记录（App 运行正常）'); return; }
+            TS.copy(t);
+            TS.toast('已复制最近 ' + t.length + ' 字崩溃日志，粘贴发送即可定位');
+        });
         // v2.9：短剧页滚动到底自动加载下一页
         var scroller = document.querySelector('.content');
         if (scroller) scroller.addEventListener('scroll', function () {
@@ -1264,22 +1294,19 @@ var App = (function () {
         });
         window.onImportDone = function (r) {
             if (!r) return;
-            if (r.ok) TS.toast('已导入：' + (r.name || '源') + ' → ' + (r.cat || '短剧源'));
-            else TS.toast('导入失败：' + (r.error || ''));
-            renderSrcMgmt();
+            if (r.ok) {
+                $('impUrl').value = ''; $('impText').value = '';
+                TS.toast('已导入：' + (r.name || '源') + ' → ' + (r.cat || '短剧源'));
+                renderSrcMgmt();
+                if (cur === 'pageHome') loadHome();
+            } else TS.toast('导入失败：' + (r.error || ''));
         };
         $('btnImport').addEventListener('click', function () {
             var url = $('impUrl').value, txt = $('impText').value;
             if (!url && !txt) { TS.toast('请填源地址或粘贴脚本内容'); return; }
             TS.toast('正在导入…');
-            var r;
-            try { r = JSON.parse(TS.call('importSource', url || txt, '') || '{}'); }
-            catch (e) { r = {}; }
-            if (r.ok) {
-                $('impUrl').value = ''; $('impText').value = '';
-                TS.toast('已导入：' + (r.name || '源') + ' → ' + (r.cat || '短剧源'));
-                renderSrcMgmt();
-            } else TS.toast('导入失败：' + (r.error || ''));
+            // v2.23：改异步桥，30s 下载不再堵死 WebView 线程
+            TS.call('importSourceAsync', url || txt, '');
         });
         $('actShare').addEventListener('click', function () {
             if (!curItem) return;
@@ -1299,15 +1326,28 @@ var App = (function () {
         $('floatPermClose').addEventListener('click', function () {
             $('floatPermOvl').classList.add('hide');
         });
+        $('floatPermOvl').addEventListener('click', function (e) {
+            if (e.target === $('floatPermOvl')) $('floatPermOvl').classList.add('hide');
+        });
+        $('epOrderBtn').addEventListener('click', function () {
+            epReverse = !epReverse;
+            renderEpList();
+        });
+        $('srMyHist').addEventListener('click', function () { go('pageHistory'); });
+        $('srMySearch').addEventListener('click', function () {
+            go('pageSearch');
+            try { $('searchInput').focus(); } catch (e3) {}
+        });
         $('btnPlay').addEventListener('click', function () {
             if (curItem) TS.call('openVideo', curItem.guid, curItem.title, curItem.guid);
         });
         // v2.16：无论有没有 cfg.base，都先跑一次 show() 初始化顶栏
         // （两个下拉互斥、返回键可见性、tab 高亮）。旧版 cfg.base 有值时
         // 跳过 show()，导致首页顶栏两个下拉同时显示、标题被挤没。
+        // v2.23：不再因「没有 NAS 地址」跳到设置页 —— CMS / 爬虫 / TVBox 源
+        // 全都不需要 cfg.base，旧逻辑会让这些用户冷启动落在设置页、首页空白。
+        // loadHome() 内部已处理「未选源」空态，直接展示「立即添加订阅源」入口。
         show('pageHome', false);
-        if (!cfg.base) show('pageSettings', false);
-        else loadHome();
         applyCarMode();   // v2.22：初始按浮窗宽度定布局
     }
 
@@ -1336,5 +1376,10 @@ var App = (function () {
         document.addEventListener('DOMContentLoaded', boot);
     else boot();
 
-    return { go: go, show: show, back: back, loadHome: loadHome, saveCfg: saveCfg, openWeb: openWeb };
+    return {
+        go: go, show: show, back: back, loadHome: loadHome,
+        saveCfg: saveCfg, openWeb: openWeb,
+        // v2.23：空态「立即添加订阅源」直达（EasyBox 首启引导）
+        goSrcMgmt: function () { go('pageSrcMgmt'); renderSrcMgmt(); }
+    };
 })();

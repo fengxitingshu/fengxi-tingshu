@@ -57,14 +57,30 @@ public class JsSourceAdapter implements BrowsableSource {
     private final Object lock = new Object();
 
     /**
-     * ★ v4.21.42 分类翻页链修复。
-     * 插件契约：categoryPage(url) 只认 URL 尾部的 {@code #页码}，下一页靠返回值
-     * {@code nextUrl} 给出。宿主以前永远把首屏原始 URL（#1）原样回传，
-     * 翻页参数被丢弃 → 每页都返回第 1 页 → 前端判「整页重复」提前截断。
-     * 这里按 catId 记住上一页返回的 nextUrl，翻页时优先续链；
-     * 没有链（如刚换回分类）就重写 URL 尾部 {@code #N}。
+     * ★ v4.21.43 分类翻页链（补全 v4.21.42）。
+     *
+     * <p>插件契约：{@code categoryPage(url)} 只认 URL 尾部的 {@code #页码}，
+     * 可选的返回值 {@code nextUrl} 给出下一页地址。
+     *
+     * <p>v4.21.42 只存了「每个 catId 最后一个 nextUrl」一个槽，且没有链时用
+     * {@code replaceAll("#\d+$", ...)} 重写 —— 若插件给的分类地址尾部本来就没有
+     * {@code #N}（番茄听书「直连」这类源就是纯地址），replaceAll 不命中，URL 原样
+     * 回传，插件每页都返回第 1 页，前端连翻 5 页全是重复书，于是提示
+     * 「后面几页都是重复内容」。
+     *
+     * <p>现在按 {@code (catId, page)} 记每一页该请求的地址：有 nextUrl 就顺链，
+     * 没有就按契约把页号写成 {@code #N}（尾部已有 #N 则替换，没有则追加）。
+     * 首屏 page==1 清链，避免刷新/换分类后旧链串页。
      */
-    private final Map<String, String> nextUrlCache = new java.util.HashMap<String, String>();
+    private final Map<String, String> pageUrlCache = new java.util.HashMap<String, String>();
+    /** ★ v4.21.44：每页结果指纹 + 探测命中的分页模板 */
+    private final Map<String, String> pageSigCache = new java.util.HashMap<String, String>();
+    private final Map<String, String> pageTplCache = new java.util.HashMap<String, String>();
+
+    // 分页 URL 规则统一交给 PagePaging（jar 插件源共用一份，避免两边各改各的）
+    private static String pageKey(String catId, int page) { return PagePaging.key(catId, page); }
+    private static String withPage(String catId, int page) { return PagePaging.withPage(catId, page); }
+    private static String firstPageUrl(String catId) { return PagePaging.firstPageUrl(catId); }
 
     public JsSourceAdapter(String pluginId, JsEngine.Scope scope, Scriptable src,
                            JsHostApi.Callback cb) {
@@ -226,46 +242,124 @@ public class JsSourceAdapter implements BrowsableSource {
     @Override
     public List<Book> browse(String catId, int page) throws Exception {
         if (catId == null || catId.length() == 0) return new ArrayList<Book>();
+        if (page < 1) page = 1;
         synchronized (lock) {
-            // ★ v4.21.42：把页号真正传给插件 —— 优先续 nextUrl 链，其次重写 #N。
-            //   注意 page==1 时必须用原始 catId 起链（换分类回访/刷新场景，
-            //   缓存里的旧链要被本次返回的 nextUrl 覆盖）。
-            String url = catId;
-            if (page > 1) {
-                String nx = nextUrlCache.get(catId);
-                if (nx != null && nx.length() > 0) {
-                    url = nx;
+            String url;
+            String mode;
+            String tpl = pageTplCache.get(catId);
+            if (page == 1) {
+                // 首屏 / 刷新 / 换分类：从原始地址重新起链
+                clearChain(catId);
+                url = firstPageUrl(catId);
+                mode = "start";
+            } else if (tpl != null && tpl.length() > 0) {
+                url = PagePaging.applyTpl(tpl, page);
+                mode = "tpl";
+            } else {
+                String chained = pageUrlCache.get(pageKey(catId, page));
+                if (chained != null && chained.length() > 0) {
+                    url = chained;
+                    mode = "chain";
                 } else {
-                    url = catId.replaceAll("#\\d+$", "#" + page);
+                    // 插件没给 nextUrl（或跳页）→ 按契约把页号写进 #N
+                    url = withPage(catId, page);
+                    mode = "hash";
                 }
             }
-            Object r = scope.call(src, "categoryPage", new Object[]{url});
+            // 别原地打转：算出来的地址跟上一页一样，就强制换成带页号的地址
+            String prev = pageUrlCache.get(pageKey(catId, page - 1));
+            if (url.equals(prev)) {
+                url = withPage(catId, page);
+                mode = "hash-force";
+            }
+            pageUrlCache.put(pageKey(catId, page), url);
+
+            Object r = callCategoryPage(url);
             if (!(r instanceof Scriptable)) return new ArrayList<Book>();
+            List<Book> books = JsBridge.toBooks(
+                    id, ScriptableObject.getProperty((Scriptable) r, "books"));
+            String sig = PagePaging.sig(books);
+            String prevSig = page > 1 ? pageSigCache.get(pageKey(catId, page - 1)) : null;
+
+            // 本页与上一页完全相同 ⇒ 猜的分页写法没生效，换写法探测
+            if (page > 1 && sig.length() > 0 && sig.equals(prevSig)) {
+                int tried = 0;
+                for (String[] cand : PagePaging.candidates(catId, page)) {
+                    if (tried >= 6 || cand[0].equals(url)) continue;
+                    tried++;
+                    Object r2 = callCategoryPageQuiet(cand[0]);
+                    if (!(r2 instanceof Scriptable)) continue;
+                    List<Book> b2 = JsBridge.toBooks(
+                            id, ScriptableObject.getProperty((Scriptable) r2, "books"));
+                    String s2 = PagePaging.sig(b2);
+                    if (s2.length() == 0 || s2.equals(prevSig)) continue;
+                    url = cand[0];
+                    r = r2;
+                    books = b2;
+                    sig = s2;
+                    pageTplCache.put(catId, cand[1]);
+                    mode = "probe";
+                    break;
+                }
+            }
+            pageUrlCache.put(pageKey(catId, page), url);
+            pageSigCache.put(pageKey(catId, page), sig);
+
             String next = JsBridge.str((Scriptable) r, "nextUrl");
-            if (next.length() > 0) nextUrlCache.put(catId, next);
-            else nextUrlCache.remove(catId);
-            Object books = ScriptableObject.getProperty((Scriptable) r, "books");
-            return JsBridge.toBooks(id, books);
+            // nextUrl 与当前地址相同 = 插件没往前走，忽略它
+            boolean hasNext = next.length() > 0 && !next.equals(url);
+            if (hasNext) pageUrlCache.put(pageKey(catId, page + 1), next);
+            else pageUrlCache.remove(pageKey(catId, page + 1));
+
+            // 脱敏诊断：只打页号 / 模式 / 条数，绝不回显任何 URL 或域名
+            try {
+                android.util.Log.i("FxBrows", "page=" + page + " mode=" + mode
+                        + " next=" + (hasNext ? 1 : 0) + " n=" + books.size());
+            } catch (Throwable ignored) {}
+            return books;
+        }
+    }
+
+    /** 首屏清链：顺带清掉结果指纹与探测模板 */
+    private void clearChain(String catId) {
+        String prefix = catId + PagePaging.SEP;
+        java.util.Iterator<Map.Entry<String, String>> it =
+                pageUrlCache.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getKey().startsWith(prefix)) it.remove();
+        }
+        it = pageSigCache.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getKey().startsWith(prefix)) it.remove();
+        }
+        pageTplCache.remove(catId);
+    }
+
+    private Object callCategoryPage(String url) {
+        return scope.call(src, "categoryPage", new Object[]{url});
+    }
+
+    /** 探测用的静默调用：插件抛错不能影响主流程 */
+    private Object callCategoryPageQuiet(String url) {
+        try {
+            return callCategoryPage(url);
+        } catch (Throwable t) {
+            return null;
         }
     }
 
     /**
-     * 分类页的下一页地址。
+     * 分类页的下一页地址（供上层按需取用）。
      *
-     * <p>契约里 {@code categoryPage} 会返回 {@code nextUrl}，但 {@link BrowsableSource}
-     * 的接口只给了 (catId, page)。这里把 nextUrl 编码进 catId 的特殊形式交给上层，
-     * 让「加载更多」能顺着链翻页 —— 见 {@link #nextUrlOf(String)} 配套使用。
+     * <p>优先给插件实际返回的 nextUrl；插件没给就按契约补 {@code #2}。
+     * 不再像旧实现那样用原始 catId 重新请求一次 —— 那只会拿到第 1 页的链。
      */
     public String categoryPageNext(String catId) {
+        if (catId == null || catId.length() == 0) return null;
         synchronized (lock) {
-            try {
-                Object r = scope.call(src, "categoryPage", new Object[]{catId});
-                if (!(r instanceof Scriptable)) return null;
-                String next = JsBridge.str((Scriptable) r, "nextUrl");
-                return next.length() == 0 ? null : next;
-            } catch (Throwable t) {
-                return null;
-            }
+            String nx = pageUrlCache.get(pageKey(catId, 2));
+            if (nx != null && nx.length() > 0) return nx;
+            return withPage(catId, 2);
         }
     }
 

@@ -267,6 +267,46 @@ public final class DownloadRepo {
         return out;
     }
 
+    // ==================== ★ v4.21.48 分集管理 ====================
+
+    /** 某一集的完整索引信息（分集管理页 + 手动转存用） */
+    public static final class Episode {
+        public int idx;
+        public long size;
+        public int status;
+        public String path;         // 私有文件绝对路径（移到外部后为 null）
+        public String savedUri;     // 外部目录 SAF content:// URI
+        public String savedPath;    // 外部可读路径（仅展示）
+        public long updatedAt;
+    }
+
+    /** 按集号升序列出某本书的全部下载记录（含进行中/失败，便于逐集管理） */
+    public static List<Episode> episodes(String key) {
+        List<Episode> out = new ArrayList<Episode>();
+        Cursor c = null;
+        try {
+            c = Db.get().getReadableDatabase().rawQuery(
+                    "SELECT chapter_idx, size, status, path, saved_uri, saved_path, updated_at"
+                            + " FROM download WHERE key=? ORDER BY chapter_idx",
+                    new String[]{key});
+            while (c.moveToNext()) {
+                Episode e = new Episode();
+                e.idx = c.getInt(0);
+                e.size = c.getLong(1);
+                e.status = c.getInt(2);
+                e.path = c.getString(3);
+                e.savedUri = c.getString(4);
+                e.savedPath = c.getString(5);
+                e.updatedAt = c.getLong(6);
+                out.add(e);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (c != null) c.close();
+        }
+        return out;
+    }
+
     // ==================== 删除 ====================
 
     /** 删除某本书的全部下载（含私有文件；外部文件不动，属用户自己的文件） */

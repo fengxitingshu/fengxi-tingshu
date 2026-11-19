@@ -43,6 +43,11 @@ public class Bridge {
     /** ★ v4.2.0：115 扫码轮询取消标志（关弹窗时置位） */
     private volatile boolean panQrStopped = false;
 
+    /** ★ v4.21.48 手动转存：等待「挑目录」结果期间记住用户选了哪几集 */
+    private String dlExportKey = null;
+    private int[] dlExportIdxs = null;
+    private String dlExportTitle = "";
+
     /** 播放控制接口，便于后续把实现从 Activity 换成 Service 而不动 Bridge */
     public interface PlayerControl {
         /**
@@ -1703,149 +1708,150 @@ public class Bridge {
     // ==================== 发现（浏览分类） ====================
 
     /**
-     * ★ v3.7.7：分类清单的进程内缓存。
+     * ★ v4.21.47：分类清单的进程内缓存。
      *
-     * <p>categories() 对 JS/Python 源来说要起引擎，是最贵的一步；而分类清单
-     * 实际上**几乎不变**（站点栏目名不会十分钟改一次）。所以第一次问完就存下来，
-     * TTL 内再次打开首页直接用缓存，秒出。
+     * <p>categories() 对插件/JS/Python 源来说是**重操作**（反射执行插件代码、
+     * 起 Rhino 引擎，有的还会联网取栏目）。冷启动挨个问 96 个源能把首页钉住十几秒。
+     * 现在分类只在「用户真正选中某个源」时按需拉一次，拉完缓存在这里。
      *
      * <p>key = 源 id，value = [0]=时间戳 [1]=分类数组。
      * 源列表变化（导入/删除/启停）时会由 invalidateCatCache() 整个清掉。
      */
     private static final java.util.Map<String, Object[]> CAT_CACHE =
             new java.util.concurrent.ConcurrentHashMap<String, Object[]>();
-    /** 分类缓存有效期：10 分钟。够短，站点改版也能很快反映；够长，切换页面不会重问。 */
+    /** 分类缓存有效期：10 分钟。过期也先秒回旧值，后台再静默刷新一次。 */
     private static final long CAT_TTL_MS = 10 * 60 * 1000L;
+    /** 正在拉分类的源；同一个源不重复并发请求 */
+    private static final java.util.Set<String> CAT_LOADING =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
 
     /** 源列表有变动（导入 / 删除 / 启停）时清空分类缓存 */
     public static void invalidateCatCache() {
         CAT_CACHE.clear();
+        CAT_LOADING.clear();
     }
 
+    /** List&lt;Category&gt; → 前端 cats 结构 [{k,n}] */
+    private static JSONArray catsToJson(List<com.tingshu.app.source.Category> cs) {
+        JSONArray a = new JSONArray();
+        if (cs == null) return a;
+        for (com.tingshu.app.source.Category c : cs) {
+            if (c == null) continue;
+            try {
+                JSONObject o = new JSONObject();
+                o.put("k", c.id);
+                o.put("n", c.name);
+                a.put(o);
+            } catch (Throwable ignored) {}
+        }
+        return a;
+    }
+
+    /** 增量回传单个源的分类，前端按 id 合并（不再等一次性大回包） */
+    private void pushSourceCategories(String id, JSONArray cats, boolean ok) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("id", id);
+            o.put("cats", cats == null ? new JSONArray() : cats);
+            o.put("ok", ok);
+            callback("onSourceCategories", o);
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * ★ v4.21.47：首页/发现页的「源清单」——只做轻量枚举，毫秒级回包。
+     *
+     * <p>旧实现先调 SourceRegistry.browsable()，它对每个源串行执行 canBrowse()；
+     * jar 插件的 canBrowse() 会反射执行插件 getCategoryMenus()（有的还联网），
+     * 96 个源冷启动就是近百次重操作，任何一个卡住整个回包就不来。回包不来，
+     * 前端的 homeSources 一直停在启动快照写入的「单个占位源」，左上角下拉
+     * 永远只有一个；同时这些重任务占满线程池，点开就卡、甚至加载不出来。
+     *
+     * <p>现在：清单只看「启用 + 实现了 BrowsableSource」，绝不执行插件代码；
+     * 分类从缓存带出（没有就空数组），用户真正选中某个源时再由
+     * sourceCategories(id) 单独按需拉一次，回包走 onSourceCategories 增量合并。
+     */
     @JavascriptInterface
     public void discoverSources() {
-        // ★ v3.7.7：两处提速 ——
-        //   1) 串行改并发：原来 for 循环逐个问 categories()，JS/Python 源首次调用
-        //      要启动 Rhino / Chaquopy 引擎（几百 ms），10 个源就是好几秒。
-        //      这些调用彼此独立，丢给 catPool 并行跑，总耗时 ≈ 最慢的那个源。
-        //   2) 加 10 分钟进程内缓存：分类清单基本不变，第二次打开首页直接秒出，
-        //      只有真正过期的源才会重新问。
-        //
-        // ★ v3.9.37：两处再提速 ——
-        //   3) 过期缓存也**先用**（stale-while-revalidate）：只要进程里还有上次
-        //      的分类，立刻回给前端渲染，首页不再为慢源等 6 秒；后台再刷新缓存。
-        //   4) 从 searchPool 挪到 lightPool：这个入口是首页/发现的必经之路，
-        //      不能跟聚合搜索的长任务抢线程。
         Aggregator.lightPool().execute(new Runnable() {
             public void run() {
                 JSONArray arr = new JSONArray();
                 try {
-                    List<Source> list = SourceRegistry.browsable();
-                    // 先筛出真正可浏览的（保持顺序稳定 —— 前端按这个顺序渲染）
-                    final java.util.List<com.tingshu.app.source.BrowsableSource> bs =
-                            new java.util.ArrayList<com.tingshu.app.source.BrowsableSource>();
-                    for (Source s : list) {
-                        if (s instanceof com.tingshu.app.source.BrowsableSource) {
-                            bs.add((com.tingshu.app.source.BrowsableSource) s);
-                        }
-                    }
-                    if (bs.isEmpty()) {
-                        callback("onDiscoverSources", arr);
-                        return;
-                    }
-
-                    // ---- 第一轮：有缓存（含过期）的直接取，真没有的收集起来并发问 ----
-                    final List<List<com.tingshu.app.source.Category>> results =
-                            new java.util.ArrayList<List<com.tingshu.app.source.Category>>();
-                    final java.util.List<Integer> missIdx =
-                            new java.util.ArrayList<Integer>();
-                    // ★ v3.9.37 记录「用过过期缓存」的源 id：回包后后台刷新
-                    final java.util.List<String> staleIds =
-                            new java.util.ArrayList<String>();
-                    long now = System.currentTimeMillis();
-                    for (int i = 0; i < bs.size(); i++) {
-                        Object[] hit = CAT_CACHE.get(bs.get(i).id());
+                    List<Source> all = SourceRegistry.enabled();
+                    for (Source s : all) {
+                        if (s == null) continue;
+                        if (!(s instanceof com.tingshu.app.source.BrowsableSource)) continue;
+                        String id = s.id();
+                        // 本地源 / 网盘源在前端下拉里单独分段，别混进网络书源清单
+                        if ("local".equals(id) || (id != null && id.startsWith("pan_"))) continue;
+                        JSONObject o = new JSONObject();
+                        o.put("id", id);
+                        o.put("name", s.name());
+                        JSONArray cats = new JSONArray();
+                        Object[] hit = CAT_CACHE.get(s.id());
                         if (hit != null) {
                             @SuppressWarnings("unchecked")
                             List<com.tingshu.app.source.Category> c =
                                     (List<com.tingshu.app.source.Category>) hit[1];
-                            results.add(c);
-                            if ((now - ((Long) hit[0])) >= CAT_TTL_MS) {
-                                staleIds.add(bs.get(i).id());
-                            }
-                        } else {
-                            results.add(null);
-                            missIdx.add(i);
-                        }
-                    }
-
-                    // ---- 第二轮：只对未命中的源并发取分类 ----
-                    if (!missIdx.isEmpty()) {
-                        final java.util.concurrent.CountDownLatch latch =
-                                new java.util.concurrent.CountDownLatch(missIdx.size());
-                        for (int k = 0; k < missIdx.size(); k++) {
-                            final int idx = missIdx.get(k);
-                            Aggregator.catPool().execute(new Runnable() {
-                                public void run() {
-                                    try {
-                                        List<com.tingshu.app.source.Category> c =
-                                                bs.get(idx).categories();
-                                        results.set(idx, c);
-                                        CAT_CACHE.put(bs.get(idx).id(),
-                                                new Object[]{System.currentTimeMillis(), c});
-                                    } catch (Throwable ignored) {
-                                        results.set(idx, null);
-                                    } finally {
-                                        latch.countDown();
-                                    }
-                                }
-                            });
-                        }
-                        // 超时兜底 6s：某个源卡死也不至于把首页拖住
-                        try {
-                            latch.await(6, java.util.concurrent.TimeUnit.SECONDS);
-                        } catch (InterruptedException ignored) {}
-                    }
-
-                    for (int i = 0; i < bs.size(); i++) {
-                        JSONObject o = new JSONObject();
-                        o.put("id", bs.get(i).id());
-                        o.put("name", bs.get(i).name());
-                        JSONArray cats = new JSONArray();
-                        List<com.tingshu.app.source.Category> cs = results.get(i);
-                        if (cs != null) {
-                            for (com.tingshu.app.source.Category c : cs) {
-                                JSONObject co = new JSONObject();
-                                co.put("k", c.id);
-                                co.put("n", c.name);
-                                cats.put(co);
-                            }
+                            cats = catsToJson(c);
                         }
                         o.put("cats", cats);
                         arr.put(o);
                     }
-                    callback("onDiscoverSources", arr);
-                    // ★ v3.9.37：用过期缓存秒回之后，后台静默刷新这些源的分类，
-                    //   下次进首页看到的就是新数据（用户全程无感）。
-                    //   （放 try 内：bs / staleIds 是这个作用域的局部变量）
-                    if (!staleIds.isEmpty()) {
-                        Aggregator.catPool().execute(new Runnable() {
-                            public void run() {
-                                for (int i = 0; i < bs.size(); i++) {
-                                    if (staleIds.indexOf(bs.get(i).id()) < 0) continue;
-                                    try {
-                                        List<com.tingshu.app.source.Category> c =
-                                                bs.get(i).categories();
-                                        if (c != null) {
-                                            CAT_CACHE.put(bs.get(i).id(), new Object[]{
-                                                    System.currentTimeMillis(), c});
-                                        }
-                                    } catch (Throwable ignored) {}
-                                }
-                            }
-                        });
-                    }
                 } catch (Throwable ignored) {}
+                callback("onDiscoverSources", arr);
+            }
+        });
+    }
+
+    /**
+     * ★ v4.21.47：按需拉「单个源」的分类，结果增量回调 onSourceCategories。
+     * 缓存（含过期）先秒回，过期项再后台刷新一次；单个源 8 秒超时，
+     * 不会像旧版那样让 96 个源互相拖累。
+     */
+    @JavascriptInterface
+    public void sourceCategories(final String sourceId) {
+        if (sourceId == null || sourceId.length() == 0) return;
+        Object[] hit = CAT_CACHE.get(sourceId);
+        if (hit != null) {
+            @SuppressWarnings("unchecked")
+            List<com.tingshu.app.source.Category> c =
+                    (List<com.tingshu.app.source.Category>) hit[1];
+            pushSourceCategories(sourceId, catsToJson(c), true);
+            if ((System.currentTimeMillis() - ((Long) hit[0])) < CAT_TTL_MS) return;
+        }
+        if (!CAT_LOADING.add(sourceId)) return;      // 已在拉，等那一趟的回包即可
+        Aggregator.searchPool().execute(new Runnable() {
+            public void run() {
+                try {
+                    final Source s = SourceRegistry.byId(sourceId);
+                    if (!(s instanceof com.tingshu.app.source.BrowsableSource)) {
+                        pushSourceCategories(sourceId, new JSONArray(), false);
+                        return;
+                    }
+                    java.util.concurrent.Future<List<com.tingshu.app.source.Category>> f =
+                            Aggregator.catPool().submit(
+                                    new java.util.concurrent.Callable<List<com.tingshu.app.source.Category>>() {
+                                        public List<com.tingshu.app.source.Category> call() {
+                                            return ((com.tingshu.app.source.BrowsableSource) s).categories();
+                                        }
+                                    });
+                    List<com.tingshu.app.source.Category> c;
+                    try {
+                        c = f.get(8, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (java.util.concurrent.TimeoutException te) {
+                        f.cancel(true);
+                        pushSourceCategories(sourceId, new JSONArray(), false);
+                        return;
+                    }
+                    if (c == null) c = new ArrayList<com.tingshu.app.source.Category>();
+                    CAT_CACHE.put(sourceId, new Object[]{System.currentTimeMillis(), c});
+                    pushSourceCategories(sourceId, catsToJson(c), true);
+                } catch (Throwable ignored) {
+                    pushSourceCategories(sourceId, new JSONArray(), false);
+                } finally {
+                    CAT_LOADING.remove(sourceId);
+                }
             }
         });
     }
@@ -2301,10 +2307,10 @@ public class Bridge {
                     o.put("local", local);
                 } catch (Throwable ignored) {}
                 try {
-                    // v4.21.35：更新源从 GitHub Releases 换成官方下载站的
-                    // manifest.json（与 NAS 锚点同一份数据），有新版直接给
-                    // APK 直链（带强制下载头，点开即下载）
-                    // 主站 → 公共镜像依次尝试，域名不回显到任何提示里
+                    // v4.21.45：更新源改回内置官方下载站的 manifest.json
+                    // （Lucky 反代 HTTPS 主站 → 内网直连兜底），有新版直接给
+                    // APK 直链（带强制下载头，点开即下载）。
+                    // 自动选路，地址不回显到任何提示里
                     String body = fetchManifestText();
                     if (body == null) {
                         o.put("ok", false);
@@ -2343,7 +2349,7 @@ public class Bridge {
                     o.put("latest", latest);
                     o.put("md5", md5);
                     o.put("url", file.length() > 0
-                            ? updUrl(lastUpdBase + file, true) : "");
+                            ? updUrl(lastUpdBase + file, lastUpdNeedCode) : "");
                     o.put("hasNew", compareVer(latest, local) > 0);
                     callback("onUpdateResult", o);
                 } catch (Throwable t) {
@@ -2358,31 +2364,35 @@ public class Bridge {
     }
 
     /**
-     * 更新源（v4.21.37）：主站是自建 NAS 反代站，家宽入站 443 可能被运营商
-     * 封锁或反代未监听 IPv6，手机侧不一定可达 —— 所以主站连不上时自动
-     * 切换到公共镜像兜底，保证一定能完成更新。
-     * 域名只存在于代码常量里，**任何 UI 文案一律只说「更新服务器/官方渠道」，
-     * 不回显具体地址**，避免截图中泄密。
+     * ★ v4.21.45：更新源改回「内置官方更新渠道」。
+     *
+     * <p>主站是家里 NAS 上 Lucky 反代出来的 HTTPS 下载站，反代后端就是
+     * NAS 本机 :8099 的静态目录 —— 页面 / 清单 / APK 与 publish.sh 推上去的
+     * 是同一份数据。App 内置地址、自动选路，界面里不显示也不需要用户填写，
+     * 避免截图把地址带出去。
+     *
+     * <p>选路顺序：主站带分享码 → 主站不带码 → 家里内网直连（反代临时
+     * 不可用时，连家里 WiFi 仍能更新）。三个源读的是同一份 manifest，
+     * 不会出现版本漂移。域名 / 分享码只存在于代码常量里，任何 UI 文案、
+     * 日志、提示一律不回显。
      */
-    private static final String UPDATE_MANIFEST =
-            "https://fx.513969511.xyz/manifest.json";
-    private static final String UPDATE_BASE =
-            "https://fx.513969511.xyz/";
-    /** 兜底更新源：主站不可达时走公共镜像（同样需要分享码） */
-    private static final String UPDATE_MANIFEST_BAK =
-            "https://ab1f2330f397556fe.app.workbuddy.host/manifest.json";
-    private static final String UPDATE_BASE_BAK =
-            "https://ab1f2330f397556fe.app.workbuddy.host/";
+    private static final String UPDATE_MANIFEST = "https://fx.513969511.xyz/manifest.json";
+    private static final String UPDATE_BASE = "https://fx.513969511.xyz/";
+    /** 兜底：反代临时不可用时，连家里 WiFi 走 NAS 本机静态站（同一份数据） */
+    private static final String UPDATE_MANIFEST_LAN = "http://192.168.9.20:8099/manifest.json";
+    private static final String UPDATE_BASE_LAN = "http://192.168.9.20:8099/";
     /**
-     * 下载站源站不带分享码一律 403 —— 反向代理默认透传查询串，所以 App
-     * 每个请求都主动带上 sharecode；无码请求只作兜底。
+     * 主站可配置分享码鉴权；反代默认透传查询串，所以请求主动带上，
+     * 无码请求作为第二级兜底。
      */
     private static final String UPDATE_SHARECODE = "LPIHFTHJ3X";
 
     /** 本次检查更新实际命中的源（决定 APK 直链用哪个前缀） */
     private static volatile String lastUpdBase = UPDATE_BASE;
+    /** 命中内网直连时不需要分享码 */
+    private static volatile boolean lastUpdNeedCode = true;
 
-    /** 给下载站 URL 追加分享码（已有查询串时用 & 连接） */
+    /** 给主站 URL 追加分享码（已有查询串时用 & 连接） */
     private static String updUrl(String url, boolean withCode) {
         if (!withCode || UPDATE_SHARECODE.length() == 0) return url;
         return url + (url.contains("?") ? "&" : "?")
@@ -2390,23 +2400,25 @@ public class Bridge {
     }
 
     /**
-     * 依次尝试拉取 manifest：主站带码 → 主站无码 → 公共镜像带码。
+     * 依次尝试拉 manifest：主站带码 → 主站无码 → 内网直连。
+     * 只有「返回体真的是 JSON」才算命中，错误页 / 404 的 HTML 不算。
      * httpGetText 内部已含 https 失败退 http 的重试。
-     * 只有「返回体真的是 JSON」才算命中，403 的 HTML 错误页不算。
      */
     private static String fetchManifestText() {
         String[] tries = new String[]{
                 updUrl(UPDATE_MANIFEST, true),
                 UPDATE_MANIFEST,
-                updUrl(UPDATE_MANIFEST_BAK, true),
+                UPDATE_MANIFEST_LAN,
         };
-        String[] bases = new String[]{UPDATE_BASE, UPDATE_BASE, UPDATE_BASE_BAK};
+        String[] bases = new String[]{UPDATE_BASE, UPDATE_BASE, UPDATE_BASE_LAN};
+        boolean[] needCode = new boolean[]{true, true, false};
         for (int i = 0; i < tries.length; i++) {
             String b = httpGetText(tries[i], 8000);
             if (b != null) {
                 String t = b.trim();
                 if (t.length() > 0 && t.charAt(0) == '{') {
                     lastUpdBase = bases[i];
+                    lastUpdNeedCode = needCode[i];
                     return b;
                 }
             }
@@ -2424,13 +2436,64 @@ public class Bridge {
         }
     }
 
+    /** 内置更新源（Lucky 反代）的主机名 —— 只有它才允许自签证书 */
+    private static String updateHost() {
+        try {
+            return new java.net.URL(UPDATE_MANIFEST).getHost();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /**
+     * ★ v4.21.46：Lucky 反代默认签的是自签名证书（CN=Lucky），系统不信任；
+     * 旧版 App 因此连不上主站，只能退到会话级公共镜像，而那里停更在
+     * v4.21.42 —— 这就是「检查更新永远检测不到新版」的真正原因。
+     *
+     * <p>这里只给「内置更新源」这一条连接放宽校验，且严格限定主机名：
+     * 其它任何 https 请求仍走系统严格校验；绝不调用 setDefaultSSLSocketFactory
+     * 影响全局。安装包下载后还有 manifest 里的 MD5 校验兜底，防止中途被换包。
+     */
+    private static void trustSelfSignedIfUpdate(java.net.HttpURLConnection conn, String url) {
+        if (!(conn instanceof javax.net.ssl.HttpsURLConnection)) return;
+        if (!url.startsWith("https://")) return;
+        String h;
+        try {
+            h = new java.net.URL(url).getHost();
+        } catch (Throwable t) {
+            return;
+        }
+        String allowed = updateHost();
+        if (allowed.length() == 0 || !allowed.equalsIgnoreCase(h)) return;
+        try {
+            javax.net.ssl.TrustManager[] tm = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
+                    }
+            };
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+            sc.init(null, tm, new java.security.SecureRandom());
+            javax.net.ssl.HttpsURLConnection hs = (javax.net.ssl.HttpsURLConnection) conn;
+            hs.setSSLSocketFactory(sc.getSocketFactory());
+            hs.setHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
+                public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                    return true;
+                }
+            });
+        } catch (Throwable ignored) {}
+    }
+
     /**
      * 极简 HTTP GET（只用于更新检查这种一次性小请求）。
      * 不引第三方库，超时短，失败返回 null。
      */
     private static String httpGetText(String url, int timeoutMs) {
-        // v4.21.36：NAS 域名是家里宽带的 IPv6 直连，https 证书/端口可能不稳，
-        // 先试 https，失败再退 http 同路径（清单已开 usesCleartextTraffic）。
+        // v4.21.45：主站是 HTTPS（Lucky 反代）；证书/端口偶发不稳时
+        // 再退到 http 同路径（清单已开 usesCleartextTraffic）。
         String r = httpGetTextOnce(url, timeoutMs);
         if (r == null && url.startsWith("https://")) {
             r = httpGetTextOnce("http://" + url.substring(8), timeoutMs);
@@ -2448,6 +2511,7 @@ public class Bridge {
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "FengxiTingshu");
+            trustSelfSignedIfUpdate(conn, url);
             int code = conn.getResponseCode();
             if (code < 200 || code >= 300) return null;
             java.io.InputStream in = conn.getInputStream();
@@ -2566,6 +2630,7 @@ public class Bridge {
             conn.setConnectTimeout(10000);
             conn.setReadTimeout(30000);
             conn.setRequestProperty("User-Agent", "FengxiTingshu");
+            trustSelfSignedIfUpdate(conn, url);
             long total = conn.getContentLength();
             java.io.InputStream in = conn.getInputStream();
             java.io.FileOutputStream out = new java.io.FileOutputStream(f);
@@ -3175,6 +3240,185 @@ public class Bridge {
         });
     }
 
+    // ==================== ★ v4.21.48 分集管理 + 手动转存 ====================
+    //
+    // 设计要点：
+    //  - 分集列表不新建表、不改 DB 版本，直接读 download 表按 chapter_idx 排序；
+    //  - 回调全部用 onDl* 独立命名，绝不混进下载/缓存共用的 onCache*；
+    //  - 转存一律「复制」，原下载文件不动；本地走现场挑的 SAF 目录，
+    //    NAS 复用 BackupCred 的 WebDAV 配置与远端去重。
+
+    /** 某本书每一集的索引 → window.onDlEpisodes({key,title,items:[...]}) */
+    @JavascriptInterface
+    public void downloadEpisodes(final String key) {
+        bg(new Runnable() {
+            public void run() { pushEpisodes(key); }
+        });
+    }
+
+    /** 删除单集（含私有文件；外部目录里的文件属用户，不动） */
+    @JavascriptInterface
+    public void downloadDeleteOne(final String key, final int idx) {
+        bg(new Runnable() {
+            public void run() {
+                try {
+                    com.tingshu.app.data.DownloadRepo.deleteOne(activity, key, idx);
+                } catch (Throwable ignored) {}
+                downloadList();
+                pushEpisodes(key);
+            }
+        });
+    }
+
+    /** 批量删除分集：idxJson 是 1 基集号数组，如 "[1,3,5]" */
+    @JavascriptInterface
+    public void downloadDeleteMany(final String key, final String idxJson) {
+        bg(new Runnable() {
+            public void run() {
+                int[] idxs = parseIntArray(idxJson);
+                if (idxs != null) {
+                    for (int i = 0; i < idxs.length; i++) {
+                        try {
+                            com.tingshu.app.data.DownloadRepo.deleteOne(activity, key, idxs[i]);
+                        } catch (Throwable ignored) {}
+                    }
+                }
+                downloadList();
+                pushEpisodes(key);
+            }
+        });
+    }
+
+    /** 手动转存 → 本地目录：先弹系统目录选择器，结果回 MainActivity */
+    @JavascriptInterface
+    public void dlExportPickDir(final String key, final String idxJson) {
+        final int[] idxs = resolveExportIdxs(key, idxJson);
+        if (idxs == null || idxs.length == 0) {
+            js("TS.toast('这本书没有可转存的已下载分集')");
+            return;
+        }
+        if (com.tingshu.app.core.DlExport.isRunning()) {
+            js("TS.toast('已有转存任务在进行，请等它结束')");
+            return;
+        }
+        dlExportKey = key;
+        dlExportIdxs = idxs;
+        dlExportTitle = titleOfKey(key);
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    if (activity instanceof com.tingshu.app.MainActivity) {
+                        ((com.tingshu.app.MainActivity) activity).pickExportDir();
+                    } else {
+                        js("TS.toast('无法打开目录选择器')");
+                    }
+                } catch (Throwable t) {
+                    js("TS.toast('无法打开目录选择器')");
+                }
+            }
+        });
+    }
+
+    /** 手动转存 → NAS：直接用已配好的 WebDAV，不需要再挑目录 */
+    @JavascriptInterface
+    public void dlExportNas(final String key, final String idxJson) {
+        final int[] idxs = resolveExportIdxs(key, idxJson);
+        if (idxs == null || idxs.length == 0) {
+            js("TS.toast('这本书没有可转存的已下载分集')");
+            return;
+        }
+        if (!com.tingshu.app.core.FeatureGate.allow(
+                com.tingshu.app.core.FeatureGate.DAV_EXPORT)) {
+            js("TS.toast('" + com.tingshu.app.core.FeatureGate
+                    .denyMsg(com.tingshu.app.core.FeatureGate.DAV_EXPORT) + "')");
+            return;
+        }
+        if (!com.tingshu.app.data.BackupCred.configured()) {
+            js("TS.toast('转存 NAS 需要先在「设置 → 网络备份」里填好 WebDAV；当前还没配置')");
+            return;
+        }
+        com.tingshu.app.core.DlExport.exportNas(activity, key, idxs,
+                titleOfKey(key), dlExportHook());
+    }
+
+    /**
+     * 目录选择器选完 → 由 MainActivity 回调（非 JS 接口）。
+     * 真正的复制放到 DlExport 自己的单线程池里，别堵 WebView 线程。
+     */
+    public void dlExportLocalGo(String treeUri) {
+        if (dlExportKey == null || dlExportIdxs == null) return;
+        com.tingshu.app.core.DlExport.exportLocal(activity,
+                android.net.Uri.parse(treeUri), dlExportKey, dlExportIdxs,
+                dlExportTitle, dlExportHook());
+    }
+
+    /** 转存进度/结果统一回推，前端分集管理页自己渲染 */
+    private com.tingshu.app.core.DlExport.Hook dlExportHook() {
+        return new com.tingshu.app.core.DlExport.Hook() {
+            public void onProgress(final int done, final int total,
+                                   final int ok, final int skip, final int fail) {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("done", done); o.put("total", total);
+                    o.put("ok", ok); o.put("skip", skip); o.put("fail", fail);
+                } catch (Throwable ignored) {}
+                js("window.onDlExportProgress(" + o.toString() + ")");
+            }
+
+            public void onDone(final int ok, final int skip, final int fail,
+                               final int total, final String target, final String error) {
+                JSONObject o = new JSONObject();
+                try {
+                    o.put("ok", ok); o.put("skip", skip); o.put("fail", fail);
+                    o.put("total", total);
+                    o.put("target", target == null ? "" : target);
+                    o.put("error", error == null ? "" : error);
+                } catch (Throwable ignored) {}
+                js("window.onDlExportDone(" + o.toString() + ")");
+            }
+        };
+    }
+
+    /** 组装分集列表并回推（打开分集页 / 删除后刷新都走这里） */
+    private void pushEpisodes(String key) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("key", key == null ? "" : key);
+            o.put("title", titleOfKey(key));
+            org.json.JSONArray arr = new org.json.JSONArray();
+            java.util.List<com.tingshu.app.data.DownloadRepo.Episode> eps =
+                    com.tingshu.app.data.DownloadRepo.episodes(key);
+            for (com.tingshu.app.data.DownloadRepo.Episode e : eps) {
+                JSONObject it = new JSONObject();
+                it.put("idx", e.idx);
+                it.put("size", e.size);
+                it.put("sizeText", com.tingshu.app.data.DownloadRepo.humanSize(e.size));
+                it.put("status", e.status);
+                it.put("statusText", e.status == com.tingshu.app.data.DownloadRepo.ST_DONE
+                        ? "已完成" : (e.status == com.tingshu.app.data.DownloadRepo.ST_FAIL
+                        ? "失败" : "进行中"));
+                String loc = "App 内";
+                String play = null;
+                if (e.path != null && e.path.length() > 0
+                        && new java.io.File(e.path).exists()) {
+                    play = "file://" + e.path;
+                } else if (e.savedUri != null && e.savedUri.length() > 0) {
+                    loc = "外部目录";
+                    play = e.savedUri;
+                } else {
+                    loc = "文件缺失";
+                }
+                it.put("loc", loc);
+                it.put("play", play == null ? "" : play);
+                it.put("savedPath", e.savedPath == null ? "" : e.savedPath);
+                arr.put(it);
+            }
+            o.put("items", arr);
+            o.put("count", arr.length());
+        } catch (Throwable ignored) {}
+        js("window.onDlEpisodes(" + o.toString() + ")");
+    }
+
     // ==================== ★ v4.18.0 下载任务可视化管理 ====================
 
     /** 当前下载任务清单（进行中/已暂停）→ window.onDownloadTasks */
@@ -3296,6 +3540,32 @@ public class Bridge {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * ★ v4.21.49 转存目标集解析：
+     * 非空数组 {@code [1,3,5]} 原样返回（分集页勾选）；空数组 {@code []}
+     * 表示主页面的「转存整本」按钮，展开成这本书所有已下载且源文件还在的集。
+     * 其余情况返回 null，由调用方给出提示。
+     */
+    private static int[] resolveExportIdxs(String key, String idxJson) {
+        int[] a = parseIntArray(idxJson);
+        if (a != null) return a;
+        if (idxJson == null || !idxJson.trim().startsWith("[")) return null;
+        java.util.List<com.tingshu.app.data.DownloadRepo.Episode> eps =
+                com.tingshu.app.data.DownloadRepo.episodes(key);
+        java.util.List<Integer> picked = new java.util.ArrayList<Integer>();
+        for (com.tingshu.app.data.DownloadRepo.Episode e : eps) {
+            if (e.status != com.tingshu.app.data.DownloadRepo.ST_DONE) continue;
+            boolean has = (e.path != null && e.path.length() > 0
+                    && new java.io.File(e.path).exists())
+                    || (e.savedUri != null && e.savedUri.length() > 0);
+            if (has) picked.add(Integer.valueOf(e.idx));
+        }
+        if (picked.isEmpty()) return null;
+        int[] out = new int[picked.size()];
+        for (int i = 0; i < out.length; i++) out[i] = picked.get(i).intValue();
+        return out;
     }
 
     /** 缓存管理页：列出已缓存的书 */

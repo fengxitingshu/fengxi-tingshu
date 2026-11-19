@@ -205,13 +205,17 @@ public final class SpiderRuntime {
         // 把这些 so 解出来作为 native 库路径，并把 jar 挂进 AssetManager，
         // 否则 DexClassLoader 只拿到 classes.dex，爬虫运行时读 guard 文件必失败。
         boolean guard = extractNativeLibs(f, odex);
+        // ★ v2.25：不再预加载任何第三方 native 库。
+        // Guard 加密壳（饭太硬/王二小/嗷呜线）靠 jar 自带 so 在 JNI_OnLoad 里
+        // RegisterNatives 绑定宿主 DexNative；旧版 System.load(so) 一旦 ABI 不匹配
+        // 或 so 损坏就是 SIGSEGV 直接杀进程，Java 的 catch(Throwable) 与
+        // CrashGuard 都拦不住 —— 真机「点源就闪退」的主要来源。
+        // 这类壳本来也需要专有解密环境（Bridge.spiderErrorHint 已明确不支持），
+        // 因此这里直接拒绝并给出可读提示，而不是冒崩溃风险去试。
+        if (guard) {
+            throw new Exception("该源是 Guard 加密壳 jar，需要专有解密环境，本 App 不支持（已跳过以防崩溃）");
+        }
         addAssetPath(app, f);
-        // ★ v2.19：Guard 加密壳（饭太硬/王二小/嗷呜线）。stub 靠宿主的
-        // com.github.catvod.spider.DexNative 桥取解密后的 loader，桥的实现
-        // 就是壳自带 so 通过 JNI_OnLoad RegisterNatives 绑定的 —— 必须按
-        // 设备 ABI 预加载对应 so（v7=32位，v8=64位），且在 DexClassLoader
-        // 创建之前，保证 stub 解析 DexNative 时类与绑定都已就绪。
-        if (guard) preloadGuardSo(odex);
         DexClassLoader cl;
         try {
             cl = new DexClassLoader(f.getAbsolutePath(), odex.getAbsolutePath(),
@@ -273,7 +277,10 @@ public final class SpiderRuntime {
                 if (low.endsWith(".guard") || low.contains("shinidie")) guard = true;
                 if (!n.endsWith(".so")) continue;
                 soNames.add(n);
-                guard = true;
+                // v2.25：普通 spider 包也可能带 so（quickjs / 解码库），不能一律
+                // 当成加密壳拒绝；只有带 guard/shinidie/DexNative 特征才是壳。
+                if (low.contains("guard") || low.contains("shinidie")
+                        || low.contains("dexnative")) guard = true;
             }
             for (String n : soNames) {
                 String flat = n.substring(n.lastIndexOf('/') + 1);
@@ -311,7 +318,11 @@ public final class SpiderRuntime {
         } catch (Throwable ignored) {}
     }
 
-    /** v2.19：按设备 ABI 预加载壳 so，让 JNI_OnLoad 把 natives 绑到宿主 DexNative 桥上。 */
+    /**
+     * v2.19 曾用于预加载壳 so；v2.25 起停用 —— 第三方 so 的 native 崩溃无法被
+     * Java 层捕获。保留实现仅供离线分析，运行时绝不调用。
+     */
+    @Deprecated
     private static void preloadGuardSo(File dir) {
         boolean is64 = android.os.Build.SUPPORTED_64_BIT_ABIS != null
                 && android.os.Build.SUPPORTED_64_BIT_ABIS.length > 0;

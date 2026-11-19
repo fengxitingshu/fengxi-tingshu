@@ -72,7 +72,16 @@ public final class CmsClient {
                 r.error = "接口返回的是网页不是 JSON（该地址可能不是 CMS 接口，或被站点拦截）\n" + u(query);
                 return r;
             }
-            JSONObject o = new JSONObject(resp.body);
+            // v2.25：type=0 的 XML 采集站返回的是 XML，不是 JSON。
+            // 旧版直接 new JSONObject() 抛异常 → 大量站点「解析不了」。
+            if (XmlCms.looks(body)) {
+                try { body = XmlCms.toJson(body); }
+                catch (Throwable xt) {
+                    r.error = "XML 采集接口解析失败：" + xt.getClass().getSimpleName();
+                    return r;
+                }
+            }
+            JSONObject o = new JSONObject(body);
             r.code = o.optInt("code", resp.code);
             r.data = o;
             r.list = o.optJSONArray("list");
