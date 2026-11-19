@@ -98,7 +98,7 @@ docker exec fx-nas-anchor python3 -c "import os;os.environ['ONCE']='1';exec(open
 `docker-compose.yml` 里只有一行需要关心：
 
 ```yaml
-- SRC_MANIFEST=https://ab1f2330f397556fe.app.workbuddy.host/manifest.json?sharecode=[分享码]
+- SRC_MANIFEST=https://[REDACTED]/
 ```
 
 > ⚠️ **当前这个源是会话级的发布应用，不是永久基础设施**。沙箱会话回收后它可能失效。失效的后果只有「不再自动更新」——**NAS 上已下载的 APK 和下载页照常可用**，不会变砖（降级逻辑已实测）。

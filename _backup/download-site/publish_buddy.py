@@ -24,7 +24,7 @@ def latest_buddy_apk():
 
 def main():
     ap = argparse.ArgumentParser(description="伴读娘一键发布")
-    ap.add_argument("--host", default="192.168.9.20")
+    ap.add_argument("--host", default=os.environ.get("NAS_HOST", ""))
     ap.add_argument("--port", type=int, default=5005)
     ap.add_argument("--https", action="store_true")
     ap.add_argument("--page-port", type=int, default=8099)

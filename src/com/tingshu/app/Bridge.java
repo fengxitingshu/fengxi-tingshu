@@ -2376,16 +2376,17 @@ public class Bridge {
      * 不会出现版本漂移。域名 / 分享码只存在于代码常量里，任何 UI 文案、
      * 日志、提示一律不回显。
      */
-    private static final String UPDATE_MANIFEST = "https://fx.513969511.xyz/manifest.json";
-    private static final String UPDATE_BASE = "https://fx.513969511.xyz/";
-    /** 兜底：反代临时不可用时，连家里 WiFi 走 NAS 本机静态站（同一份数据） */
-    private static final String UPDATE_MANIFEST_LAN = "http://192.168.9.20:8099/manifest.json";
-    private static final String UPDATE_BASE_LAN = "http://192.168.9.20:8099/";
+    // 更新源地址已脱敏移除（仓库公开，禁止回显域名 / 内网 IP / 分享码）。
+    // 需要恢复时从本地私有配置 .fengxi-env 回填，切勿写回公开源码。
+    private static final String UPDATE_MANIFEST = "";
+    private static final String UPDATE_BASE = "";
+    /** 兜底：内网直连地址同样已脱敏移除 */
+    private static final String UPDATE_MANIFEST_LAN = "";
+    private static final String UPDATE_BASE_LAN = "";
     /**
-     * 主站可配置分享码鉴权；反代默认透传查询串，所以请求主动带上，
-     * 无码请求作为第二级兜底。
+     * 分享码已脱敏移除。设为空串后 updUrl() 不再追加，更新请求自然失效。
      */
-    private static final String UPDATE_SHARECODE = "LPIHFTHJ3X";
+    private static final String UPDATE_SHARECODE = "";
 
     /** 本次检查更新实际命中的源（决定 APK 直链用哪个前缀） */
     private static volatile String lastUpdBase = UPDATE_BASE;
